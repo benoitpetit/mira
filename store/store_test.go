@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"mira/types"
+	"github.com/benoitpetit/mira/types"
 )
 
 func setupTestDB(t *testing.T) (*Store, func()) {

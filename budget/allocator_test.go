@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"mira/types"
+	"github.com/benoitpetit/mira/types"
 )
 
 func TestSigmoidDensity(t *testing.T) {

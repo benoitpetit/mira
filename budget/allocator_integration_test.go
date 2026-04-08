@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"mira/extract"
-	"mira/types"
+	"github.com/benoitpetit/mira/extract"
+	"github.com/benoitpetit/mira/types"
 )
 
 // Mock embedder pour l'intégration

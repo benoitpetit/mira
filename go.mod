@@ -1,4 +1,4 @@
-module mira
+module github.com/benoitpetit/mira
 
 go 1.23.2
 

@@ -10,11 +10,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"mira/budget"
-	"mira/causal"
-	"mira/extract"
-	"mira/store"
-	"mira/types"
+	"github.com/benoitpetit/mira/budget"
+	"github.com/benoitpetit/mira/causal"
+	"github.com/benoitpetit/mira/extract"
+	"github.com/benoitpetit/mira/store"
+	"github.com/benoitpetit/mira/types"
 )
 
 // Server encapsulates MCP server

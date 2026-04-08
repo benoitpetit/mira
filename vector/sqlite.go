@@ -4,8 +4,8 @@ import (
 	"math"
 
 	"github.com/google/uuid"
-	"mira/store"
-	"mira/types"
+	"github.com/benoitpetit/mira/store"
+	"github.com/benoitpetit/mira/types"
 )
 
 // SQLiteAdapter adapts SQLite store for VectorStore interface
