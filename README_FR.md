@@ -27,27 +27,27 @@ Système de mémoire longue durée pour LLM avec allocation optimale de budget c
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                              MCP Server                                  │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────────────────┐   │
-│  │mira_store│ │mira_recall│ │mira_load │ │mira_causal_chain         │   │
-│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └───────────┬──────────────┘   │
+│                              MCP Server                                 │
+│  ┌──────────┐ ┌───────────┐ ┌──────────┐ ┌─────────────────────────┐    │
+│  │mira_store│ │mira_recall│ │mira_load │ │   mira_causal_chain     │    │
+│  └────┬─────┘ └─────┬──────┘└───┬──────┘ └────────────┬────────────┘    │
 │       └─────────────┴───────────┴─────────────────────┘                 │
-│                              │                                          │
-└──────────────────────────────┼──────────────────────────────────────────┘
-                               │
-                    ┌──────────┴──────────┐
+│                                 │                                       │
+└─────────────────────────────────┼───────────────────────────────────────┘
+                                  │
+                    ┌─────────────┴───────┐
                     │  Budget Allocator   │
                     │   (CBA Algorithm)   │
                     │   O(n log n)        │
                     └──────────┬──────────┘
                                │
-        ┌──────────────────────┼──────────────────────┐
-        │                      │                      │
-   ┌────┴────┐          ┌─────┴──────┐        ┌─────┴─────┐
-   │ Extract │          │   Store    │        │  Causal   │
-   │ Pipeline│          │  (SQLite)  │        │   Graph   │
-   │T0→T1,T2 │          │            │        │   (BFS)   │
-   └────┬────┘          └────────────┘        └───────────┘
+        ┌──────────────────────┼────────────────────┐
+        │                      │                    │
+   ┌────┴────┐           ┌─────┴──────┐        ┌────┴──────┐
+   │ Extract │           │   Store    │        │  Causal   │
+   │ Pipeline│           │  (SQLite)  │        │   Graph   │
+   │T0→T1,T2 │           │            │        │   (BFS)   │
+   └────┬────┘           └────────────┘        └───────────┘
         │
    ┌────┴────────────────────────┐
    │  NLP Stack                  │
@@ -60,17 +60,17 @@ Système de mémoire longue durée pour LLM avec allocation optimale de budget c
 ### Flux de Données
 
 ```
-┌─────────┐   Extraction    ┌─────────────┐   Stockage    ┌──────────┐
-│  Input  │ ───────────────→│  Triple T   │ ────────────→│  SQLite  │
-│  Texte  │    T0→T1→T2     │  (3 niveaux)│   WAL Mode   │  + WAL   │
-└─────────┘                 └─────────────┘              └──────────┘
-                                                                    │
-                                                                    │Query
-                                                                    ↓
-┌─────────┐   Scoring        ┌─────────────┐   Allocation  ┌──────────┐
-│ Requête │ ←─────────────── │  CBA Score  │ ←────────────│  Budget  │
-│Vecteur  │    ρ×δ×η×τ×σ×χ   │  Composite  │   Greedy     │  4000tk  │
-└─────────┘                  └─────────────┘              └──────────┘
+┌─────────┐  Extraction   ┌─────────────┐  Stockage   ┌──────────┐
+│  Input  │ ─────────────→│  Triple T   │ ───────────→│  SQLite  │
+│  Texte  │   T0→T1→T2    │  (3 niveaux)│  WAL Mode   │  + WAL   │
+└─────────┘               └─────────────┘             └──────────┘
+                                   │                         │
+                                   │ Requête                 │
+                                   ↓                         ↓
+┌─────────┐  Scoring       ┌─────────────┐  Allocation ┌──────────┐
+│Requête  │ ←───────────── │  CBA Score  │ ←───────────│  Budget  │
+│Vecteur  │   ρ×δ×η×τ×σ×χ  │  Composite  │  Greedy     │  4000tk  │
+└─────────┘                └─────────────┘             └──────────┘
 ```
 
 ---
@@ -85,28 +85,28 @@ Chaque mémoire `m ∈ ℳ` est un tuple:
 m = (id, t₀, t₁, t₂, c, τ, ω, γ, δ, ν)
 ```
 
-| Champ | Type | Description |
-|-------|------|-------------|
-| `id` | UUIDv4 (128 bits) | Identifiant unique |
-| `t₀` | Σ* (UTF-8, max 64KB) | Verbatim - texte original |
-| `t₁` | JSON canonique | Fingerprint structuré |
-| `t₂` | ℝ³⁸⁴ | Embedding vector (all-MiniLM-L6-v2) |
-| `c` | ℕ | Token count (tiktoken cl100k_base) |
-| `τ` | ℝ⁺ | Timestamp UNIX (secondes) |
-| `ω` | Ω | Type de mémoire (enum) |
-| `γ` | Γ | Graphe causal (nœud + arêtes) |
-| `δ` | ℝ⁺ | Decay rate λ_ω selon le type |
-| `ν` | {0,1}³² | Hash du modèle d'embedding |
+| Champ | Type                  | Description                         |
+| ----- | --------------------- | ----------------------------------- |
+| `id`  | UUIDv4 (128 bits)     | Identifiant unique                  |
+| `t₀`  | Σ\* (UTF-8, max 64KB) | Verbatim - texte original           |
+| `t₁`  | JSON canonique        | Fingerprint structuré               |
+| `t₂`  | ℝ³⁸⁴                  | Embedding vector (all-MiniLM-L6-v2) |
+| `c`   | ℕ                     | Token count (tiktoken cl100k_base)  |
+| `τ`   | ℝ⁺                    | Timestamp UNIX (secondes)           |
+| `ω`   | Ω                     | Type de mémoire (enum)              |
+| `γ`   | Γ                     | Graphe causal (nœud + arêtes)       |
+| `δ`   | ℝ⁺                    | Decay rate λ_ω selon le type        |
+| `ν`   | {0,1}³²               | Hash du modèle d'embedding          |
 
 ### Types de Mémoire et Decay Rates
 
-| Type ω | λ_ω (jour⁻¹) | Demi-vie | Archive auto | Usage |
-|--------|-------------|----------|--------------|-------|
-| `decision` | 0.001 | 693 jours | Non | Décisions architecturales |
-| `fact` | 0.005 | 139 jours | Non | Faits, connaissances |
-| `preference` | 0.01 | 69 jours | Non | Préférences utilisateur |
-| `session_note` | 0.1 | 7 jours | 30 jours | Notes de session |
-| `debug_log` | 0.5 | 1.4 jours | 7 jours | Logs de debug |
+| Type ω         | λ_ω (jour⁻¹) | Demi-vie  | Archive auto | Usage                     |
+| -------------- | ------------ | --------- | ------------ | ------------------------- |
+| `decision`     | 0.001        | 693 jours | Non          | Décisions architecturales |
+| `fact`         | 0.005        | 139 jours | Non          | Faits, connaissances      |
+| `preference`   | 0.01         | 69 jours  | Non          | Préférences utilisateur   |
+| `session_note` | 0.1          | 7 jours   | 30 jours     | Notes de session          |
+| `debug_log`    | 0.5          | 1.4 jours | 7 jours      | Logs de debug             |
 
 ### Schéma SQL (SQLite)
 
@@ -198,7 +198,7 @@ Pour une requête `q` avec embedding `e_q ∈ ℝ³⁸⁴`, le score d'un candid
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                                                                         │
-│   S(m|q,S,θ) = ρ(m,q) × δ_sig(m) × η(m) × τ_session(m,S)               │
+│   S(m|q,S,θ) = ρ(m,q) × δ_sig(m) × η(m) × τ_session(m,S)                │
 │                × (1 - max_s∈S σ(m,s)) × χ_penalty(m,S)                  │
 │                × 𝟙[ρ > θ_min]                                           │
 │                                                                         │
@@ -229,6 +229,7 @@ Avec normalisation L2 préalable:
 ```
 
 Paramètres sigmoïde:
+
 - `μ = 0.3` : centre (5 facts/100 tokens = neutre)
 - `k = 2.0` : pente
 
@@ -296,7 +297,7 @@ entities := extractEntities(doc)  // PERSON, ORG, GPE
 
 // Détection type avec priorité stricte
 if matchDecision(content) → TypeDecision
-else if matchPreference(content) → TypePreference  
+else if matchPreference(content) → TypePreference
 else if matchFact(content) → TypeFact
 else → TypeSessionNote
 ```
@@ -344,57 +345,57 @@ vector = normalize_L2(vector)
 │                         O(n log n)                                      │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  Input: query q, budget B, wing w, room r                               │
-│  Output: liste de mémoires sélectionnées avec mode de rendu            │
+│  Output: liste de mémoires sélectionnées avec mode de rendu             │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  1. Embedding avec cache LRU                                            │
-│     e_q ← Embed(q)                                                     │
+│     e_q ← Embed(q)                                                      │
 │                                                                         │
 │  2. Recherche vectorielle                                               │
-│     C ← VectorSearch(e_q, N=100, w, r)                                 │
+│     C ← VectorSearch(e_q, N=100, w, r)                                  │
 │                                                                         │
 │  3. Early Pruning                                                       │
-│     C' ← {c ∈ C : ρ(c,q) > 0.6}                                        │
+│     C' ← {c ∈ C : ρ(c,q) > 0.6}                                         │
 │     if C' = ∅: C' ← top-5(C)                                           │
 │                                                                         │
 │  4. Scoring initial                                                     │
 │     ∀c ∈ C':                                                            │
-│       c.score ← ρ(c) × δ_sig(c) × η(c)                                 │
+│       c.score ← ρ(c) × δ_sig(c) × η(c)                                  │
 │                                                                         │
 │  5. Sélection Greedy avec renormalisation dynamique                     │
 │     S ← ∅, tokens_used ← 0                                             │
-│     PQ ← MaxHeap(C')  # par score initial                              │
+│     PQ ← MaxHeap(C')  # par score initial                               │
 │                                                                         │
 │     while PQ ≠ ∅ AND tokens_used < B:                                  │
-│       c ← Pop(PQ)                                                      │
+│       c ← Pop(PQ)                                                       │
 │                                                                         │
 │       # Recalcul dynamique                                              │
-│       c.max_overlap ← max_{s∈S} σ(c,s)                                 │
-│       c.causal_penalty ← exp(-0.15 × |links(c,S)|)                     │
-│       c.session_boost ← 1.2 if |τ(c)-τ(S)| < 2h else 1.0              │
+│       c.max_overlap ← max_{s∈S} σ(c,s)                                  │
+│       c.causal_penalty ← exp(-0.15 × |links(c,S)|)                      │
+│       c.session_boost ← 1.2 if |τ(c)-τ(S)| < 2h else 1.0                │
 │                                                                         │
-│       adjusted_score ← c.score × (1-c.max_overlap)                     │
-│                           × c.causal_penalty                           │
-│                           × c.session_boost                            │
+│       adjusted_score ← c.score × (1-c.max_overlap)                      │
+│                           × c.causal_penalty                            │
+│                           × c.session_boost                             │
 │                                                                         │
-│       # Vérifier si prochain a meilleur score                          │
-│       if PQ[0].score × 0.8 > adjusted_score:                           │
-│          Push(PQ, c) with adjusted_score                               │
+│       # Vérifier si prochain a meilleur score                           │
+│       if PQ[0].score × 0.8 > adjusted_score:                            │
+│          Push(PQ, c) with adjusted_score                                │
 │          continue                                                       │
 │                                                                         │
-│       # Déterminer mode de rendu selon budget RESTANT                  │
-│       remaining ← B - tokens_used                                      │
-│       mode ← DetermineRenderMode(c, remaining)                         │
-│       cost ← CalculateTokenCost(c, mode)                               │
+│       # Déterminer mode de rendu selon budget RESTANT                   │
+│       remaining ← B - tokens_used                                       │
+│       mode ← DetermineRenderMode(c, remaining)                          │
+│       cost ← CalculateTokenCost(c, mode)                                │
 │                                                                         │
-│       # Downgrade si nécessaire                                        │
-│       if tokens_used + cost > B:                                       │
-│          mode ← downgrade(mode)                                        │
-│          cost ← recalculate(mode)                                      │
-│          if tokens_used + cost > B: continue                           │
+│       # Downgrade si nécessaire                                         │
+│       if tokens_used + cost > B:                                        │
+│          mode ← downgrade(mode)                                         │
+│          cost ← recalculate(mode)                                       │
+│          if tokens_used + cost > B: continue                            │
 │                                                                         │
-│       S ← S ∪ {c}, tokens_used ← tokens_used + cost                    │
+│       S ← S ∪ {c}, tokens_used ← tokens_used + cost                     │
 │                                                                         │
-│  6. Return S                                                           │
+│  6. Return S                                                            │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -402,11 +403,11 @@ vector = normalize_L2(vector)
 
 Le mode dépend uniquement du **budget restant**, pas de l'overlap:
 
-| Budget Restant | Mode | Tokens | Contenu |
-|---------------|------|--------|---------|
-| < 100 | Header | 2-5 | `[type|date|wing] → T0:id` |
-| < 1000 | Fingerprint | ~15% | Faits essentiels T1 |
-| ≥ 1000 | Verbatim | 100% | Texte original T0 |
+| Budget Restant | Mode        | Tokens | Contenu             |
+| -------------- | ----------- | ------ | ------------------- | ---- | -------------- |
+| < 100          | Header      | 2-5    | `[type              | date | wing] → T0:id` |
+| < 1000         | Fingerprint | ~15%   | Faits essentiels T1 |
+| ≥ 1000         | Verbatim    | 100%   | Texte original T0   |
 
 ---
 
@@ -414,13 +415,13 @@ Le mode dépend uniquement du **budget restant**, pas de l'overlap:
 
 ### Relations Supportées
 
-| Relation | Direction | Sémantique |
-|----------|-----------|------------|
-| `BECAUSE` | A ← B | B explique A |
-| `TRIGGERED` | A ← B | B a déclenché A |
-| `CONTRADICTS` | A ↔ B | A et B en contradiction |
-| `UPDATES` | A ← B | B remplace/actualise A |
-| `RESOLVES` | A ← B | B résout le problème A |
+| Relation      | Direction | Sémantique              |
+| ------------- | --------- | ----------------------- |
+| `BECAUSE`     | A ← B     | B explique A            |
+| `TRIGGERED`   | A ← B     | B a déclenché A         |
+| `CONTRADICTS` | A ↔ B     | A et B en contradiction |
+| `UPDATES`     | A ← B     | B remplace/actualise A  |
+| `RESOLVES`    | A ← B     | B résout le problème A  |
 
 ### Détection de Relations Causales
 
@@ -430,14 +431,14 @@ Output: liste d'arêtes causales
 
 for each existing in recent_fps:
     if time_diff > 30 days: continue
-    
+
     for each (relation, pattern) in causal_patterns:
         if pattern.match(verbatim_content):
             # Vérifier référence implicite
             if hasOverlap(new_fp.entities, existing.entities) OR
                hasOverlap(new_fp.subjects, existing.subjects) OR
                content.contains(existing.id[:8]):
-               
+
                edge ← CausalEdge{
                    from: existing.id,
                    to: new_fp.id,
@@ -453,7 +454,7 @@ for each existing in recent_fps:
 // GetChain: remonter les causes (parents)
 func (g *Graph) GetChain(nodeID UUID, maxDepth int) []*CausalNode
 
-// GetConsequences: descendre les effets (enfants)  
+// GetConsequences: descendre les effets (enfants)
 func (g *Graph) GetConsequences(nodeID UUID, maxDepth int) []*CausalNode
 ```
 
@@ -463,30 +464,30 @@ func (g *Graph) GetConsequences(nodeID UUID, maxDepth int) []*CausalNode
 
 ### Complexités Algorithmiques
 
-| Opération | Complexité | Notes |
-|-----------|-----------|-------|
-| Stockage (T0→T1,T2) | O(1) | Amorti, insertion unique |
-| Recherche vectorielle | O(n) | SQLite linear scan (HNSW: O(log n)) |
-| Scoring | O(n) | n = nombre de candidats |
-| Allocation Greedy | O(n log n) | Max-heap operations |
-| BFS Graphe causal | O(V + E) | V=nœuds, E=arêtes |
-| Total Recall | O(n log n) | Bottleneck: heap operations |
+| Opération             | Complexité | Notes                               |
+| --------------------- | ---------- | ----------------------------------- |
+| Stockage (T0→T1,T2)   | O(1)       | Amorti, insertion unique            |
+| Recherche vectorielle | O(n)       | SQLite linear scan (HNSW: O(log n)) |
+| Scoring               | O(n)       | n = nombre de candidats             |
+| Allocation Greedy     | O(n log n) | Max-heap operations                 |
+| BFS Graphe causal     | O(V + E)   | V=nœuds, E=arêtes                   |
+| Total Recall          | O(n log n) | Bottleneck: heap operations         |
 
 ### Constantes de Performance
 
-| Paramètre | Valeur | Justification |
-|-----------|--------|---------------|
-| `MaxCandidates` | 100 | Early pruning inclus |
-| `EmbeddingCache` | 1000 entrées | LRU pour query embeddings |
-| `CausalLookback` | 50 derniers FP | Fenêtre temporelle: 30 jours |
-| `OverlapCacheTTL` | 30 jours | Éviter explosion O(n²) |
-| `SessionWindow` | 2 heures | Cohérence conversationnelle |
+| Paramètre         | Valeur         | Justification                |
+| ----------------- | -------------- | ---------------------------- |
+| `MaxCandidates`   | 100            | Early pruning inclus         |
+| `EmbeddingCache`  | 1000 entrées   | LRU pour query embeddings    |
+| `CausalLookback`  | 50 derniers FP | Fenêtre temporelle: 30 jours |
+| `OverlapCacheTTL` | 30 jours       | Éviter explosion O(n²)       |
+| `SessionWindow`   | 2 heures       | Cohérence conversationnelle  |
 
 ### Benchmarks (estimés)
 
 ```
 BenchmarkCosineSimilarity-384      50M ops/sec
-BenchmarkNormalizeL2-384           20M ops/sec  
+BenchmarkNormalizeL2-384           20M ops/sec
 BenchmarkAllocateWithCache-1000    ~5ms/query
 BenchmarkAllocateNoCache-1000      ~50ms/query
 ```
@@ -505,43 +506,43 @@ system:
 storage:
   path: "./mira_data"
   sqlite:
-    journal_mode: WAL          # Write-Ahead Logging
-    synchronous: NORMAL        # Équilibre perf/sécurité
-    cache_size: -64000         # 64MB
-    mmap_size: 268435456       # 256MB
+    journal_mode: WAL # Write-Ahead Logging
+    synchronous: NORMAL # Équilibre perf/sécurité
+    cache_size: -64000 # 64MB
+    mmap_size: 268435456 # 256MB
     temp_store: MEMORY
 
 embeddings:
   current_model: "sentence-transformers/all-MiniLM-L6-v2"
-  model_hash: "a2d8f3e9"       # SHA256 truncated
+  model_hash: "a2d8f3e9" # SHA256 truncated
   dimension: 384
   batch_size: 32
-  cache_size: 1000             # LRU cache
+  cache_size: 1000 # LRU cache
 
 allocator:
-  default_budget: 4000         # tokens
+  default_budget: 4000 # tokens
   max_candidates: 100
-  early_pruning_threshold: 0.6  # ρ_min
-  session_window_seconds: 7200  # 2h
-  session_boost_beta: 0.2       # 20%
+  early_pruning_threshold: 0.6 # ρ_min
+  session_window_seconds: 7200 # 2h
+  session_boost_beta: 0.2 # 20%
   causal_penalty_alpha: 0.15
   density_sigmoid:
     k: 2.0
     mu: 0.3
 
 decay_rates:
-  decision: 0.001      # ~2 ans demi-vie
-  fact: 0.005          # ~5 mois
-  preference: 0.01     # ~2 mois
-  session_note: 0.1    # ~1 semaine
-  debug_log: 0.5       # ~1.4 jour
+  decision: 0.001 # ~2 ans demi-vie
+  fact: 0.005 # ~5 mois
+  preference: 0.01 # ~2 mois
+  session_note: 0.1 # ~1 semaine
+  debug_log: 0.5 # ~1.4 jour
 
 archive_thresholds:
-  session_note: 30     # jours
-  debug_log: 7         # jours
+  session_note: 30 # jours
+  debug_log: 7 # jours
 
 extraction:
-  max_verbatim_size: 65536     # 64KB
+  max_verbatim_size: 65536 # 64KB
   max_sentence_length: 500
   min_entity_length: 2
   causal_lookback: 50
@@ -555,6 +556,7 @@ extraction:
 ### Outils Disponibles
 
 #### `mira_store`
+
 Stocke une mémoire avec extraction automatique T0→T1,T2.
 
 ```json
@@ -566,6 +568,7 @@ Stocke une mémoire avec extraction automatique T0→T1,T2.
 ```
 
 **Réponse:**
+
 ```
 Stored: 550e8400-e29b-41d4-a716-446655440000
 Type: decision
@@ -575,6 +578,7 @@ Model: a2d8f3e9
 ```
 
 #### `mira_recall`
+
 Récupère contexte optimal avec budget.
 
 ```json
@@ -586,6 +590,7 @@ Récupère contexte optimal avec budget.
 ```
 
 **Réponse:**
+
 ```
 === MIRA CONTEXT ===
 Query: Quelle base de données? | Budget: 4000
@@ -598,6 +603,7 @@ On a décidé d'utiliser PostgreSQL pour la DB
 ```
 
 #### `mira_causal_chain`
+
 Remonte chaîne causale.
 
 ```json
@@ -609,6 +615,7 @@ Remonte chaîne causale.
 ```
 
 **Réponse:**
+
 ```
 === CAUSAL CHAIN (Upstream) ===
  → [decision] Évaluer options DB (2026-04-01)
@@ -683,6 +690,7 @@ go test -bench=. -benchmem ./budget
 ## Changelog
 
 ### v0.2.0 (2026-04-08)
+
 - ✅ Extraction UTF-8 avec patterns `\p{L}\p{N}`
 - ✅ Densité sigmoïde (k=2, μ=0.3)
 - ✅ Session boost (2h window)
@@ -693,6 +701,6 @@ go test -bench=. -benchmem ./budget
 
 ---
 
-**MIRA** - *Memory with Information-theoretic Relevance Allocation*
+**MIRA** - _Memory with Information-theoretic Relevance Allocation_
 
-*"La mémoire est la sève de l'intelligence artificielle."*
+_"La mémoire est la sève de l'intelligence artificielle."_
