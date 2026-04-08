@@ -1,17 +1,30 @@
 # Binaries
 bin/
+dist/
 *.exe
 *.dll
 *.so
 *.dylib
 mira
+mira-cli
+!cmd/mira/
 
 # Test binary
 *.test
+*_test_output.txt
+test-results/
+.jest/
+.nyc_output/
 
 # Output of the go coverage tool
 *.out
 coverage.html
+
+# Profiling files
+*.prof
+cpu.prof
+mem.prof
+*.pprof
 
 # Go workspace files
 go.work
@@ -22,9 +35,12 @@ vendor/
 
 # Data directories
 mira_data/
+data/
 *.db
 *.db-shm
 *.db-wal
+*.sqlite
+*.sqlite3
 
 # IDE
 .idea/
@@ -50,6 +66,11 @@ logs/
 tmp/
 temp/
 *.tmp
+*.bak
+*.backup
+.cache/
+__pycache__/
+.pytest_cache/
 
 # OS
 Thumbs.db
