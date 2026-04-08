@@ -8,8 +8,8 @@ import (
 func TestDefault(t *testing.T) {
 	cfg := Default()
 
-	if cfg.System.Version != "0.1.1" {
-		t.Errorf("Expected version 0.1.1, got %s", cfg.System.Version)
+	if cfg.System.Version != "0.1.0" {
+		t.Errorf("Expected version 0.1.0, got %s", cfg.System.Version)
 	}
 	if cfg.Allocator.DefaultBudget != 4000 {
 		t.Errorf("Expected default budget 4000, got %d", cfg.Allocator.DefaultBudget)

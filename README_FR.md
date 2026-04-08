@@ -1,6 +1,6 @@
 # MIRA - Memory with Information-theoretic Relevance Allocation
 
-**Version:** 0.1.1 | **Langage:** Go 1.21+ | **License:** MIT
+**Version:** 0.1.0 | **Langage:** Go 1.21+ | **License:** MIT
 
 Système de mémoire longue durée pour LLM avec allocation optimale de budget contextuel, garanties d'approximation et cohérence temporelle. 100% local, déterministe, O(n log n).
 
@@ -508,7 +508,7 @@ Puis modifiez `config.yaml` selon votre environnement.
 
 ```yaml
 system:
-  version: "0.1.1"
+  version: "0.1.0"
   max_concurrent_queries: 10
 
 storage:
@@ -699,19 +699,17 @@ go test -bench=. -benchmem ./budget
 
 ### v0.1.0 (2026-04-08)
 
-- 🚀 Nouvelle version 0.1.0
-
-### v0.1.1 (2026-04-08)
-
-- 🚀 Nouvelle version 0.1.1
-
-### v0.2.0 (2026-04-08)
-
-- ✅ Extraction UTF-8 avec patterns `\p{L}\p{N}`
-- ✅ Densité sigmoïde (k=2, μ=0.3)
-- ✅ Session boost (2h window)
-- ✅ Causal penalty (pas boost)
-- ✅ Greedy avec renormalisation dynamique
+- ✅ Version initiale
+- ✅ Architecture mémoire T0/T1/T2
+- ✅ Algorithme CBA (Context Budget Allocator)
+- ✅ Stockage SQLite avec WAL mode
+- ✅ Serveur MCP avec 7 outils
+- ✅ Graphe causal avec 5 types de relations
+- ✅ Extraction UTF-8 avec reconnaissance d'entités
+- ✅ Scoring par densité sigmoïde
+- ✅ Boost de session et pénalité causale
+- ✅ Allocation gloutonne avec renormalisation dynamique
+- ✅ Versioning des modèles d'embedding
 - ✅ Rendu selon budget restant uniquement
 - ✅ Versioning des modèles d'embedding
 
