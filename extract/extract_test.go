@@ -210,6 +210,419 @@ func TestExtractEntities(t *testing.T) {
 	t.Skip("Skipping entity extraction test - requires prose NLP model")
 }
 
+func TestExtractPipeline(t *testing.T) {
+	embedder := NewSimpleEmbedder(384)
+	ext, err := NewExtractor("test-model", embedder)
+	if err != nil {
+		t.Fatalf("NewExtractor() error = %v", err)
+	}
+
+	tests := []struct {
+		name         string
+		content      string
+		expectedType types.MemoryType
+		checkDecision bool
+	}{
+		{
+			name:         "decision extraction",
+			content:      "We decided to use PostgreSQL for the database.",
+			expectedType: types.TypeDecision,
+			checkDecision: true,
+		},
+		{
+			name:         "preference extraction",
+			content:      "I prefer using dark mode for the IDE.",
+			expectedType: types.TypePreference,
+		},
+		{
+			name:         "fact extraction",
+			content:      "The system was deployed in 2023 using Kubernetes.",
+			expectedType: types.TypeFact,
+		},
+		{
+			name:         "session note",
+			content:      "This is a general note about today's meeting.",
+			expectedType: types.TypeSessionNote,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			verbatim := &types.Verbatim{
+				ID:        uuid.New(),
+				Content:   tt.content,
+				CreatedAt: time.Now(),
+				Wing:      "test-wing",
+			}
+
+			fp, emb, err := ext.ExtractPipeline(verbatim)
+			if err != nil {
+				t.Fatalf("ExtractPipeline() error = %v", err)
+			}
+
+			// Vérifier le type
+			if fp.Type != tt.expectedType {
+				t.Errorf("Type = %v, want %v", fp.Type, tt.expectedType)
+			}
+
+			// Vérifier l'ID
+			if fp.ID != verbatim.ID {
+				t.Error("Fingerprint ID should match Verbatim ID")
+			}
+			if fp.VerbatimID != verbatim.ID {
+				t.Error("VerbatimID should match")
+			}
+
+			// Vérifier que le verbatim a été mis à jour avec le token count
+			if verbatim.TokenCount <= 0 {
+				t.Error("Verbatim TokenCount should be set")
+			}
+
+			// Vérifier l'embedding
+			if emb == nil {
+				t.Fatal("Embedding should not be nil")
+			}
+			if emb.ID != verbatim.ID {
+				t.Error("Embedding ID should match Verbatim ID")
+			}
+			if len(emb.Vector) != 384 {
+				t.Errorf("Embedding vector should have 384 dimensions, got %d", len(emb.Vector))
+			}
+			if !emb.Normalized {
+				t.Error("Embedding should be normalized")
+			}
+
+			// Vérifier les champs du fingerprint
+			if fp.ModelHash == "" {
+				t.Error("ModelHash should not be empty")
+			}
+			if fp.TokenEstimate <= 0 {
+				t.Error("TokenEstimate should be positive")
+			}
+			if fp.FactCount < 0 {
+				t.Error("FactCount should be non-negative")
+			}
+		})
+	}
+}
+
+func TestExtractPipelineEmptyContent(t *testing.T) {
+	embedder := NewSimpleEmbedder(384)
+	ext, _ := NewExtractor("test-model", embedder)
+
+	verbatim := &types.Verbatim{
+		ID:        uuid.New(),
+		Content:   "",
+		CreatedAt: time.Now(),
+	}
+
+	fp, emb, err := ext.ExtractPipeline(verbatim)
+	if err != nil {
+		t.Fatalf("ExtractPipeline() error = %v", err)
+	}
+
+	if fp == nil {
+		t.Error("Fingerprint should not be nil even for empty content")
+	}
+	if emb == nil {
+		t.Error("Embedding should not be nil even for empty content")
+	}
+}
+
+func TestModelMethods(t *testing.T) {
+	embedder := NewSimpleEmbedder(384)
+	ext, _ := NewExtractor("my-test-model", embedder)
+
+	// Test ModelHash
+	hash := ext.ModelHash()
+	if hash == "" {
+		t.Error("ModelHash should not be empty")
+	}
+	if len(hash) != 16 {
+		t.Errorf("ModelHash should be 16 chars, got %d", len(hash))
+	}
+
+	// Test ModelName
+	name := ext.ModelName()
+	if name != "my-test-model" {
+		t.Errorf("ModelName = %q, want %q", name, "my-test-model")
+	}
+
+	// Test Encode
+	vec, err := ext.Encode("test text")
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	if len(vec) != 384 {
+		t.Errorf("Encode returned vector of dim %d, want 384", len(vec))
+	}
+}
+
+func TestNormalizeL2Zero(t *testing.T) {
+	// Test zero vector
+	zero := []float32{0, 0, 0}
+	result := normalizeL2(zero)
+	
+	// Should return the same vector without division by zero
+	if len(result) != 3 {
+		t.Error("Zero vector normalization should preserve length")
+	}
+}
+
+func TestHashStringDeterministic(t *testing.T) {
+	// Test que hashString est déterministe
+	h1 := hashString("test")
+	h2 := hashString("test")
+	h3 := hashString("different")
+
+	if h1 != h2 {
+		t.Error("hashString should be deterministic")
+	}
+	if h1 == h3 {
+		t.Error("Different strings should have different hashes")
+	}
+}
+
+func TestHasOverlapEdgeCases(t *testing.T) {
+	// Test avec deux slices vides
+	if hasOverlap([]string{}, []string{}) {
+		t.Error("Two empty slices should not overlap")
+	}
+
+	// Test avec un élément
+	if !hasOverlap([]string{"a"}, []string{"a"}) {
+		t.Error("Single matching element should overlap")
+	}
+
+	// Test avec éléments dupliqués
+	if !hasOverlap([]string{"a", "a", "b"}, []string{"a"}) {
+		t.Error("Should find overlap even with duplicates")
+	}
+}
+
+func TestDetectCausalRelationsNoOverlap(t *testing.T) {
+	embedder := NewSimpleEmbedder(384)
+	ext, _ := NewExtractor("test-model", embedder)
+
+	newFp := &types.Fingerprint{
+		ID:          uuid.New(),
+		Type:        types.TypeDecision,
+		Entities:    []string{"API"},
+		Subjects:    []string{"migration"},
+		ExtractedAt: time.Now(),
+	}
+
+	// Fingerprint récent sans chevauchement
+	recentFps := []*types.Fingerprint{
+		{
+			ID:          uuid.New(),
+			Type:        types.TypeDecision,
+			Entities:    []string{"Database", "Cache"}, // Pas de chevauchement avec "API"
+			Subjects:    []string{"optimization"},      // Pas de chevauchement avec "migration"
+			ExtractedAt: time.Now().Add(-1 * time.Hour),
+		},
+	}
+
+	// Texte avec pattern causal
+	content := "Following the previous decision, we will migrate the API"
+	edges, err := ext.DetectCausalRelations(newFp, recentFps, content)
+	if err != nil {
+		t.Fatalf("DetectCausalRelations failed: %v", err)
+	}
+
+	// Ne devrait pas détecter de relation car pas de chevauchement
+	if len(edges) != 0 {
+		t.Errorf("Expected 0 edges without overlap, got %d", len(edges))
+	}
+}
+
+func TestDetectCausalRelationsTooOld(t *testing.T) {
+	embedder := NewSimpleEmbedder(384)
+	ext, _ := NewExtractor("test-model", embedder)
+
+	newFp := &types.Fingerprint{
+		ID:          uuid.New(),
+		Type:        types.TypeDecision,
+		Entities:    []string{"API"},
+		Subjects:    []string{"migration"},
+		ExtractedAt: time.Now(),
+	}
+
+	// Fingerprint trop vieux (>30 jours)
+	recentFps := []*types.Fingerprint{
+		{
+			ID:          uuid.New(),
+			Type:        types.TypeDecision,
+			Entities:    []string{"API"},       // Chevauchement
+			Subjects:    []string{"migration"}, // Chevauchement
+			ExtractedAt: time.Now().Add(-40 * 24 * time.Hour), // 40 jours
+		},
+	}
+
+	content := "Following the previous decision, we will migrate the API"
+	edges, err := ext.DetectCausalRelations(newFp, recentFps, content)
+	if err != nil {
+		t.Fatalf("DetectCausalRelations failed: %v", err)
+	}
+
+	// Ne devrait pas détecter de relation car trop vieux
+	if len(edges) != 0 {
+		t.Errorf("Expected 0 edges for old fingerprint, got %d", len(edges))
+	}
+}
+
+func TestDetectCausalRelationsSelfReference(t *testing.T) {
+	embedder := NewSimpleEmbedder(384)
+	ext, _ := NewExtractor("test-model", embedder)
+
+	id := uuid.New()
+	newFp := &types.Fingerprint{
+		ID:          id,
+		Type:        types.TypeDecision,
+		Entities:    []string{"API"},
+		Subjects:    []string{"migration"},
+		ExtractedAt: time.Now(),
+	}
+
+	// Essayer de créer une relation avec soi-même
+	recentFps := []*types.Fingerprint{
+		{
+			ID:          id, // Même ID
+			Type:        types.TypeDecision,
+			Entities:    []string{"API"},
+			Subjects:    []string{"migration"},
+			ExtractedAt: time.Now().Add(-1 * time.Hour),
+		},
+	}
+
+	content := "Following the previous decision, we will migrate the API"
+	edges, err := ext.DetectCausalRelations(newFp, recentFps, content)
+	if err != nil {
+		t.Fatalf("DetectCausalRelations failed: %v", err)
+	}
+
+	// Ne devrait pas créer d'auto-référence
+	if len(edges) != 0 {
+		t.Error("Should not create self-references")
+	}
+}
+
+func TestInferSubjectFallback(t *testing.T) {
+	ext := &Extractor{}
+
+	// Test fallback sur entités
+	result := ext.inferSubject("Random content", []string{"ProjectX", "API"})
+	if len(result) == 0 || result[0] != "ProjectX" {
+		t.Error("Should fallback to first entity")
+	}
+
+	// Test fallback sur "general"
+	result = ext.inferSubject("Random content", nil)
+	if len(result) == 0 || result[0] != "general" {
+		t.Error("Should fallback to 'general'")
+	}
+}
+
+func TestExtractPipelineVerbatimRef(t *testing.T) {
+	embedder := NewSimpleEmbedder(384)
+	ext, _ := NewExtractor("test-model", embedder)
+
+	id := uuid.New()
+	verbatim := &types.Verbatim{
+		ID:        id,
+		Content:   "Test content.",
+		CreatedAt: time.Now(),
+	}
+
+	fp, _, err := ext.ExtractPipeline(verbatim)
+	if err != nil {
+		t.Fatalf("ExtractPipeline() error = %v", err)
+	}
+
+	wantRef := "T0:" + id.String()
+	if fp.Data.VerbatimRef != wantRef {
+		t.Errorf("VerbatimRef = %q, want %q", fp.Data.VerbatimRef, wantRef)
+	}
+}
+
+func TestExtractStructuredPatterns(t *testing.T) {
+	embedder := NewSimpleEmbedder(384)
+	ext, _ := NewExtractor("test-model", embedder)
+
+	tests := []struct {
+		name         string
+		content      string
+		wantDecision string
+		wantRejected int
+		wantReason   int
+		wantAssignee string
+		wantDeadline string
+	}{
+		{
+			name:         "decision pattern: decided to",
+			content:      "We decided to use PostgreSQL",
+			wantDecision: "PostgreSQL",
+		},
+		{
+			name:         "decision pattern: will use",
+			content:      "We will use Redis for caching",
+			wantDecision: "Redis for caching",
+		},
+		{
+			name:         "rejected pattern",
+			content:      "Decision: Use PostgreSQL. Rejected: MySQL, MongoDB.",
+			wantDecision: "Use PostgreSQL",
+			wantRejected: 2,
+		},
+		{
+			name:       "reason pattern: because",
+			content:    "We chose PostgreSQL because it has better performance",
+			wantReason: 1,
+		},
+		{
+			name:         "assignee pattern: will implement",
+			content:      "John will implement the authentication",
+			wantAssignee: "John",
+		},
+		{
+			name:         "deadline pattern: sprint",
+			content:      "This will be done in Sprint 5",
+			wantDeadline: "5",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			verbatim := &types.Verbatim{
+				ID:        uuid.New(),
+				Content:   tt.content,
+				CreatedAt: time.Now(),
+			}
+
+			fp, _, err := ext.ExtractPipeline(verbatim)
+			if err != nil {
+				t.Fatalf("ExtractPipeline() error = %v", err)
+			}
+
+			if tt.wantDecision != "" && fp.Data.Decision != tt.wantDecision {
+				t.Errorf("Decision = %q, want %q", fp.Data.Decision, tt.wantDecision)
+			}
+			if len(fp.Data.Rejected) != tt.wantRejected {
+				t.Errorf("Rejected count = %d, want %d", len(fp.Data.Rejected), tt.wantRejected)
+			}
+			if len(fp.Data.Reason) != tt.wantReason {
+				t.Errorf("Reason count = %d, want %d", len(fp.Data.Reason), tt.wantReason)
+			}
+			if tt.wantAssignee != "" && fp.Data.Assignee != tt.wantAssignee {
+				t.Errorf("Assignee = %q, want %q", fp.Data.Assignee, tt.wantAssignee)
+			}
+			if tt.wantDeadline != "" && fp.Data.Deadline != tt.wantDeadline {
+				t.Errorf("Deadline = %q, want %q", fp.Data.Deadline, tt.wantDeadline)
+			}
+		})
+	}
+}
+
 func BenchmarkNormalizeL2(b *testing.B) {
 	vec := make([]float32, 384)
 	for i := 0; i < 384; i++ {
