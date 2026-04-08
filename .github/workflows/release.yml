@@ -114,10 +114,10 @@ jobs:
           if [[ $GITHUB_REF == refs/tags/v* ]]; then
             VERSION=${GITHUB_REF#refs/tags/v}
           else
-            VERSION=$(grep 'Version:' config/config.go | grep -o '"[0-9.]*"' | tr -d '"')
+            VERSION=$(grep -E 'Version:\s*"[0-9]+\.[0-9]+\.[0-9]+"' config/config.go | head -1 | grep -o '"[0-9.]*"' | tr -d '"')
             VERSION="${VERSION}-dev"
           fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Version: $VERSION"
 
       - name: Create Draft Release
