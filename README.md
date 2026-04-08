@@ -10,16 +10,53 @@ Long-term memory system for LLMs with optimal context budget allocation, approxi
 
 ## Table of Contents
 
-1. [System Architecture](#system-architecture)
-2. [Data Model](#data-model)
-3. [Scoring Mathematics](#scoring-mathematics)
-4. [Extraction Pipeline](#extraction-pipeline)
-5. [Allocation Algorithm](#allocation-algorithm)
-6. [Causal Graph](#causal-graph)
-7. [Performance & Complexity](#performance--complexity)
-8. [Configuration](#configuration)
-9. [MCP API](#mcp-api)
-10. [Development](#development)
+1. [Installation](#installation)
+2. [System Architecture](#system-architecture)
+3. [Data Model](#data-model)
+4. [Scoring Mathematics](#scoring-mathematics)
+5. [Extraction Pipeline](#extraction-pipeline)
+6. [Allocation Algorithm](#allocation-algorithm)
+7. [Causal Graph](#causal-graph)
+8. [Performance & Complexity](#performance--complexity)
+9. [Configuration](#configuration)
+10. [MCP API](#mcp-api)
+11. [Development](#development)
+
+---
+
+## Installation
+
+### From Source (Go 1.21+)
+
+```bash
+go install github.com/benoitpetit/mira/cmd/mira@latest
+```
+
+### From Binary Releases
+
+Download pre-built binaries from the [Releases page](https://github.com/benoitpetit/mira/releases):
+
+```bash
+# Linux/macOS
+tar -xzf mira-linux-amd64.tar.gz
+sudo mv mira /usr/local/bin/
+mira --version
+
+# Windows
+unzip mira-windows-amd64.zip
+.\mira.exe --version
+```
+
+### Quick Start
+
+```bash
+# 1. Copy and edit configuration
+cp config.example.yaml config.yaml
+# Edit config.yaml to match your environment
+
+# 2. Run the MCP server
+mira
+```
 
 ---
 

@@ -8,16 +8,53 @@ Système de mémoire longue durée pour LLM avec allocation optimale de budget c
 
 ## Table des Matières
 
-1. [Architecture Système](#architecture-système)
-2. [Modèle de Données](#modèle-de-données)
-3. [Mathématiques du Scoring](#mathématiques-du-scoring)
-4. [Pipeline d'Extraction](#pipeline-dextraction)
-5. [Algorithme d'Allocation](#algorithme-dallocation)
-6. [Graphe Causal](#graphe-causal)
-7. [Performance & Complexité](#performance--complexité)
-8. [Configuration](#configuration)
-9. [API MCP](#api-mcp)
-10. [Développement](#développement)
+1. [Installation](#installation)
+2. [Architecture Système](#architecture-système)
+3. [Modèle de Données](#modèle-de-données)
+4. [Mathématiques du Scoring](#mathématiques-du-scoring)
+5. [Pipeline d'Extraction](#pipeline-dextraction)
+6. [Algorithme d'Allocation](#algorithme-dallocation)
+7. [Graphe Causal](#graphe-causal)
+8. [Performance & Complexité](#performance--complexité)
+9. [Configuration](#configuration)
+10. [API MCP](#api-mcp)
+11. [Développement](#développement)
+
+---
+
+## Installation
+
+### Depuis les sources (Go 1.21+)
+
+```bash
+go install github.com/benoitpetit/mira/cmd/mira@latest
+```
+
+### Depuis les releases binaires
+
+Téléchargez les binaires pré-compilés depuis la page [Releases](https://github.com/benoitpetit/mira/releases) :
+
+```bash
+# Linux/macOS
+tar -xzf mira-linux-amd64.tar.gz
+sudo mv mira /usr/local/bin/
+mira --version
+
+# Windows
+unzip mira-windows-amd64.zip
+.\mira.exe --version
+```
+
+### Démarrage rapide
+
+```bash
+# 1. Copier et éditer la configuration
+cp config.example.yaml config.yaml
+# Éditer config.yaml selon votre environnement
+
+# 2. Lancer le serveur MCP
+mira
+```
 
 ---
 
