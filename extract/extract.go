@@ -12,7 +12,7 @@ import (
 
 	"github.com/jdkato/prose/v2"
 	"github.com/pkoukk/tiktoken-go"
-	"mira/types"
+	"github.com/benoitpetit/mira/types"
 )
 
 const (

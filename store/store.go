@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	_ "github.com/mattn/go-sqlite3"
-	"mira/types"
+	"github.com/benoitpetit/mira/types"
 )
 
 // Store manages SQLite persistence

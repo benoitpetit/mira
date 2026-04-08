@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"mira/types"
+	"github.com/benoitpetit/mira/types"
 )
 
 func TestNormalizeL2(t *testing.T) {

@@ -10,14 +10,14 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/server"
-	"mira/budget"
-	"mira/causal"
-	"mira/config"
-	"mira/extract"
-	mcpserver "mira/mcp"
-	"mira/store"
-	"mira/types"
-	"mira/vector"
+	"github.com/benoitpetit/mira/budget"
+	"github.com/benoitpetit/mira/causal"
+	"github.com/benoitpetit/mira/config"
+	"github.com/benoitpetit/mira/extract"
+	mcpserver "github.com/benoitpetit/mira/mcp"
+	"github.com/benoitpetit/mira/store"
+	"github.com/benoitpetit/mira/types"
+	"github.com/benoitpetit/mira/vector"
 )
 
 func main() {
