@@ -1,0 +1,43 @@
+.PHONY: build test clean run migrate deps lint install
+
+BINARY=mira
+GO=go
+GOFLAGS=-ldflags="-s -w"
+
+build:
+	mkdir -p bin
+	$(GO) build $(GOFLAGS) -o bin/$(BINARY) ./cmd/mira
+
+test:
+	$(GO) test -v -race ./...
+
+test-short:
+	$(GO) test -v ./... -short
+
+bench:
+	$(GO) test -bench=. -benchmem ./...
+
+clean:
+	rm -rf bin/ ./mira_data/
+
+run: build
+	./bin/$(BINARY) --config config.yaml
+
+migrate: build
+	./bin/$(BINARY) --config config.yaml --migrate
+
+deps:
+	$(GO) mod download
+	$(GO) mod tidy
+
+lint:
+	golangci-lint run ./...
+	$(GO) vet ./...
+
+fmt:
+	$(GO) fmt ./...
+
+install: build
+	cp bin/$(BINARY) $(GOPATH)/bin/$(BINARY) 2>/dev/null || cp bin/$(BINARY) ~/go/bin/$(BINARY) 2>/dev/null || echo "Please add bin/ to your PATH"
+
+.DEFAULT_GOAL := build

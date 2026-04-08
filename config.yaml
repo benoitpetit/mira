@@ -1,0 +1,66 @@
+system:
+  version: "0.2.0"
+  max_concurrent_queries: 10
+
+storage:
+  path: "./mira_data"
+  sqlite:
+    journal_mode: WAL
+    synchronous: NORMAL
+    cache_size: -64000
+    mmap_size: 268435456
+    temp_store: MEMORY
+
+embeddings:
+  current_model: "sentence-transformers/all-MiniLM-L6-v2"
+  model_hash: "a2d8f3e9"
+  dimension: 384
+  batch_size: 32
+  cache_size: 1000
+
+vector_index:
+  type: "hnswlib"
+  path: "./mira_data/vectors.bin"
+  ef_construction: 200
+  ef_search: 50
+  M: 16
+  max_elements: 100000
+
+allocator:
+  default_budget: 4000
+  max_candidates: 100
+  early_pruning_threshold: 0.6
+  session_window_seconds: 7200
+  session_boost_beta: 0.2
+  causal_penalty_alpha: 0.15
+  density_sigmoid:
+    k: 2.0
+    mu: 0.3
+
+decay_rates:
+  decision: 0.001
+  fact: 0.005
+  preference: 0.01
+  session_note: 0.1
+  debug_log: 0.5
+
+archive_thresholds:
+  session_note: 30
+  debug_log: 7
+
+overlap_cache:
+  ttl_days: 30
+  max_entries: 1000000
+
+extraction:
+  max_verbatim_size: 65536
+  max_sentence_length: 500
+  min_entity_length: 2
+  causal_lookback: 50
+  causal_max_days: 30
+
+mcp:
+  name: "mira"
+  version: "0.2.0"
+  transport: "stdio"
+  timeout_seconds: 30
