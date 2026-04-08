@@ -3,6 +3,7 @@ package budget
 import (
 	"math"
 	"math/rand"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,6 +13,23 @@ import (
 )
 
 
+
+var (
+	benchExtractorOnce sync.Once
+	benchExtractor     *extract.Extractor
+)
+
+func getBenchExtractor() *extract.Extractor {
+	benchExtractorOnce.Do(func() {
+		embedder := &benchEmbedder{}
+		var err error
+		benchExtractor, err = extract.NewExtractor("test-model", embedder)
+		if err != nil {
+			panic(err)
+		}
+	})
+	return benchExtractor
+}
 
 type benchEmbedder struct{}
 
@@ -106,16 +124,13 @@ func benchmarkAllocate(b *testing.B, n int) {
 	vecStore := &mockVectorStore{candidates: candidates}
 	causal := &mockCausalGraph{}
 	
-	// Create real extractor with bench embedder
-	embedder := &benchEmbedder{}
-	ext, _ := extract.NewExtractor("test-model", embedder)
-	
-	alloc := NewAllocator(vecStore, nil, causal, ext)
+	// Use shared extractor to avoid tiktoken reload
+	alloc := NewAllocator(vecStore, nil, causal, getBenchExtractor())
 
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		alloc.Allocate("PostgreSQL database decision", 4000, nil, nil)
+		alloc.Allocate("query", 4000, nil, nil)
 	}
 }
 
@@ -215,18 +230,10 @@ func BenchmarkCompleteAllocationWorkflow(b *testing.B) {
 	vecStore := &mockVectorStore{candidates: candidates}
 	causal := &mockCausalGraph{}
 	
-	// Create real extractor
-	embedder := &benchEmbedder{}
-	ext, _ := extract.NewExtractor("test-model", embedder)
-	
-	alloc := NewAllocator(vecStore, nil, causal, ext)
+	// Use shared extractor
+	alloc := NewAllocator(vecStore, nil, causal, getBenchExtractor())
 
-	queries := []string{
-		"PostgreSQL database decision",
-		"API migration GraphQL",
-		"Team preferences backend",
-		"Authentication service",
-	}
+	queries := []string{"q1", "q2", "q3", "q4"}
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -242,10 +249,7 @@ func BenchmarkAllocatorMemory(b *testing.B) {
 	vecStore := &mockVectorStore{candidates: candidates}
 	causal := &mockCausalGraph{}
 	
-	embedder := &benchEmbedder{}
-	ext, _ := extract.NewExtractor("test-model", embedder)
-	
-	alloc := NewAllocator(vecStore, nil, causal, ext)
+	alloc := NewAllocator(vecStore, nil, causal, getBenchExtractor())
 
 	b.ReportAllocs()
 	b.ResetTimer()

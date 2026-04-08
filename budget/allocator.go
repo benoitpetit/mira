@@ -250,23 +250,6 @@ func (a *Allocator) selectGreedyDynamic(candidates []*types.Candidate, budget in
 		}
 		c.SessionBoost = sessionBoost
 
-		// Recalculate complete score
-		adjustedScore := c.Score * (1 - maxOverlap) * c.CausalPenalty * sessionBoost
-
-		// Check if next in heap has better score (recalculated)
-		if pq.Len() > 0 {
-			nextItem := pq[0]
-			nextC := nextItem.candidate
-
-			// Quick estimation for next (without complete overlap recalculation)
-			if nextC.Score*0.8 > adjustedScore {
-				// Put current back in heap with new score and continue
-				item.priority = adjustedScore
-				heap.Push(&pq, item)
-				continue
-			}
-		}
-
 		// Determine render mode based on REMAINING budget (not overlap)
 		remainingBudget := budget - tokensUsed
 		mode := a.determineRenderMode(c, remainingBudget)

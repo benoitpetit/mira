@@ -4,6 +4,8 @@
 
 Long-term memory system for LLMs with optimal context budget allocation, approximation guarantees, and temporal coherence. 100% local, deterministic, O(n log n).
 
+![MIRA Logo](./logo.png)
+
 ---
 
 ## Table of Contents
@@ -85,28 +87,28 @@ Each memory `m ∈ ℳ` is a tuple:
 m = (id, t₀, t₁, t₂, c, τ, ω, γ, δ, ν)
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | UUIDv4 (128 bits) | Unique identifier |
-| `t₀` | Σ* (UTF-8, max 64KB) | Verbatim - original text |
-| `t₁` | Canonical JSON | Structured fingerprint |
-| `t₂` | ℝ³⁸⁴ | Embedding vector (all-MiniLM-L6-v2) |
-| `c` | ℕ | Token count (tiktoken cl100k_base) |
-| `τ` | ℝ⁺ | UNIX timestamp (seconds) |
-| `ω` | Ω | Memory type (enum) |
-| `γ` | Γ | Causal graph (node + edges) |
-| `δ` | ℝ⁺ | Decay rate λ_ω by type |
-| `ν` | {0,1}³² | Embedding model hash |
+| Field | Type                  | Description                         |
+| ----- | --------------------- | ----------------------------------- |
+| `id`  | UUIDv4 (128 bits)     | Unique identifier                   |
+| `t₀`  | Σ\* (UTF-8, max 64KB) | Verbatim - original text            |
+| `t₁`  | Canonical JSON        | Structured fingerprint              |
+| `t₂`  | ℝ³⁸⁴                  | Embedding vector (all-MiniLM-L6-v2) |
+| `c`   | ℕ                     | Token count (tiktoken cl100k_base)  |
+| `τ`   | ℝ⁺                    | UNIX timestamp (seconds)            |
+| `ω`   | Ω                     | Memory type (enum)                  |
+| `γ`   | Γ                     | Causal graph (node + edges)         |
+| `δ`   | ℝ⁺                    | Decay rate λ_ω by type              |
+| `ν`   | {0,1}³²               | Embedding model hash                |
 
 ### Memory Types and Decay Rates
 
-| Type ω | λ_ω (day⁻¹) | Half-life | Auto Archive | Usage |
-|--------|-------------|-----------|--------------|-------|
-| `decision` | 0.001 | ~693 days | No | Architectural decisions |
-| `fact` | 0.005 | ~139 days | No | Facts, knowledge |
-| `preference` | 0.01 | ~69 days | No | User preferences |
-| `session_note` | 0.1 | ~7 days | 30 days | Session notes |
-| `debug_log` | 0.5 | ~1.4 days | 7 days | Debug logs |
+| Type ω         | λ_ω (day⁻¹) | Half-life | Auto Archive | Usage                   |
+| -------------- | ----------- | --------- | ------------ | ----------------------- |
+| `decision`     | 0.001       | ~693 days | No           | Architectural decisions |
+| `fact`         | 0.005       | ~139 days | No           | Facts, knowledge        |
+| `preference`   | 0.01        | ~69 days  | No           | User preferences        |
+| `session_note` | 0.1         | ~7 days   | 30 days      | Session notes           |
+| `debug_log`    | 0.5         | ~1.4 days | 7 days       | Debug logs              |
 
 ### SQL Schema (SQLite)
 
@@ -229,6 +231,7 @@ With L2 pre-normalization:
 ```
 
 Sigmoid parameters:
+
 - `μ = 0.3`: center (5 facts/100 tokens = neutral)
 - `k = 2.0`: slope
 
@@ -296,7 +299,7 @@ entities := extractEntities(doc)  // PERSON, ORG, GPE
 
 // Type detection with strict priority
 if matchDecision(content) → TypeDecision
-else if matchPreference(content) → TypePreference  
+else if matchPreference(content) → TypePreference
 else if matchFact(content) → TypeFact
 else → TypeSessionNote
 ```
@@ -402,11 +405,11 @@ vector = normalize_L2(vector)
 
 Mode depends only on **remaining budget**, not overlap:
 
-| Remaining Budget | Mode | Tokens | Content |
-|-----------------|------|--------|---------|
-| < 100 | Header | 2-5 | `[type|date|wing] → T0:id` |
-| < 1000 | Fingerprint | ~15% | Essential facts T1 |
-| ≥ 1000 | Verbatim | 100% | Original text T0 |
+| Remaining Budget | Mode        | Tokens | Content            |
+| ---------------- | ----------- | ------ | ------------------ | ---- | -------------- |
+| < 100            | Header      | 2-5    | `[type             | date | wing] → T0:id` |
+| < 1000           | Fingerprint | ~15%   | Essential facts T1 |
+| ≥ 1000           | Verbatim    | 100%   | Original text T0   |
 
 ---
 
@@ -414,13 +417,13 @@ Mode depends only on **remaining budget**, not overlap:
 
 ### Supported Relations
 
-| Relation | Direction | Semantics |
-|----------|-----------|-----------|
-| `BECAUSE` | A ← B | B explains A |
-| `TRIGGERED` | A ← B | B triggered A |
-| `CONTRADICTS` | A ↔ B | A and B contradict |
-| `UPDATES` | A ← B | B replaces/updates A |
-| `RESOLVES` | A ← B | B resolves issue A |
+| Relation      | Direction | Semantics            |
+| ------------- | --------- | -------------------- |
+| `BECAUSE`     | A ← B     | B explains A         |
+| `TRIGGERED`   | A ← B     | B triggered A        |
+| `CONTRADICTS` | A ↔ B     | A and B contradict   |
+| `UPDATES`     | A ← B     | B replaces/updates A |
+| `RESOLVES`    | A ← B     | B resolves issue A   |
 
 ### Causal Relation Detection
 
@@ -430,14 +433,14 @@ Output: list of causal edges
 
 for each existing in recent_fps:
     if time_diff > 30 days: continue
-    
+
     for each (relation, pattern) in causal_patterns:
         if pattern.match(verbatim_content):
             # Check implicit reference
             if hasOverlap(new_fp.entities, existing.entities) OR
                hasOverlap(new_fp.subjects, existing.subjects) OR
                content.contains(existing.id[:8]):
-               
+
                edge ← CausalEdge{
                    from: existing.id,
                    to: new_fp.id,
@@ -453,7 +456,7 @@ for each existing in recent_fps:
 // GetChain: trace back causes (parents)
 func (g *Graph) GetChain(nodeID UUID, maxDepth int) []*CausalNode
 
-// GetConsequences: follow effects (children)  
+// GetConsequences: follow effects (children)
 func (g *Graph) GetConsequences(nodeID UUID, maxDepth int) []*CausalNode
 ```
 
@@ -463,30 +466,30 @@ func (g *Graph) GetConsequences(nodeID UUID, maxDepth int) []*CausalNode
 
 ### Algorithmic Complexities
 
-| Operation | Complexity | Notes |
-|-----------|-----------|-------|
-| Storage (T0→T1,T2) | O(1) | Amortized, single insertion |
-| Vector search | O(n) | SQLite linear scan (HNSW: O(log n)) |
-| Scoring | O(n) | n = number of candidates |
-| Greedy Allocation | O(n log n) | Max-heap operations |
-| Causal Graph BFS | O(V + E) | V=nodes, E=edges |
-| Total Recall | O(n log n) | Bottleneck: heap operations |
+| Operation          | Complexity | Notes                               |
+| ------------------ | ---------- | ----------------------------------- |
+| Storage (T0→T1,T2) | O(1)       | Amortized, single insertion         |
+| Vector search      | O(n)       | SQLite linear scan (HNSW: O(log n)) |
+| Scoring            | O(n)       | n = number of candidates            |
+| Greedy Allocation  | O(n log n) | Max-heap operations                 |
+| Causal Graph BFS   | O(V + E)   | V=nodes, E=edges                    |
+| Total Recall       | O(n log n) | Bottleneck: heap operations         |
 
 ### Performance Constants
 
-| Parameter | Value | Justification |
-|-----------|-------|---------------|
-| `MaxCandidates` | 100 | Early pruning included |
-| `EmbeddingCache` | 1000 entries | LRU for query embeddings |
-| `CausalLookback` | 50 latest FP | Time window: 30 days |
-| `OverlapCacheTTL` | 30 days | Avoid O(n²) explosion |
-| `SessionWindow` | 2 hours | Conversational coherence |
+| Parameter         | Value        | Justification            |
+| ----------------- | ------------ | ------------------------ |
+| `MaxCandidates`   | 100          | Early pruning included   |
+| `EmbeddingCache`  | 1000 entries | LRU for query embeddings |
+| `CausalLookback`  | 50 latest FP | Time window: 30 days     |
+| `OverlapCacheTTL` | 30 days      | Avoid O(n²) explosion    |
+| `SessionWindow`   | 2 hours      | Conversational coherence |
 
 ### Benchmarks (estimated)
 
 ```
 BenchmarkCosineSimilarity-384      50M ops/sec
-BenchmarkNormalizeL2-384           20M ops/sec  
+BenchmarkNormalizeL2-384           20M ops/sec
 BenchmarkAllocateWithCache-1000    ~5ms/query
 BenchmarkAllocateNoCache-1000      ~50ms/query
 ```
@@ -505,43 +508,43 @@ system:
 storage:
   path: "./mira_data"
   sqlite:
-    journal_mode: WAL          # Write-Ahead Logging
-    synchronous: NORMAL        # Balance perf/safety
-    cache_size: -64000         # 64MB
-    mmap_size: 268435456       # 256MB
+    journal_mode: WAL # Write-Ahead Logging
+    synchronous: NORMAL # Balance perf/safety
+    cache_size: -64000 # 64MB
+    mmap_size: 268435456 # 256MB
     temp_store: MEMORY
 
 embeddings:
   current_model: "sentence-transformers/all-MiniLM-L6-v2"
-  model_hash: "a2d8f3e9"       # SHA256 truncated
+  model_hash: "a2d8f3e9" # SHA256 truncated
   dimension: 384
   batch_size: 32
-  cache_size: 1000             # LRU cache
+  cache_size: 1000 # LRU cache
 
 allocator:
-  default_budget: 4000         # tokens
+  default_budget: 4000 # tokens
   max_candidates: 100
-  early_pruning_threshold: 0.6  # ρ_min
-  session_window_seconds: 7200  # 2h
-  session_boost_beta: 0.2       # 20%
+  early_pruning_threshold: 0.6 # ρ_min
+  session_window_seconds: 7200 # 2h
+  session_boost_beta: 0.2 # 20%
   causal_penalty_alpha: 0.15
   density_sigmoid:
     k: 2.0
     mu: 0.3
 
 decay_rates:
-  decision: 0.001      # ~2 years half-life
-  fact: 0.005          # ~5 months
-  preference: 0.01     # ~2 months
-  session_note: 0.1    # ~1 week
-  debug_log: 0.5       # ~1.4 day
+  decision: 0.001 # ~2 years half-life
+  fact: 0.005 # ~5 months
+  preference: 0.01 # ~2 months
+  session_note: 0.1 # ~1 week
+  debug_log: 0.5 # ~1.4 day
 
 archive_thresholds:
-  session_note: 30     # days
-  debug_log: 7         # days
+  session_note: 30 # days
+  debug_log: 7 # days
 
 extraction:
-  max_verbatim_size: 65536     # 64KB
+  max_verbatim_size: 65536 # 64KB
   max_sentence_length: 500
   min_entity_length: 2
   causal_lookback: 50
@@ -555,6 +558,7 @@ extraction:
 ### Available Tools
 
 #### `mira_store`
+
 Store a memory with automatic T0→T1,T2 extraction.
 
 ```json
@@ -566,6 +570,7 @@ Store a memory with automatic T0→T1,T2 extraction.
 ```
 
 **Response:**
+
 ```
 Stored: 550e8400-e29b-41d4-a716-446655440000
 Type: decision
@@ -575,6 +580,7 @@ Model: a2d8f3e9
 ```
 
 #### `mira_recall`
+
 Retrieve optimal context with budget.
 
 ```json
@@ -586,6 +592,7 @@ Retrieve optimal context with budget.
 ```
 
 **Response:**
+
 ```
 === MIRA CONTEXT ===
 Query: Which database should we use? | Budget: 4000
@@ -598,6 +605,7 @@ We decided to use PostgreSQL for the database
 ```
 
 #### `mira_causal_chain`
+
 Trace back causal chain.
 
 ```json
@@ -609,6 +617,7 @@ Trace back causal chain.
 ```
 
 **Response:**
+
 ```
 === CAUSAL CHAIN (Upstream) ===
  → [decision] Evaluate DB options (2026-04-01)
@@ -683,6 +692,7 @@ go test -bench=. -benchmem ./budget
 ## Changelog
 
 ### v0.2.0 (2026-04-08)
+
 - ✅ UTF-8 extraction with `\p{L}\p{N}` patterns
 - ✅ Sigmoid density (k=2, μ=0.3)
 - ✅ Session boost (2h window)
@@ -693,6 +703,6 @@ go test -bench=. -benchmem ./budget
 
 ---
 
-**MIRA** - *Memory with Information-theoretic Relevance Allocation*
+**MIRA** - _Memory with Information-theoretic Relevance Allocation_
 
-*"Memory is the sap of artificial intelligence."*
+_"Memory is the sap of artificial intelligence."_

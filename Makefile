@@ -15,6 +15,9 @@ test-short:
 	$(GO) test -v ./... -short
 
 bench:
+	$(GO) test -bench=. -benchmem -benchtime=100ms -count=1 ./...
+
+bench-full:
 	$(GO) test -bench=. -benchmem ./...
 
 clean:
