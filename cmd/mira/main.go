@@ -29,7 +29,7 @@ func main() {
 	flag.Parse()
 
 	if *version {
-		fmt.Println("MIRA v0.2.0 - Memory with Information-theoretic Relevance Allocation")
+		fmt.Println("MIRA v0.1.1 - Memory with Information-theoretic Relevance Allocation")
 		os.Exit(0)
 	}
 

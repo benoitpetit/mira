@@ -1,5 +1,5 @@
 system:
-  version: "0.2.0"
+  version: "0.1.1"
   max_concurrent_queries: 10
 
 storage:
@@ -61,6 +61,6 @@ extraction:
 
 mcp:
   name: "mira"
-  version: "0.2.0"
+  version: "0.1.1"
   transport: "stdio"
   timeout_seconds: 30

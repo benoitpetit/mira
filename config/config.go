@@ -94,7 +94,7 @@ type MCPConfig struct {
 func Default() *Config {
 	return &Config{
 		System: SystemConfig{
-			Version:              "0.2.0",
+			Version:        "0.1.1",
 			MaxConcurrentQueries: 10,
 		},
 		Storage: StorageConfig{
@@ -158,7 +158,7 @@ func Default() *Config {
 		},
 		MCP: MCPConfig{
 			Name:           "mira",
-			Version:        "0.2.0",
+			Version:        "0.1.1",
 			Transport:      "stdio",
 			TimeoutSeconds: 30,
 		},

@@ -1,6 +1,6 @@
 # MIRA - Memory with Information-theoretic Relevance Allocation
 
-**Version:** 0.2.0 | **Langage:** Go 1.21+ | **License:** MIT
+**Version:** 0.1.1 | **Langage:** Go 1.21+ | **License:** MIT
 
 Système de mémoire longue durée pour LLM avec allocation optimale de budget contextuel, garanties d'approximation et cohérence temporelle. 100% local, déterministe, O(n log n).
 
@@ -496,11 +496,19 @@ BenchmarkAllocateNoCache-1000      ~50ms/query
 
 ## Configuration
 
-### Fichier config.yaml
+### Fichier de Configuration
+
+Copiez le fichier d'exemple :
+
+```bash
+cp config.example.yaml config.yaml
+```
+
+Puis modifiez `config.yaml` selon votre environnement.
 
 ```yaml
 system:
-  version: "0.2.0"
+  version: "0.1.1"
   max_concurrent_queries: 10
 
 storage:
@@ -688,6 +696,14 @@ go test -bench=. -benchmem ./budget
 ---
 
 ## Changelog
+
+### v0.1.0 (2026-04-08)
+
+- 🚀 Nouvelle version 0.1.0
+
+### v0.1.1 (2026-04-08)
+
+- 🚀 Nouvelle version 0.1.1
 
 ### v0.2.0 (2026-04-08)
 

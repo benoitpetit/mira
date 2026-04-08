@@ -1,0 +1,172 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - prod
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Binaries
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            suffix: linux-amd64
+          - goos: linux
+            goarch: arm64
+            suffix: linux-arm64
+          - goos: darwin
+            goarch: amd64
+            suffix: darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            suffix: darwin-arm64
+          - goos: windows
+            goarch: amd64
+            suffix: windows-amd64.exe
+          - goos: windows
+            goarch: arm64
+            suffix: windows-arm64.exe
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p dist
+          go build -ldflags="-s -w" -o dist/mira-${{ matrix.suffix }} ./cmd/mira
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mira-${{ matrix.suffix }}
+          path: dist/mira-${{ matrix.suffix }}
+          retention-days: 1
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Run tests
+        run: go test -v -race ./...
+
+  release:
+    name: Create Draft Release
+    needs: [build, test]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/prod' || startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: mira-*
+
+      - name: Prepare release assets
+        run: |
+          cd dist
+          for dir in mira-*; do
+            if [ -d "$dir" ]; then
+              chmod +x "$dir"/*
+              # Create tarball for non-Windows
+              if [[ "$dir" != *windows* ]]; then
+                tar -czf "${dir}.tar.gz" -C "$dir" .
+              else
+                # Create zip for Windows
+                (cd "$dir" && zip -r "../${dir}.zip" .)
+              fi
+            fi
+          done
+          ls -la
+
+      - name: Get version
+        id: get_version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/v}
+          else
+            VERSION=$(grep 'Version:' config/config.go | grep -o '"[0-9.]*"' | tr -d '"')
+            VERSION="${VERSION}-dev"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Create Draft Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: MIRA v${{ steps.get_version.outputs.version }}
+          tag_name: v${{ steps.get_version.outputs.version }}
+          draft: true
+          prerelease: false
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+          body: |
+            ## MIRA v${{ steps.get_version.outputs.version }}
+
+            ### 📦 Binaries
+
+            | Platform | Architecture | File |
+            |----------|--------------|------|
+            | Linux | amd64 | `mira-linux-amd64.tar.gz` |
+            | Linux | arm64 | `mira-linux-arm64.tar.gz` |
+            | macOS | amd64 | `mira-darwin-amd64.tar.gz` |
+            | macOS | arm64 | `mira-darwin-arm64.tar.gz` |
+            | Windows | amd64 | `mira-windows-amd64.zip` |
+            | Windows | arm64 | `mira-windows-arm64.zip` |
+
+            ### 🚀 Quick Start
+
+            ```bash
+            # Linux/macOS
+            tar -xzf mira-linux-amd64.tar.gz
+            ./mira --version
+
+            # Windows
+            unzip mira-windows-amd64.zip
+            .\mira.exe --version
+            ```
+
+            ### 📝 Configuration
+
+            1. Copy example config: `cp config.example.yaml config.yaml`
+            2. Edit `config.yaml` to match your environment
+            3. Run: `./mira`
+
+            ### 📋 Changelog
+
+            See [CHANGELOG.md](CHANGELOG.md) for details.
+
+            ---
+            **⚠️ This is a draft release. Please review before publishing.**
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -43,4 +43,7 @@ fmt:
 install: build
 	cp bin/$(BINARY) $(GOPATH)/bin/$(BINARY) 2>/dev/null || cp bin/$(BINARY) ~/go/bin/$(BINARY) 2>/dev/null || echo "Please add bin/ to your PATH"
 
+prepublish:
+	@./scripts/prepublish.sh $(VERSION)
+
 .DEFAULT_GOAL := build
