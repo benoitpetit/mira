@@ -3,12 +3,13 @@ package causal
 import (
 	"container/list"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/benoitpetit/mira/types"
+	"github.com/google/uuid"
 )
 
 // Graph manages causal graph
@@ -176,12 +177,19 @@ func (g *Graph) GetParents(nodeID uuid.UUID, relations ...types.RelationType) ([
 		if err != nil {
 			continue
 		}
-		n.ID, _ = uuid.FromBytes(idBytes)
+		n.ID, err = uuid.FromBytes(idBytes)
+		if err != nil {
+			continue
+		}
 		n.Timestamp = time.Unix(int64(timestamp), 0)
 		if room.Valid {
 			n.Room = &room.String
 		}
 		nodes = append(nodes, &n)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating parent nodes: %w", err)
 	}
 
 	return nodes, nil
@@ -227,12 +235,19 @@ func (g *Graph) GetChildren(nodeID uuid.UUID, relations ...types.RelationType) (
 		if err != nil {
 			continue
 		}
-		n.ID, _ = uuid.FromBytes(idBytes)
+		n.ID, err = uuid.FromBytes(idBytes)
+		if err != nil {
+			continue
+		}
 		n.Timestamp = time.Unix(int64(timestamp), 0)
 		if room.Valid {
 			n.Room = &room.String
 		}
 		nodes = append(nodes, &n)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating child nodes: %w", err)
 	}
 
 	return nodes, nil
@@ -268,8 +283,26 @@ func (g *Graph) AddEdgeTx(tx *sql.Tx, edge *types.CausalEdge) error {
 	return err
 }
 
-// GetRecentForCausalDetection retrieves N latest FPs from a wing for comparison
+// querier abstracts *sql.DB and *sql.Tx for query operations.
+type querier interface {
+	Query(query string, args ...interface{}) (*sql.Rows, error)
+}
+
+// GetRecentForCausalDetection retrieves N latest FPs from a wing for comparison.
+// Uses the graph's db connection directly; callers inside a transaction should
+// use GetRecentForCausalDetectionTx instead to avoid SQLite connection-pool deadlocks.
 func (g *Graph) GetRecentForCausalDetection(wing string, excludeID uuid.UUID, limit int) ([]*types.Fingerprint, error) {
+	return g.getRecentForCausalDetection(g.db, wing, excludeID, limit)
+}
+
+// GetRecentForCausalDetectionTx is the transaction-safe variant.
+// It uses the provided *sql.Tx so it does not compete for a new connection
+// from the pool (critical with MaxOpenConns=1).
+func (g *Graph) GetRecentForCausalDetectionTx(tx *sql.Tx, wing string, excludeID uuid.UUID, limit int) ([]*types.Fingerprint, error) {
+	return g.getRecentForCausalDetection(tx, wing, excludeID, limit)
+}
+
+func (g *Graph) getRecentForCausalDetection(q querier, wing string, excludeID uuid.UUID, limit int) ([]*types.Fingerprint, error) {
 	query := `
 		SELECT f.id, f.verbatim_id, f.ftype, f.extracted_at, f.entities, f.subjects,
 		       f.decision, f.data, f.fact_count, f.token_estimate, f.model_hash
@@ -280,7 +313,7 @@ func (g *Graph) GetRecentForCausalDetection(wing string, excludeID uuid.UUID, li
 		LIMIT ?
 	`
 
-	rows, err := g.db.Query(query, wing, excludeID[:], limit)
+	rows, err := q.Query(query, wing, excludeID[:], limit)
 	if err != nil {
 		return nil, err
 	}
@@ -304,17 +337,36 @@ func (g *Graph) GetRecentForCausalDetection(wing string, excludeID uuid.UUID, li
 			continue
 		}
 
-		fp.ID, _ = uuid.FromBytes(idBytes)
-		fp.VerbatimID, _ = uuid.FromBytes(verbatimIDBytes)
+		fp.ID, err = uuid.FromBytes(idBytes)
+		if err != nil {
+			continue
+		}
+		fp.VerbatimID, err = uuid.FromBytes(verbatimIDBytes)
+		if err != nil {
+			continue
+		}
 		fp.ExtractedAt = time.Unix(int64(extractedAt), 0)
 		if decision.Valid {
 			fp.Decision = &decision.String
 		}
 		if len(entitiesJSON) > 0 {
-			// Simple JSON parsing - in production use json.Unmarshal
+			_ = json.Unmarshal(entitiesJSON, &fp.Entities)
+		}
+		if len(subjectsJSON) > 0 {
+			_ = json.Unmarshal(subjectsJSON, &fp.Subjects)
+		}
+		if len(dataJSON) > 0 {
+			var data types.FingerprintData
+			if err := json.Unmarshal(dataJSON, &data); err == nil {
+				fp.Data = data
+			}
 		}
 
 		fps = append(fps, &fp)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating fingerprints: %w", err)
 	}
 
 	return fps, nil

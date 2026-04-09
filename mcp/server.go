@@ -2,19 +2,30 @@ package mcp
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
-	"github.com/google/uuid"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 	"github.com/benoitpetit/mira/budget"
 	"github.com/benoitpetit/mira/causal"
 	"github.com/benoitpetit/mira/extract"
 	"github.com/benoitpetit/mira/store"
 	"github.com/benoitpetit/mira/types"
+	"github.com/google/uuid"
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
+)
+
+// Validation constants
+const (
+	MaxContentLength = 100000 // Maximum content length (100KB)
+	MaxWingLength    = 100    // Maximum wing name length
+	MaxRoomLength    = 100    // Maximum room name length
+	MaxQueryLength   = 10000  // Maximum query length for recall
 )
 
 // Server encapsulates MCP server
@@ -150,15 +161,41 @@ func (s *Server) handleStore(args map[string]interface{}) (*mcp.CallToolResult, 
 	if !ok {
 		return nil, fmt.Errorf("content is required")
 	}
+
+	// Validate content length
+	if utf8.RuneCountInString(content) > MaxContentLength {
+		return nil, fmt.Errorf("content exceeds maximum length of %d characters", MaxContentLength)
+	}
+
 	wing, ok := args["wing"].(string)
 	if !ok {
 		return nil, fmt.Errorf("wing is required")
 	}
 
+	// Validate wing
+	if strings.TrimSpace(wing) == "" {
+		return nil, fmt.Errorf("wing cannot be empty")
+	}
+	if utf8.RuneCountInString(wing) > MaxWingLength {
+		return nil, fmt.Errorf("wing exceeds maximum length of %d characters", MaxWingLength)
+	}
+
 	var room *string
-	if r, ok := args["room"]; ok && r.(string) != "" {
-		rs := r.(string)
-		room = &rs
+	if r, ok := args["room"]; ok {
+		if rs, ok := r.(string); ok && rs != "" {
+			if utf8.RuneCountInString(rs) > MaxRoomLength {
+				return nil, fmt.Errorf("room exceeds maximum length of %d characters", MaxRoomLength)
+			}
+			room = &rs
+		}
+	}
+
+	// Read forced type if provided
+	var forcedType string
+	if t, ok := args["type"]; ok {
+		if ts, ok := t.(string); ok && ts != "" {
+			forcedType = ts
+		}
 	}
 
 	verbatim := &types.Verbatim{
@@ -171,6 +208,10 @@ func (s *Server) handleStore(args map[string]interface{}) (*mcp.CallToolResult, 
 
 	// Pipeline extraction T0 → T1, T2
 	fp, emb, err := s.extractor.ExtractPipeline(verbatim)
+	// Apply forced type override if specified
+	if forcedType != "" && fp != nil {
+		fp.Type = types.MemoryType(forcedType)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("extraction failed: %w", err)
 	}
@@ -178,40 +219,47 @@ func (s *Server) handleStore(args map[string]interface{}) (*mcp.CallToolResult, 
 	// Transactional storage
 	tx, err := s.store.BeginTx()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() {
+		if rbErr := tx.Rollback(); rbErr != nil && rbErr != sql.ErrTxDone {
+			// Log rollback errors but don't override original error
+			log.Printf("Transaction rollback error: %v", rbErr)
+		}
+	}()
 
 	if err := s.store.StoreVerbatimTx(tx, verbatim); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to store verbatim: %w", err)
 	}
 	if err := s.store.StoreFingerprintTx(tx, fp); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to store fingerprint: %w", err)
 	}
 	if err := s.store.StoreEmbeddingTx(tx, emb); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to store embedding: %w", err)
 	}
 
 	// Create causal node
 	node := s.causal.CreateCausalNodeFromFingerprint(fp, wing, room)
 	if err := s.causal.AddNodeTx(tx, node); err != nil {
-		fmt.Printf("Warning: failed to add causal node: %v\n", err)
+		log.Printf("Warning: failed to add causal node: %v", err)
+		// Non-fatal: continue without causal node
 	}
 
-	// Causal detection
-	recentFps, err := s.causal.GetRecentForCausalDetection(wing, fp.ID, 50)
+	// Causal detection — must use Tx variant to avoid SQLite single-writer deadlock
+	recentFps, err := s.causal.GetRecentForCausalDetectionTx(tx, wing, fp.ID, 50)
 	if err != nil {
-		fmt.Printf("Warning: causal detection fetch failed: %v\n", err)
+		log.Printf("Warning: causal detection fetch failed: %v", err)
+		// Non-fatal: continue without causal detection
 	}
 
 	if len(recentFps) > 0 {
 		edges, err := s.extractor.DetectCausalRelations(fp, recentFps, content)
 		if err != nil {
-			fmt.Printf("Warning: causal detection failed: %v\n", err)
+			log.Printf("Warning: causal detection failed: %v", err)
 		} else {
 			for _, e := range edges {
 				if err := s.causal.AddEdgeTx(tx, e); err != nil {
-					fmt.Printf("Warning: failed to add edge %s->%s: %v\n", e.FromID, e.ToID, err)
+					log.Printf("Warning: failed to add edge %s->%s: %v", e.FromID, e.ToID, err)
 				}
 			}
 		}
@@ -235,6 +283,14 @@ func (s *Server) handleRecall(args map[string]interface{}) (*mcp.CallToolResult,
 		return nil, fmt.Errorf("query is required")
 	}
 
+	// Validate query length
+	if utf8.RuneCountInString(query) > MaxQueryLength {
+		return nil, fmt.Errorf("query exceeds maximum length of %d characters", MaxQueryLength)
+	}
+	if strings.TrimSpace(query) == "" {
+		return nil, fmt.Errorf("query cannot be empty")
+	}
+
 	b := budget.DefaultBudget
 	if bArg, ok := args["budget"]; ok {
 		switch v := bArg.(type) {
@@ -249,14 +305,27 @@ func (s *Server) handleRecall(args map[string]interface{}) (*mcp.CallToolResult,
 		}
 	}
 
-	var wing, room *string
-	if w, ok := args["wing"]; ok && w.(string) != "" {
-		ws := w.(string)
-		wing = &ws
+	// Validate budget
+	if b <= 0 || b > 100000 {
+		b = budget.DefaultBudget
 	}
-	if r, ok := args["room"]; ok && r.(string) != "" {
-		rs := r.(string)
-		room = &rs
+
+	var wing, room *string
+	if w, ok := args["wing"]; ok {
+		if ws, ok := w.(string); ok && ws != "" {
+			if utf8.RuneCountInString(ws) > MaxWingLength {
+				return nil, fmt.Errorf("wing exceeds maximum length of %d characters", MaxWingLength)
+			}
+			wing = &ws
+		}
+	}
+	if r, ok := args["room"]; ok {
+		if rs, ok := r.(string); ok && rs != "" {
+			if utf8.RuneCountInString(rs) > MaxRoomLength {
+				return nil, fmt.Errorf("room exceeds maximum length of %d characters", MaxRoomLength)
+			}
+			room = &rs
+		}
 	}
 
 	selected, err := s.allocator.Allocate(query, b, wing, room)
@@ -437,22 +506,28 @@ func (s *Server) handleTimeline(args map[string]interface{}) (*mcp.CallToolResul
 	var room, memType *string
 	var since, until *time.Time
 
-	if r, ok := args["room"]; ok && r.(string) != "" {
-		rs := r.(string)
-		room = &rs
-	}
-	if t, ok := args["type"]; ok && t.(string) != "" {
-		ts := t.(string)
-		memType = &ts
-	}
-	if s, ok := args["since"]; ok && s.(string) != "" {
-		if t, err := time.Parse(time.RFC3339, s.(string)); err == nil {
-			since = &t
+	if r, ok := args["room"]; ok {
+		if rs, ok := r.(string); ok && rs != "" {
+			room = &rs
 		}
 	}
-	if u, ok := args["until"]; ok && u.(string) != "" {
-		if t, err := time.Parse(time.RFC3339, u.(string)); err == nil {
-			until = &t
+	if t, ok := args["type"]; ok {
+		if ts, ok := t.(string); ok && ts != "" {
+			memType = &ts
+		}
+	}
+	if sArg, ok := args["since"]; ok {
+		if ss, ok := sArg.(string); ok && ss != "" {
+			if t, err := time.Parse(time.RFC3339, ss); err == nil {
+				since = &t
+			}
+		}
+	}
+	if u, ok := args["until"]; ok {
+		if us, ok := u.(string); ok && us != "" {
+			if t, err := time.Parse(time.RFC3339, us); err == nil {
+				until = &t
+			}
 		}
 	}
 

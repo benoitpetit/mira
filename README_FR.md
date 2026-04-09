@@ -1,6 +1,6 @@
 # MIRA - Memory with Information-theoretic Relevance Allocation
 
-**Version:** 0.1.0 | **Langage:** Go 1.21+ | **License:** MIT
+**Version:** 0.1.2 | **Langage:** Go 1.21+ | **License:** MIT
 
 Système de mémoire longue durée pour LLM avec allocation optimale de budget contextuel, garanties d'approximation et cohérence temporelle. 100% local, déterministe, O(n log n).
 
@@ -177,7 +177,6 @@ CREATE TABLE fingerprints (
     entities TEXT,                -- JSON array
     subjects TEXT,                -- JSON array
     decision TEXT,
-    related_to TEXT,              -- JSON array d'IDs
     data BLOB NOT NULL,           -- JSON minifié
     fact_count INTEGER DEFAULT 0,
     token_estimate INTEGER DEFAULT 0,
@@ -545,7 +544,7 @@ Puis modifiez `config.yaml` selon votre environnement.
 
 ```yaml
 system:
-  version: "0.1.0"
+  version: "0.1.2"
   max_concurrent_queries: 10
 
 storage:
@@ -733,6 +732,10 @@ go test -bench=. -benchmem ./budget
 ---
 
 ## Changelog
+
+### v0.1.2 (2026-04-09)
+
+- 🚀 Nouvelle version 0.1.2
 
 ### v0.1.0 (2026-04-08)
 

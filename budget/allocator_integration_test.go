@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/benoitpetit/mira/extract"
 	"github.com/benoitpetit/mira/types"
+	"github.com/google/uuid"
 )
 
 // Mock embedder pour l'intégration
@@ -19,8 +19,8 @@ type mockEmbedderIntegration struct {
 func newMockEmbedderIntegration() *mockEmbedderIntegration {
 	return &mockEmbedderIntegration{
 		vectors: map[string][]float32{
-			"query1": {1.0, 0.0, 0.0, 0.0},
-			"query2": {0.0, 1.0, 0.0, 0.0},
+			"query1":              {1.0, 0.0, 0.0, 0.0},
+			"query2":              {0.0, 1.0, 0.0, 0.0},
 			"PostgreSQL database": {0.9, 0.1, 0.0, 0.0},
 		},
 	}
@@ -117,13 +117,13 @@ func createIntegrationCandidate(id uuid.UUID, content string, wing, room string,
 
 func TestAllocate(t *testing.T) {
 	emb := newMockEmbedderIntegration()
-	ext, err := extract.NewExtractor("test-model", emb)
+	ext, err := extract.NewExtractorWithOptions("test-model", emb, extract.ExtractorOptions{})
 	if err != nil {
 		t.Fatalf("NewExtractor() error = %v", err)
 	}
 	vs := &mockVectorStoreIntegration{}
 	cg := newMockCausalGraphIntegration()
-	alloc := NewAllocator(vs, nil, cg, ext)
+	alloc := NewAllocatorWithOptions(vs, nil, cg, ext, AllocatorOptions{})
 
 	// Créer des candidats avec des embeddings similaires à query1
 	c1 := createIntegrationCandidate(
@@ -206,10 +206,10 @@ func TestAllocate(t *testing.T) {
 
 func TestAllocateModes(t *testing.T) {
 	emb := newMockEmbedderIntegration()
-	ext, _ := extract.NewExtractor("test-model", emb)
+	ext, _ := extract.NewExtractorWithOptions("test-model", emb, extract.ExtractorOptions{})
 	vs := &mockVectorStoreIntegration{}
 	cg := newMockCausalGraphIntegration()
-	alloc := NewAllocator(vs, nil, cg, ext)
+	alloc := NewAllocatorWithOptions(vs, nil, cg, ext, AllocatorOptions{})
 
 	// Créer un candidat avec beaucoup de tokens
 	c1 := createIntegrationCandidate(
@@ -260,7 +260,7 @@ func TestAllocateModes(t *testing.T) {
 }
 
 func TestEmbeddingCacheIntegration(t *testing.T) {
-	cache := NewEmbeddingCache(3)
+	cache := newEmbeddingCache(3)
 
 	vec1 := []float32{1.0, 0.0, 0.0}
 	vec2 := []float32{0.0, 1.0, 0.0}
@@ -268,50 +268,50 @@ func TestEmbeddingCacheIntegration(t *testing.T) {
 	vec4 := []float32{0.5, 0.5, 0.5}
 
 	// Test Get sur cache vide
-	if _, ok := cache.Get("key1"); ok {
+	if _, ok := cache.get("key1"); ok {
 		t.Error("Expected cache miss on empty cache")
 	}
 
 	// Test Set et Get
-	cache.Set("key1", vec1)
-	if got, ok := cache.Get("key1"); !ok {
+	cache.set("key1", vec1)
+	if got, ok := cache.get("key1"); !ok {
 		t.Error("Expected cache hit after Set")
 	} else if len(got) != len(vec1) {
 		t.Error("Vector mismatch")
 	}
 
 	// Test LRU eviction
-	cache.Set("key2", vec2)
-	cache.Set("key3", vec3)
-	cache.Set("key4", vec4) // Devrait évincer key1 (le plus ancien)
+	cache.set("key2", vec2)
+	cache.set("key3", vec3)
+	cache.set("key4", vec4) // Devrait évincer key1 (le plus ancien)
 
-	if _, ok := cache.Get("key1"); ok {
+	if _, ok := cache.get("key1"); ok {
 		t.Error("Expected key1 to be evicted")
 	}
-	if _, ok := cache.Get("key2"); !ok {
+	if _, ok := cache.get("key2"); !ok {
 		t.Error("Expected key2 to still be in cache")
 	}
-	if _, ok := cache.Get("key3"); !ok {
+	if _, ok := cache.get("key3"); !ok {
 		t.Error("Expected key3 to still be in cache")
 	}
-	if _, ok := cache.Get("key4"); !ok {
+	if _, ok := cache.get("key4"); !ok {
 		t.Error("Expected key4 to be in cache")
 	}
 
 	// Test mise à jour (Set sur une clé existante)
-	cache.Set("key2", vec1) // key2 devient le plus récent
-	cache.Set("key5", vec4) // Devrait évincer key3 (pas key2 qui vient d'être mis à jour)
+	cache.set("key2", vec1) // key2 devient le plus récent
+	cache.set("key5", vec4) // Devrait évincer key3 (pas key2 qui vient d'être mis à jour)
 
-	if _, ok := cache.Get("key2"); !ok {
+	if _, ok := cache.get("key2"); !ok {
 		t.Error("Expected key2 to still be in cache after being updated")
 	}
-	if _, ok := cache.Get("key3"); ok {
+	if _, ok := cache.get("key3"); ok {
 		t.Error("Expected key3 to be evicted")
 	}
 }
 
 func TestRenderHeader(t *testing.T) {
-	alloc := &Allocator{}
+	alloc := &Allocator{opts: AllocatorOptions{}.withDefaults()}
 
 	c := &types.Candidate{
 		Memory: &types.Fingerprint{
@@ -334,7 +334,7 @@ func TestRenderHeader(t *testing.T) {
 }
 
 func TestRenderFingerprint(t *testing.T) {
-	alloc := &Allocator{}
+	alloc := &Allocator{opts: AllocatorOptions{}.withDefaults()}
 
 	tests := []struct {
 		name string
@@ -416,7 +416,7 @@ func TestRenderFingerprint(t *testing.T) {
 }
 
 func TestRender(t *testing.T) {
-	alloc := &Allocator{}
+	alloc := &Allocator{opts: AllocatorOptions{}.withDefaults()}
 
 	c := &types.Candidate{
 		Verbatim: &types.Verbatim{
@@ -454,7 +454,7 @@ func TestRender(t *testing.T) {
 }
 
 func TestCalculateTokenCost(t *testing.T) {
-	alloc := &Allocator{}
+	alloc := &Allocator{opts: AllocatorOptions{}.withDefaults()}
 
 	c := &types.Candidate{
 		Verbatim: &types.Verbatim{
@@ -486,7 +486,7 @@ func TestCalculateTokenCost(t *testing.T) {
 }
 
 func TestDetermineRenderMode(t *testing.T) {
-	alloc := &Allocator{}
+	alloc := &Allocator{opts: AllocatorOptions{}.withDefaults()}
 
 	tests := []struct {
 		budget int
@@ -534,35 +534,35 @@ func TestMinFunc(t *testing.T) {
 }
 
 func TestPriorityQueueIntegration(t *testing.T) {
-	pq := make(PriorityQueue, 0)
+	pq := make(priorityQueue, 0)
 
 	c1 := &types.Candidate{Score: 0.9}
 	c2 := &types.Candidate{Score: 0.5}
 	c3 := &types.Candidate{Score: 0.7}
 
 	// Test Push
-	heap.Push(&pq, &Item{candidate: c1, priority: c1.Score, index: 0})
-	heap.Push(&pq, &Item{candidate: c2, priority: c2.Score, index: 1})
-	heap.Push(&pq, &Item{candidate: c3, priority: c3.Score, index: 2})
+	heap.Push(&pq, &item{candidate: c1, priority: c1.Score, index: 0})
+	heap.Push(&pq, &item{candidate: c2, priority: c2.Score, index: 1})
+	heap.Push(&pq, &item{candidate: c3, priority: c3.Score, index: 2})
 
 	if pq.Len() != 3 {
 		t.Errorf("Expected queue length 3, got %d", pq.Len())
 	}
 
 	// Test Pop (max-heap: highest score first)
-	item := heap.Pop(&pq).(*Item)
-	if item.priority != 0.9 {
-		t.Errorf("Expected priority 0.9, got %f", item.priority)
+	it := heap.Pop(&pq).(*item)
+	if it.priority != 0.9 {
+		t.Errorf("Expected priority 0.9, got %f", it.priority)
 	}
 
-	item = heap.Pop(&pq).(*Item)
-	if item.priority != 0.7 {
-		t.Errorf("Expected priority 0.7, got %f", item.priority)
+	it = heap.Pop(&pq).(*item)
+	if it.priority != 0.7 {
+		t.Errorf("Expected priority 0.7, got %f", it.priority)
 	}
 
-	item = heap.Pop(&pq).(*Item)
-	if item.priority != 0.5 {
-		t.Errorf("Expected priority 0.5, got %f", item.priority)
+	it = heap.Pop(&pq).(*item)
+	if it.priority != 0.5 {
+		t.Errorf("Expected priority 0.5, got %f", it.priority)
 	}
 
 	if pq.Len() != 0 {
@@ -570,16 +570,16 @@ func TestPriorityQueueIntegration(t *testing.T) {
 	}
 }
 
-func TestNewAllocator(t *testing.T) {
+func TestNewAllocatorWithOptions(t *testing.T) {
 	emb := newMockEmbedderIntegration()
-	ext, _ := extract.NewExtractor("test-model", emb)
+	ext, _ := extract.NewExtractorWithOptions("test-model", emb, extract.ExtractorOptions{})
 	vs := &mockVectorStoreIntegration{}
 	cg := newMockCausalGraphIntegration()
 
-	alloc := NewAllocator(vs, nil, cg, ext)
+	alloc := NewAllocatorWithOptions(vs, nil, cg, ext, AllocatorOptions{})
 
 	if alloc == nil {
-		t.Fatal("NewAllocator() returned nil")
+		t.Fatal("NewAllocatorWithOptions() returned nil")
 	}
 	if alloc.vectorDB != vs {
 		t.Error("vectorDB not set correctly")
@@ -597,10 +597,10 @@ func TestNewAllocator(t *testing.T) {
 
 func TestAllocateEmptyCandidates(t *testing.T) {
 	emb := newMockEmbedderIntegration()
-	ext, _ := extract.NewExtractor("test-model", emb)
+	ext, _ := extract.NewExtractorWithOptions("test-model", emb, extract.ExtractorOptions{})
 	vs := &mockVectorStoreIntegration{candidates: []*types.Candidate{}}
 	cg := newMockCausalGraphIntegration()
-	alloc := NewAllocator(vs, nil, cg, ext)
+	alloc := NewAllocatorWithOptions(vs, nil, cg, ext, AllocatorOptions{})
 
 	result, err := alloc.Allocate("query1", 1000, nil, nil)
 	if err != nil {
@@ -613,10 +613,10 @@ func TestAllocateEmptyCandidates(t *testing.T) {
 
 func TestAllocateEarlyPruning(t *testing.T) {
 	emb := newMockEmbedderIntegration()
-	ext, _ := extract.NewExtractor("test-model", emb)
+	ext, _ := extract.NewExtractorWithOptions("test-model", emb, extract.ExtractorOptions{})
 	vs := &mockVectorStoreIntegration{}
 	cg := newMockCausalGraphIntegration()
-	alloc := NewAllocator(vs, nil, cg, ext)
+	alloc := NewAllocatorWithOptions(vs, nil, cg, ext, AllocatorOptions{})
 
 	// Créer des candidats avec différents niveaux de pertinence
 	now := time.Now()
@@ -625,12 +625,12 @@ func TestAllocateEarlyPruning(t *testing.T) {
 	// Candidat avec embedding très différent de la query (faible pertinence)
 	lowRel := &types.Candidate{
 		Verbatim: &types.Verbatim{
-			ID:          uuid.New(),
-			Content:     "Unrelated content",
-			TokenCount:  50,
-			CreatedAt:   now,
-			Wing:        "test",
-			Room:        &room,
+			ID:         uuid.New(),
+			Content:    "Unrelated content",
+			TokenCount: 50,
+			CreatedAt:  now,
+			Wing:       "test",
+			Room:       &room,
 		},
 		Memory: &types.Fingerprint{
 			ID:            uuid.New(),
@@ -650,12 +650,12 @@ func TestAllocateEarlyPruning(t *testing.T) {
 	// Candidat avec embedding similaire (haute pertinence)
 	highRel := &types.Candidate{
 		Verbatim: &types.Verbatim{
-			ID:          uuid.New(),
-			Content:     "Related content about databases",
-			TokenCount:  50,
-			CreatedAt:   now,
-			Wing:        "test",
-			Room:        &room,
+			ID:         uuid.New(),
+			Content:    "Related content about databases",
+			TokenCount: 50,
+			CreatedAt:  now,
+			Wing:       "test",
+			Room:       &room,
 		},
 		Memory: &types.Fingerprint{
 			ID:            uuid.New(),

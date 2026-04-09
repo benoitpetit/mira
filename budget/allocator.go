@@ -6,33 +6,74 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/benoitpetit/mira/extract"
+	"github.com/benoitpetit/mira/internal/util"
 	"github.com/benoitpetit/mira/types"
+	"github.com/google/uuid"
 )
 
 const (
-	DefaultBudget           = 4000
-	MaxCandidates           = 100
-	EarlyPruningThreshold   = 0.6
-	SessionWindow           = 2 * time.Hour
-	SessionBoostBeta        = 0.2
-	CausalPenaltyAlpha      = 0.15
-	DensitySigmoidK         = 2.0
-	DensitySigmoidMu        = 0.3
+	DefaultBudget         = 4000
+	MaxCandidates         = 100
+	EarlyPruningThreshold = 0.6
+	SessionWindow         = 2 * time.Hour
+	SessionBoostBeta      = 0.2
+	CausalPenaltyAlpha    = 0.15
+	DensitySigmoidK       = 2.0
+	DensitySigmoidMu      = 0.3
 )
+
+// AllocatorOptions holds configurable parameters for the allocator.
+// Zero values are replaced by the default constants above.
+type AllocatorOptions struct {
+	DefaultBudget         int
+	MaxCandidates         int
+	EarlyPruningThreshold float64
+	SessionWindowSeconds  int
+	SessionBoostBeta      float64
+	CausalPenaltyAlpha    float64
+	DensitySigmoidK       float64
+	DensitySigmoidMu      float64
+	EmbeddingCacheSize    int
+}
+
+func (o AllocatorOptions) withDefaults() AllocatorOptions {
+	if o.DefaultBudget <= 0 {
+		o.DefaultBudget = DefaultBudget
+	}
+	if o.MaxCandidates <= 0 {
+		o.MaxCandidates = MaxCandidates
+	}
+	if o.EarlyPruningThreshold <= 0 {
+		o.EarlyPruningThreshold = EarlyPruningThreshold
+	}
+	if o.SessionWindowSeconds <= 0 {
+		o.SessionWindowSeconds = int(SessionWindow.Seconds())
+	}
+	if o.SessionBoostBeta <= 0 {
+		o.SessionBoostBeta = SessionBoostBeta
+	}
+	if o.CausalPenaltyAlpha <= 0 {
+		o.CausalPenaltyAlpha = CausalPenaltyAlpha
+	}
+	if o.DensitySigmoidK <= 0 {
+		o.DensitySigmoidK = DensitySigmoidK
+	}
+	if o.DensitySigmoidMu <= 0 {
+		o.DensitySigmoidMu = DensitySigmoidMu
+	}
+	if o.EmbeddingCacheSize <= 0 {
+		o.EmbeddingCacheSize = 1000
+	}
+	return o
+}
 
 // VectorStore interface for vector search
 type VectorStore interface {
 	Search(vector []float32, limit int, wing, room *string) ([]*types.Candidate, error)
-}
-
-// OverlapCache interface for overlap cache
-type OverlapCache interface {
-	Get(idA, idB uuid.UUID) (float64, bool)
-	Set(idA, idB uuid.UUID, similarity float64)
 }
 
 // CausalGraph interface for causal graph
@@ -42,30 +83,36 @@ type CausalGraph interface {
 	GetChildren(nodeID uuid.UUID, relations ...types.RelationType) ([]*types.CausalNode, error)
 }
 
-// EmbeddingCache LRU to avoid re-computations
-type EmbeddingCache struct {
+// embeddingCache is an LRU cache to avoid re-computations (thread-safe)
+type embeddingCache struct {
+	mu      sync.RWMutex
 	cache   map[string][]float32
 	order   []string
 	maxSize int
 }
 
-// NewEmbeddingCache creates a new embedding cache
-func NewEmbeddingCache(maxSize int) *EmbeddingCache {
-	return &EmbeddingCache{
+// newEmbeddingCache creates a new embedding cache
+func newEmbeddingCache(maxSize int) *embeddingCache {
+	return &embeddingCache{
 		cache:   make(map[string][]float32),
 		order:   make([]string, 0, maxSize),
 		maxSize: maxSize,
 	}
 }
 
-// Get retrieves a value from cache
-func (c *EmbeddingCache) Get(key string) ([]float32, bool) {
+// get retrieves a value from cache (thread-safe)
+func (c *embeddingCache) get(key string) ([]float32, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	vec, ok := c.cache[key]
 	return vec, ok
 }
 
-// Set stores a value in cache
-func (c *EmbeddingCache) Set(key string, vec []float32) {
+// set stores a value in cache (thread-safe)
+func (c *embeddingCache) set(key string, vec []float32) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if _, exists := c.cache[key]; exists {
 		// Move to end
 		for i, k := range c.order {
@@ -88,27 +135,30 @@ func (c *EmbeddingCache) Set(key string, vec []float32) {
 // Allocator manages context budget allocation
 type Allocator struct {
 	vectorDB     VectorStore
-	overlapCache OverlapCache
+	overlapCache types.OverlapCache
 	causalGraph  CausalGraph
 	embedder     *extract.Extractor
-	cache        *EmbeddingCache
+	cache        *embeddingCache
+	opts         AllocatorOptions
 }
 
-// NewAllocator creates a new allocator
-func NewAllocator(vectorDB VectorStore, overlapCache OverlapCache, causal CausalGraph, embedder *extract.Extractor) *Allocator {
+// NewAllocatorWithOptions creates a new allocator with explicit options
+func NewAllocatorWithOptions(vectorDB VectorStore, overlapCache types.OverlapCache, causal CausalGraph, embedder *extract.Extractor, opts AllocatorOptions) *Allocator {
+	opts = opts.withDefaults()
 	return &Allocator{
 		vectorDB:     vectorDB,
 		overlapCache: overlapCache,
 		causalGraph:  causal,
 		embedder:     embedder,
-		cache:        NewEmbeddingCache(1000),
+		cache:        newEmbeddingCache(opts.EmbeddingCacheSize),
+		opts:         opts,
 	}
 }
 
 // Allocate with wing/room filtering and early pruning
 func (a *Allocator) Allocate(query string, budget int, wing, room *string) ([]*types.SelectedMemory, error) {
 	if budget <= 0 {
-		budget = DefaultBudget
+		budget = a.opts.DefaultBudget
 	}
 
 	// 1. Embedding with cache
@@ -118,7 +168,7 @@ func (a *Allocator) Allocate(query string, budget int, wing, room *string) ([]*t
 	}
 
 	// 2. Vector search (wide for early pruning)
-	candidates, err := a.vectorDB.Search(queryVec, MaxCandidates, wing, room)
+	candidates, err := a.vectorDB.Search(queryVec, a.opts.MaxCandidates, wing, room)
 	if err != nil {
 		return nil, fmt.Errorf("vector search failed: %w", err)
 	}
@@ -126,10 +176,10 @@ func (a *Allocator) Allocate(query string, budget int, wing, room *string) ([]*t
 	// 3. Initial scoring with early pruning
 	scored := a.scoreCandidates(candidates, queryVec)
 
-	// Early pruning: keep only ρ > 0.6
+	// Early pruning: keep only ρ > threshold
 	var pruned []*types.Candidate
 	for _, c := range scored {
-		if c.Relevance > EarlyPruningThreshold {
+		if c.Relevance > a.opts.EarlyPruningThreshold {
 			pruned = append(pruned, c)
 		}
 	}
@@ -148,7 +198,7 @@ func (a *Allocator) Allocate(query string, budget int, wing, room *string) ([]*t
 
 func (a *Allocator) getQueryEmbedding(query string) ([]float32, error) {
 	// Check cache
-	if vec, ok := a.cache.Get(query); ok {
+	if vec, ok := a.cache.get(query); ok {
 		return vec, nil
 	}
 
@@ -157,7 +207,7 @@ func (a *Allocator) getQueryEmbedding(query string) ([]float32, error) {
 		return nil, err
 	}
 
-	a.cache.Set(query, vec)
+	a.cache.set(query, vec)
 	return vec, nil
 }
 
@@ -167,14 +217,14 @@ func (a *Allocator) scoreCandidates(candidates []*types.Candidate, queryVec []fl
 
 	for _, c := range candidates {
 		// ρ: semantic relevance [0,1]
-		c.Relevance = cosineSimilarity(c.Embedding, queryVec)
+		c.Relevance = util.CosineSimilarity(c.Embedding, queryVec)
 		c.Relevance = (1 + c.Relevance) / 2 // [-1,1] → [0,1]
 
 		// δ_sig: density with sigmoid
 		if c.Verbatim.TokenCount > 0 {
 			rawDensity := float64(c.Memory.FactCount) / math.Sqrt(float64(c.Verbatim.TokenCount))
-			// Sigmoid: 2/(1+e^(-2(x-0.3))) - 1
-			c.Density = 2.0/(1.0+math.Exp(-DensitySigmoidK*(rawDensity-DensitySigmoidMu))) - 1.0
+			// Sigmoid: 2/(1+e^(-k(x-mu))) - 1
+			c.Density = 2.0/(1.0+math.Exp(-a.opts.DensitySigmoidK*(rawDensity-a.opts.DensitySigmoidMu))) - 1.0
 			if c.Density < 0 {
 				c.Density = 0
 			}
@@ -199,9 +249,9 @@ func (a *Allocator) selectGreedyDynamic(candidates []*types.Candidate, budget in
 	}
 
 	// Max-heap for efficient best candidate selection at each round
-	pq := make(PriorityQueue, len(candidates))
+	pq := make(priorityQueue, len(candidates))
 	for i, c := range candidates {
-		pq[i] = &Item{candidate: c, priority: c.Score, index: i}
+		pq[i] = &item{candidate: c, priority: c.Score, index: i}
 	}
 	heap.Init(&pq)
 
@@ -213,17 +263,28 @@ func (a *Allocator) selectGreedyDynamic(candidates []*types.Candidate, budget in
 
 	for pq.Len() > 0 && budget-tokensUsed >= 50 {
 		// Get best candidate
-		item := heap.Pop(&pq).(*Item)
+		item := heap.Pop(&pq).(*item)
 		c := item.candidate
 
 		if selectedIDs[c.Memory.ID] {
 			continue
 		}
 
-		// Compute max overlap with already selected
+		// Compute max overlap with already selected (using cache when available)
 		maxOverlap := 0.0
-		for _, emb := range selectedEmbeddings {
-			overlap := cosineSimilarity(c.Embedding, emb)
+		for i, sel := range selected {
+			selID := sel.Candidate.Memory.ID
+			var overlap float64
+			if a.overlapCache != nil {
+				if cached, ok := a.overlapCache.Get(c.Memory.ID, selID); ok {
+					overlap = cached
+				} else {
+					overlap = util.CosineSimilarity(c.Embedding, selectedEmbeddings[i])
+					a.overlapCache.Set(c.Memory.ID, selID, overlap)
+				}
+			} else {
+				overlap = util.CosineSimilarity(c.Embedding, selectedEmbeddings[i])
+			}
 			if overlap > maxOverlap {
 				maxOverlap = overlap
 			}
@@ -238,17 +299,23 @@ func (a *Allocator) selectGreedyDynamic(candidates []*types.Candidate, budget in
 				causalCount++
 			}
 		}
-		c.CausalPenalty = math.Exp(-CausalPenaltyAlpha * float64(causalCount))
+		c.CausalPenalty = math.Exp(-a.opts.CausalPenaltyAlpha * float64(causalCount))
 
 		// Compute session boost: temporal proximity with S
+		sessionWindowSec := float64(a.opts.SessionWindowSeconds)
 		sessionBoost := 1.0
 		for _, t := range selectedTimes {
-			if math.Abs(c.Verbatim.CreatedAt.Sub(t).Seconds()) < SessionWindow.Seconds() {
-				sessionBoost = 1.0 + SessionBoostBeta
+			if math.Abs(c.Verbatim.CreatedAt.Sub(t).Seconds()) < sessionWindowSec {
+				sessionBoost = 1.0 + a.opts.SessionBoostBeta
 				break
 			}
 		}
 		c.SessionBoost = sessionBoost
+
+		// Recalculate score with all CBA factors:
+		// score = ρ * δ * η * (1 - maxOverlap) * causalPenalty * sessionBoost
+		c.Score = c.Relevance * c.Density * c.Recency *
+			(1.0 - c.MaxOverlap) * c.CausalPenalty * c.SessionBoost
 
 		// Determine render mode based on REMAINING budget (not overlap)
 		remainingBudget := budget - tokensUsed
@@ -345,7 +412,13 @@ func (a *Allocator) renderHeader(c *types.Candidate) string {
 
 func (a *Allocator) renderFingerprint(c *types.Candidate) string {
 	d := c.Memory.Data
-	parts := []string{fmt.Sprintf("[%s|%s]", strings.Join(d.Subject, ","), d.Date[:10])}
+	dateStr := d.Date
+	if len(dateStr) >= 10 {
+		dateStr = dateStr[:10]
+	} else if dateStr == "" {
+		dateStr = "unknown"
+	}
+	parts := []string{fmt.Sprintf("[%s|%s]", strings.Join(d.Subject, ","), dateStr)}
 
 	if d.Decision != "" {
 		parts = append(parts, d.Decision)
@@ -367,47 +440,28 @@ func (a *Allocator) renderFingerprint(c *types.Candidate) string {
 	return strings.Join(parts, " | ")
 }
 
-// cosineSimilarity computes cosine similarity
-func cosineSimilarity(a, b []float32) float64 {
-	if len(a) != len(b) {
-		return 0
-	}
-	var dot float64
-	for i := range a {
-		dot += float64(a[i] * b[i])
-	}
-	return dot // Pre-normalized vectors
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // Priority Queue implementation
-type Item struct {
+type item struct {
 	candidate *types.Candidate
 	priority  float64
 	index     int
 }
-type PriorityQueue []*Item
+type priorityQueue []*item
 
-func (pq PriorityQueue) Len() int { return len(pq) }
-func (pq PriorityQueue) Less(i, j int) bool { return pq[i].priority > pq[j].priority }
-func (pq PriorityQueue) Swap(i, j int) {
+func (pq priorityQueue) Len() int           { return len(pq) }
+func (pq priorityQueue) Less(i, j int) bool { return pq[i].priority > pq[j].priority }
+func (pq priorityQueue) Swap(i, j int) {
 	pq[i], pq[j] = pq[j], pq[i]
 	pq[i].index = i
 	pq[j].index = j
 }
-func (pq *PriorityQueue) Push(x interface{}) {
+func (pq *priorityQueue) Push(x interface{}) {
 	n := len(*pq)
-	item := x.(*Item)
+	item := x.(*item)
 	item.index = n
 	*pq = append(*pq, item)
 }
-func (pq *PriorityQueue) Pop() interface{} {
+func (pq *priorityQueue) Pop() interface{} {
 	old := *pq
 	n := len(old)
 	item := old[n-1]

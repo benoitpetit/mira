@@ -2,32 +2,72 @@ package store
 
 import (
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"math"
 	"time"
 
+	"github.com/benoitpetit/mira/types"
 	"github.com/google/uuid"
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/benoitpetit/mira/types"
 )
+
+// Time-related constants (in seconds)
+const (
+	secondsPerDay = 24 * 60 * 60
+
+	// Archive thresholds (in days) — defaults
+	defaultSessionNoteArchiveDays = 30
+	defaultDebugLogArchiveDays    = 7
+
+	// Query limits
+	timelineDefaultLimit = 100
+	activeWingsLimit     = 20
+)
+
+// StoreOptions holds configurable parameters for the store.
+// Zero values are replaced by the default constants above.
+type StoreOptions struct {
+	SessionNoteArchiveDays int
+	DebugLogArchiveDays    int
+}
+
+func (o StoreOptions) withDefaults() StoreOptions {
+	if o.SessionNoteArchiveDays <= 0 {
+		o.SessionNoteArchiveDays = defaultSessionNoteArchiveDays
+	}
+	if o.DebugLogArchiveDays <= 0 {
+		o.DebugLogArchiveDays = defaultDebugLogArchiveDays
+	}
+	return o
+}
 
 // Store manages SQLite persistence
 type Store struct {
-	db *sql.DB
+	db   *sql.DB
+	opts StoreOptions
 }
 
-// New creates a new Store instance
-func New(dbPath string) (*Store, error) {
+// NewWithOptions creates a new Store instance with explicit options
+func NewWithOptions(dbPath string, opts StoreOptions) (*Store, error) {
+	opts = opts.withDefaults()
 	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=-64000&_mmap_size=268435456")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
+	// Configure connection pool for SQLite
+	db.SetMaxOpenConns(1)                   // SQLite supports only one writer
+	db.SetMaxIdleConns(1)                   // Keep one connection open
+	db.SetConnMaxLifetime(0)                // Connections can be reused forever
+	db.SetConnMaxIdleTime(30 * time.Minute) // Close idle connections after 30 minutes
+
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	store := &Store{db: db}
+	store := &Store{db: db, opts: opts}
 	if err := store.migrate(); err != nil {
 		return nil, fmt.Errorf("migration failed: %w", err)
 	}
@@ -92,7 +132,6 @@ CREATE TABLE IF NOT EXISTS fingerprints (
     entities TEXT,
     subjects TEXT,
     decision TEXT,
-    related_to TEXT,
     data TEXT NOT NULL,
     fact_count INTEGER DEFAULT 0,
     token_estimate INTEGER DEFAULT 0,
@@ -149,11 +188,11 @@ CREATE TABLE IF NOT EXISTS overlap_cache (
     id_b BLOB NOT NULL,
     similarity REAL NOT NULL,
     computed_at REAL NOT NULL,
-    ttl REAL NOT NULL DEFAULT (unixepoch() + 2592000),
+    ttl REAL NOT NULL DEFAULT (unixepoch() + 2592000), -- 30 days in seconds
     PRIMARY KEY (id_a, id_b)
 ) STRICT;
 
-CREATE INDEX IF NOT EXISTS idx_overlap_ttl ON overlap_cache(computed_at) WHERE computed_at < unixepoch() - 2592000;
+CREATE INDEX IF NOT EXISTS idx_overlap_ttl ON overlap_cache(ttl);
 `
 	_, err := s.db.Exec(schema)
 	return err
@@ -161,9 +200,12 @@ CREATE INDEX IF NOT EXISTS idx_overlap_ttl ON overlap_cache(computed_at) WHERE c
 
 // StoreVerbatimTx stores a verbatim in a transaction
 func (s *Store) StoreVerbatimTx(tx *sql.Tx, v *types.Verbatim) error {
-	metadataJSON, _ := json.Marshal(v.Metadata)
+	metadataJSON, err := json.Marshal(v.Metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal metadata: %w", err)
+	}
 	metadataStr := string(metadataJSON)
-	_, err := tx.Exec(
+	_, err = tx.Exec(
 		`INSERT INTO verbatim (id, content, token_count, created_at, wing, room, metadata) 
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		v.ID[:], v.Content, v.TokenCount, float64(v.CreatedAt.Unix()), v.Wing, v.Room, metadataStr,
@@ -173,14 +215,21 @@ func (s *Store) StoreVerbatimTx(tx *sql.Tx, v *types.Verbatim) error {
 
 // StoreFingerprintTx stores a fingerprint in a transaction
 func (s *Store) StoreFingerprintTx(tx *sql.Tx, fp *types.Fingerprint) error {
-	entitiesJSON, _ := json.Marshal(fp.Entities)
-	subjectsJSON, _ := json.Marshal(fp.Subjects)
-	relatedJSON, _ := json.Marshal(fp.RelatedTo)
-	dataJSON, _ := json.Marshal(fp.Data)
-	
+	entitiesJSON, err := json.Marshal(fp.Entities)
+	if err != nil {
+		return fmt.Errorf("failed to marshal entities: %w", err)
+	}
+	subjectsJSON, err := json.Marshal(fp.Subjects)
+	if err != nil {
+		return fmt.Errorf("failed to marshal subjects: %w", err)
+	}
+	dataJSON, err := json.Marshal(fp.Data)
+	if err != nil {
+		return fmt.Errorf("failed to marshal data: %w", err)
+	}
+
 	entitiesStr := string(entitiesJSON)
 	subjectsStr := string(subjectsJSON)
-	relatedStr := string(relatedJSON)
 	dataStr := string(dataJSON)
 
 	var decision *string
@@ -188,11 +237,11 @@ func (s *Store) StoreFingerprintTx(tx *sql.Tx, fp *types.Fingerprint) error {
 		decision = fp.Decision
 	}
 
-	_, err := tx.Exec(
-		`INSERT INTO fingerprints (id, verbatim_id, ftype, extracted_at, entities, subjects, decision, related_to, data, fact_count, token_estimate, model_hash) 
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err = tx.Exec(
+		`INSERT INTO fingerprints (id, verbatim_id, ftype, extracted_at, entities, subjects, decision, data, fact_count, token_estimate, model_hash) 
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		fp.ID[:], fp.VerbatimID[:], string(fp.Type), float64(fp.ExtractedAt.Unix()),
-		entitiesStr, subjectsStr, decision, relatedStr, dataStr,
+		entitiesStr, subjectsStr, decision, dataStr,
 		fp.FactCount, fp.TokenEstimate, fp.ModelHash,
 	)
 	return err
@@ -202,11 +251,9 @@ func (s *Store) StoreFingerprintTx(tx *sql.Tx, fp *types.Fingerprint) error {
 func (s *Store) StoreEmbeddingTx(tx *sql.Tx, emb *types.Embedding) error {
 	vectorBytes := make([]byte, len(emb.Vector)*4)
 	for i, v := range emb.Vector {
-		// Store as little-endian float32
-		vectorBytes[i*4+0] = byte(uint32(v))
-		vectorBytes[i*4+1] = byte(uint32(v) >> 8)
-		vectorBytes[i*4+2] = byte(uint32(v) >> 16)
-		vectorBytes[i*4+3] = byte(uint32(v) >> 24)
+		// Store as little-endian float32 using proper IEEE 754 encoding
+		bits := math.Float32bits(v)
+		binary.LittleEndian.PutUint32(vectorBytes[i*4:], bits)
 	}
 
 	_, err := tx.Exec(
@@ -238,13 +285,18 @@ func (s *Store) GetVerbatim(id uuid.UUID) (*types.Verbatim, error) {
 		return nil, err
 	}
 
-	v.ID, _ = uuid.FromBytes(idBytes)
+	v.ID, err = uuid.FromBytes(idBytes)
+	if err != nil {
+		return nil, fmt.Errorf("invalid verbatim UUID in database: %w", err)
+	}
 	v.CreatedAt = time.Unix(int64(createdAt), 0)
 	if room.Valid {
 		v.Room = &room.String
 	}
 	if len(metadataJSON) > 0 {
-		json.Unmarshal(metadataJSON, &v.Metadata)
+		if err := json.Unmarshal(metadataJSON, &v.Metadata); err != nil {
+			// Log but don't fail - metadata is optional
+		}
 	}
 
 	return &v, nil
@@ -270,15 +322,17 @@ func (s *Store) GetEmbedding(id uuid.UUID) (*types.Embedding, error) {
 		return nil, err
 	}
 
-	emb.ID, _ = uuid.FromBytes(idBytes)
+	emb.ID, err = uuid.FromBytes(idBytes)
+	if err != nil {
+		return nil, fmt.Errorf("invalid embedding UUID in database: %w", err)
+	}
 	emb.CreatedAt = time.Unix(int64(createdAt), 0)
 
-	// Decode float32
+	// Decode float32 using proper IEEE 754 decoding
 	emb.Vector = make([]float32, len(vectorBytes)/4)
 	for i := 0; i < len(emb.Vector); i++ {
-		b := vectorBytes[i*4 : i*4+4]
-		u := uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24
-		emb.Vector[i] = float32(u) // Note: this is an approximation to simplify
+		u := binary.LittleEndian.Uint32(vectorBytes[i*4 : i*4+4])
+		emb.Vector[i] = math.Float32frombits(u)
 	}
 
 	return &emb, nil
@@ -340,35 +394,45 @@ func (s *Store) SearchCandidates(wing, room *string, limit int) ([]*types.Candid
 			continue
 		}
 
-		v.ID, _ = uuid.FromBytes(vID)
+		v.ID, err = uuid.FromBytes(vID)
+		if err != nil {
+			continue
+		}
 		v.CreatedAt = time.Unix(int64(createdAt), 0)
 		if room.Valid {
 			v.Room = &room.String
 		}
 
-		fp.ID, _ = uuid.FromBytes(fpID)
+		fp.ID, err = uuid.FromBytes(fpID)
+		if err != nil {
+			continue
+		}
 		fp.VerbatimID = v.ID
 		fp.ExtractedAt = time.Unix(int64(extractedAt), 0)
 		if decision.Valid {
 			fp.Decision = &decision.String
 		}
 		if len(entitiesJSON) > 0 {
-			json.Unmarshal(entitiesJSON, &fp.Entities)
+			if err := json.Unmarshal(entitiesJSON, &fp.Entities); err != nil {
+				// Log but continue - entities are optional
+			}
 		}
 		if len(subjectsJSON) > 0 {
-			json.Unmarshal(subjectsJSON, &fp.Subjects)
+			if err := json.Unmarshal(subjectsJSON, &fp.Subjects); err != nil {
+				// Log but continue
+			}
 		}
 		if len(dataJSON) > 0 {
-			json.Unmarshal(dataJSON, &fp.Data)
+			if err := json.Unmarshal(dataJSON, &fp.Data); err != nil {
+				// Log but continue
+			}
 		}
 
-		// Decode vector
+		// Decode vector using proper IEEE 754 decoding
 		emb.Vector = make([]float32, emb.Dim)
 		for i := 0; i < emb.Dim && i*4+3 < len(vectorBytes); i++ {
-			b := vectorBytes[i*4 : i*4+4]
-			// Little-endian float32
-			u := uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24
-			emb.Vector[i] = float32(u)
+			u := binary.LittleEndian.Uint32(vectorBytes[i*4 : i*4+4])
+			emb.Vector[i] = math.Float32frombits(u)
 		}
 
 		candidates = append(candidates, &types.Candidate{
@@ -378,14 +442,21 @@ func (s *Store) SearchCandidates(wing, room *string, limit int) ([]*types.Candid
 		})
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating candidates: %w", err)
+	}
+
 	return candidates, nil
 }
 
 // RegisterModel registers an embedding model
 func (s *Store) RegisterModel(model *types.EmbeddingModel) error {
-	metadataJSON, _ := json.Marshal(model.Metadata)
+	metadataJSON, err := json.Marshal(model.Metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal model metadata: %w", err)
+	}
 	metadataStr := string(metadataJSON)
-	_, err := s.db.Exec(
+	_, err = s.db.Exec(
 		`INSERT OR IGNORE INTO embedding_models (model_hash, model_name, dimension, created_at, metadata) 
 		 VALUES (?, ?, ?, ?, ?)`,
 		model.ModelHash, model.ModelName, model.Dimension, float64(model.CreatedAt.Unix()), metadataStr,
@@ -441,9 +512,12 @@ func (s *Store) GetStats() (*types.Stats, error) {
 			stats.TypeCounts[t] = count
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating type counts: %w", err)
+	}
 
 	// Active wings
-	row, err := s.db.Query(`SELECT DISTINCT wing FROM verbatim ORDER BY wing LIMIT 20`)
+	row, err := s.db.Query(fmt.Sprintf(`SELECT DISTINCT wing FROM verbatim ORDER BY wing LIMIT %d`, activeWingsLimit))
 	if err != nil {
 		return nil, err
 	}
@@ -454,6 +528,9 @@ func (s *Store) GetStats() (*types.Stats, error) {
 		if err := row.Scan(&wing); err == nil {
 			stats.ActiveWings = append(stats.ActiveWings, wing)
 		}
+	}
+	if err := row.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating wings: %w", err)
 	}
 
 	return stats, nil
@@ -473,6 +550,9 @@ func (s *Store) GetEmbeddingModels() ([]string, error) {
 		if err := rows.Scan(&m); err == nil {
 			models = append(models, m)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating models: %w", err)
 	}
 	return models, nil
 }
@@ -504,7 +584,7 @@ func (s *Store) GetTimeline(wing string, room, memType *string, since, until *ti
 		args = append(args, float64(until.Unix()))
 	}
 
-	query += " ORDER BY f.extracted_at DESC LIMIT 100"
+	query += fmt.Sprintf(" ORDER BY f.extracted_at DESC LIMIT %d", timelineDefaultLimit)
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -523,7 +603,10 @@ func (s *Store) GetTimeline(wing string, room, memType *string, since, until *ti
 			continue
 		}
 
-		uid, _ := uuid.FromBytes(id)
+		uid, err := uuid.FromBytes(id)
+		if err != nil {
+			continue
+		}
 		var data types.FingerprintData
 		json.Unmarshal(dataJSON, &data)
 
@@ -545,32 +628,111 @@ func (s *Store) GetTimeline(wing string, room, memType *string, since, until *ti
 		})
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating timeline: %w", err)
+	}
+
 	return items, nil
 }
 
-// ArchiveOldMemories archives old memories
+// ArchiveOldMemories archives old memories with cascade cleanup
 func (s *Store) ArchiveOldMemories() (*types.ArchiveResult, error) {
 	result := &types.ArchiveResult{}
 	now := float64(time.Now().Unix())
 
-	// Archive session_notes > 30 days
-	threshold := now - 30*24*60*60
-	r, err := s.db.Exec(`DELETE FROM verbatim WHERE created_at < ? AND id IN (SELECT verbatim_id FROM fingerprints WHERE ftype = 'session_note')`, threshold)
-	if err == nil {
-		count, _ := r.RowsAffected()
-		result.SessionNotes = int(count)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin archive transaction: %w", err)
 	}
+	defer tx.Rollback()
 
-	// Archive debug_logs > 7 days
-	threshold = now - 7*24*60*60
-	r, err = s.db.Exec(`DELETE FROM verbatim WHERE created_at < ? AND id IN (SELECT verbatim_id FROM fingerprints WHERE ftype = 'debug_log')`, threshold)
-	if err == nil {
-		count, _ := r.RowsAffected()
-		result.DebugLogs = int(count)
+	// Collect IDs and token counts for session_notes to archive
+	sessionThreshold := now - float64(s.opts.SessionNoteArchiveDays*secondsPerDay)
+	sessionIDs, sessionTokens, err := s.collectArchiveTargets(tx, "session_note", sessionThreshold)
+	if err != nil {
+		return nil, fmt.Errorf("failed to collect session notes: %w", err)
+	}
+	result.SessionNotes = len(sessionIDs)
+	result.TokensFreed += sessionTokens
+
+	// Collect IDs and token counts for debug_logs to archive
+	debugThreshold := now - float64(s.opts.DebugLogArchiveDays*secondsPerDay)
+	debugIDs, debugTokens, err := s.collectArchiveTargets(tx, "debug_log", debugThreshold)
+	if err != nil {
+		return nil, fmt.Errorf("failed to collect debug logs: %w", err)
+	}
+	result.DebugLogs = len(debugIDs)
+	result.TokensFreed += debugTokens
+
+	// Cascade delete all related data for collected IDs
+	allIDs := append(sessionIDs, debugIDs...)
+	for _, id := range allIDs {
+		idBytes := id[:]
+		// Delete causal edges referencing this node (both directions)
+		if _, err := tx.Exec(`DELETE FROM causal_edges WHERE from_id = ? OR to_id = ?`, idBytes, idBytes); err != nil {
+			return nil, fmt.Errorf("failed to delete causal edges for %s: %w", id, err)
+		}
+		// Delete causal node
+		if _, err := tx.Exec(`DELETE FROM causal_nodes WHERE id = ?`, idBytes); err != nil {
+			return nil, fmt.Errorf("failed to delete causal node %s: %w", id, err)
+		}
+		// Delete embedding
+		if _, err := tx.Exec(`DELETE FROM embeddings WHERE id = ?`, idBytes); err != nil {
+			return nil, fmt.Errorf("failed to delete embedding %s: %w", id, err)
+		}
+		// Delete fingerprint
+		if _, err := tx.Exec(`DELETE FROM fingerprints WHERE id = ? OR verbatim_id = ?`, idBytes, idBytes); err != nil {
+			return nil, fmt.Errorf("failed to delete fingerprint %s: %w", id, err)
+		}
+		// Delete verbatim
+		if _, err := tx.Exec(`DELETE FROM verbatim WHERE id = ?`, idBytes); err != nil {
+			return nil, fmt.Errorf("failed to delete verbatim %s: %w", id, err)
+		}
 	}
 
 	// Clean overlap cache
-	s.db.Exec(`DELETE FROM overlap_cache WHERE ttl < ?`, now)
+	if _, err := tx.Exec(`DELETE FROM overlap_cache WHERE ttl < ?`, now); err != nil {
+		return nil, fmt.Errorf("failed to clean overlap cache: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit archive transaction: %w", err)
+	}
 
 	return result, nil
+}
+
+// collectArchiveTargets collects verbatim IDs and total tokens for a given type and threshold
+func (s *Store) collectArchiveTargets(tx *sql.Tx, ftype string, threshold float64) ([]uuid.UUID, int, error) {
+	rows, err := tx.Query(
+		`SELECT v.id, v.token_count FROM verbatim v
+		 JOIN fingerprints f ON v.id = f.verbatim_id
+		 WHERE v.created_at < ? AND f.ftype = ?`,
+		threshold, ftype,
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var ids []uuid.UUID
+	totalTokens := 0
+	for rows.Next() {
+		var idBytes []byte
+		var tokenCount int
+		if err := rows.Scan(&idBytes, &tokenCount); err != nil {
+			continue
+		}
+		id, err := uuid.FromBytes(idBytes)
+		if err != nil {
+			continue
+		}
+		ids = append(ids, id)
+		totalTokens += tokenCount
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error iterating archive targets: %w", err)
+	}
+
+	return ids, totalTokens, nil
 }

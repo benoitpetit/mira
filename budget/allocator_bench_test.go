@@ -7,12 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/benoitpetit/mira/extract"
+	"github.com/benoitpetit/mira/internal/util"
 	"github.com/benoitpetit/mira/types"
+	"github.com/google/uuid"
 )
-
-
 
 var (
 	benchExtractorOnce sync.Once
@@ -23,7 +22,7 @@ func getBenchExtractor() *extract.Extractor {
 	benchExtractorOnce.Do(func() {
 		embedder := &benchEmbedder{}
 		var err error
-		benchExtractor, err = extract.NewExtractor("test-model", embedder)
+		benchExtractor, err = extract.NewExtractorWithOptions("test-model", embedder, extract.ExtractorOptions{})
 		if err != nil {
 			panic(err)
 		}
@@ -93,7 +92,7 @@ func generateCandidates(n int, memoryType types.MemoryType) []*types.Candidate {
 
 func BenchmarkScoreCandidates(b *testing.B) {
 	candidates := generateCandidates(100, types.TypeDecision)
-	alloc := &Allocator{}
+	alloc := &Allocator{opts: AllocatorOptions{}.withDefaults()}
 	queryVec, _ := (&benchEmbedder{}).Encode("PostgreSQL database decision")
 
 	b.ResetTimer()
@@ -123,9 +122,9 @@ func benchmarkAllocate(b *testing.B, n int) {
 	candidates := generateCandidates(n, types.TypeDecision)
 	vecStore := &mockVectorStore{candidates: candidates}
 	causal := &mockCausalGraph{}
-	
+
 	// Use shared extractor to avoid tiktoken reload
-	alloc := NewAllocator(vecStore, nil, causal, getBenchExtractor())
+	alloc := NewAllocatorWithOptions(vecStore, nil, causal, getBenchExtractor(), AllocatorOptions{})
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -133,8 +132,6 @@ func benchmarkAllocate(b *testing.B, n int) {
 		alloc.Allocate("query", 4000, nil, nil)
 	}
 }
-
-
 
 func BenchmarkCosineSimilarity(b *testing.B) {
 	vec1 := make([]float32, 384)
@@ -147,12 +144,12 @@ func BenchmarkCosineSimilarity(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		cosineSimilarity(vec1, vec2)
+		util.CosineSimilarity(vec1, vec2)
 	}
 }
 
 func BenchmarkDetermineRenderMode(b *testing.B) {
-	alloc := &Allocator{}
+	alloc := &Allocator{opts: AllocatorOptions{}.withDefaults()}
 	c := &types.Candidate{
 		Verbatim: &types.Verbatim{TokenCount: 100},
 		Memory:   &types.Fingerprint{TokenEstimate: 50},
@@ -166,7 +163,7 @@ func BenchmarkDetermineRenderMode(b *testing.B) {
 }
 
 func BenchmarkEmbeddingCache(b *testing.B) {
-	cache := NewEmbeddingCache(1000)
+	cache := newEmbeddingCache(1000)
 	vec := make([]float32, 384)
 	for i := range vec {
 		vec[i] = rand.Float32()
@@ -174,24 +171,24 @@ func BenchmarkEmbeddingCache(b *testing.B) {
 
 	b.Run("Write", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			cache.Set(string(rune('a'+i%26)), vec)
+			cache.set(string(rune('a'+i%26)), vec)
 		}
 	})
 
 	b.Run("Read", func(b *testing.B) {
-		cache.Set("test", vec)
+		cache.set("test", vec)
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			cache.Get("test")
+			cache.get("test")
 		}
 	})
 
 	b.Run("ReadWrite", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			if i%2 == 0 {
-				cache.Set(string(rune('a'+i%26)), vec)
+				cache.set(string(rune('a'+i%26)), vec)
 			} else {
-				cache.Get(string(rune('a'+(i-1)%26)))
+				cache.get(string(rune('a' + (i-1)%26)))
 			}
 		}
 	})
@@ -199,22 +196,22 @@ func BenchmarkEmbeddingCache(b *testing.B) {
 
 func BenchmarkPriorityQueue(b *testing.B) {
 	b.Run("Push", func(b *testing.B) {
-		pq := make(PriorityQueue, 0)
+		pq := make(priorityQueue, 0)
 		for i := 0; i < b.N; i++ {
 			c := &types.Candidate{Score: rand.Float64()}
-			pq.Push(&Item{candidate: c, priority: c.Score})
+			pq.Push(&item{candidate: c, priority: c.Score})
 		}
 	})
 
 	b.Run("PushPop", func(b *testing.B) {
-		pq := make(PriorityQueue, 0)
+		pq := make(priorityQueue, 0)
 		for i := 0; i < 100; i++ {
 			c := &types.Candidate{Score: rand.Float64()}
-			pq.Push(&Item{candidate: c, priority: c.Score})
+			pq.Push(&item{candidate: c, priority: c.Score})
 		}
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			pq.Push(&Item{candidate: &types.Candidate{Score: rand.Float64()}, priority: rand.Float64()})
+			pq.Push(&item{candidate: &types.Candidate{Score: rand.Float64()}, priority: rand.Float64()})
 			pq.Pop()
 		}
 	})
@@ -229,9 +226,9 @@ func BenchmarkCompleteAllocationWorkflow(b *testing.B) {
 
 	vecStore := &mockVectorStore{candidates: candidates}
 	causal := &mockCausalGraph{}
-	
+
 	// Use shared extractor
-	alloc := NewAllocator(vecStore, nil, causal, getBenchExtractor())
+	alloc := NewAllocatorWithOptions(vecStore, nil, causal, getBenchExtractor(), AllocatorOptions{})
 
 	queries := []string{"q1", "q2", "q3", "q4"}
 
@@ -248,8 +245,8 @@ func BenchmarkAllocatorMemory(b *testing.B) {
 	candidates := generateCandidates(100, types.TypeDecision)
 	vecStore := &mockVectorStore{candidates: candidates}
 	causal := &mockCausalGraph{}
-	
-	alloc := NewAllocator(vecStore, nil, causal, getBenchExtractor())
+
+	alloc := NewAllocatorWithOptions(vecStore, nil, causal, getBenchExtractor(), AllocatorOptions{})
 
 	b.ReportAllocs()
 	b.ResetTimer()

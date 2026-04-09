@@ -26,12 +26,6 @@ var DecayRates = map[MemoryType]float64{
 	TypeDebugLog:    0.5,
 }
 
-// Auto archive thresholds (days)
-var ArchiveThresholds = map[MemoryType]float64{
-	TypeSessionNote: 30,
-	TypeDebugLog:    7,
-}
-
 // RelationType for causal graph
 type RelationType string
 
@@ -63,7 +57,6 @@ type Fingerprint struct {
 	Entities      []string        `db:"entities"`
 	Subjects      []string        `db:"subjects"`
 	Decision      *string         `db:"decision"`
-	RelatedTo     []uuid.UUID     `db:"related_to"`
 	Data          FingerprintData `db:"data"`
 	FactCount     int             `db:"fact_count"`
 	TokenEstimate int             `db:"token_estimate"`
@@ -71,20 +64,19 @@ type Fingerprint struct {
 }
 
 type FingerprintData struct {
-	ID           string         `json:"id"`
-	Type         string         `json:"type"`
-	Date         string         `json:"date"`
-	Entities     []string       `json:"entities"`
-	Subject      []string       `json:"subject"`
-	Decision     string         `json:"decision,omitempty"`
-	Rejected     []string       `json:"rejected,omitempty"`
-	Reason       []string       `json:"reason,omitempty"`
-	ValidatedBy  string         `json:"validated_by,omitempty"`
-	Assignee     string         `json:"assignee,omitempty"`
-	Deadline     string         `json:"deadline,omitempty"`
-	CausalParent *string        `json:"causal_parent,omitempty"`
-	VerbatimRef  string         `json:"verbatim_ref"`
-	Custom       map[string]any `json:"custom,omitempty"`
+	ID          string         `json:"id"`
+	Type        string         `json:"type"`
+	Date        string         `json:"date"`
+	Entities    []string       `json:"entities"`
+	Subject     []string       `json:"subject"`
+	Decision    string         `json:"decision,omitempty"`
+	Rejected    []string       `json:"rejected,omitempty"`
+	Reason      []string       `json:"reason,omitempty"`
+	ValidatedBy string         `json:"validated_by,omitempty"`
+	Assignee    string         `json:"assignee,omitempty"`
+	Deadline    string         `json:"deadline,omitempty"`
+	VerbatimRef string         `json:"verbatim_ref"`
+	Custom      map[string]any `json:"custom,omitempty"`
 }
 
 // Embedding T2 with versioning
@@ -129,9 +121,9 @@ type CausalEdge struct {
 type RenderMode int
 
 const (
-	ModeHeader RenderMode = iota // T2: 2-5 tokens, budget < 100
-	ModeFingerprint              // T1: ~15% tokens, budget < 1000
-	ModeVerbatim                 // T0: 100% tokens, sufficient budget
+	ModeHeader      RenderMode = iota // T2: 2-5 tokens, budget < 100
+	ModeFingerprint                   // T1: ~15% tokens, budget < 1000
+	ModeVerbatim                      // T0: 100% tokens, sufficient budget
 )
 
 // Candidate for CBA
@@ -146,7 +138,6 @@ type Candidate struct {
 	SessionBoost  float64
 	MaxOverlap    float64
 	CausalPenalty float64
-	SelectedAt    *time.Time
 }
 
 // SelectedMemory represents a selected memory
@@ -160,15 +151,14 @@ type SelectedMemory struct {
 
 // Stats for status
 type Stats struct {
-	VerbatimCount      int
-	FingerprintCount   int
-	EmbeddingCount     int
-	CausalNodeCount    int
-	CausalEdgeCount    int
-	TotalTokens        int
-	TypeCounts         map[string]int
-	ActiveWings        []string
-	LastArchive        time.Time
+	VerbatimCount    int
+	FingerprintCount int
+	EmbeddingCount   int
+	CausalNodeCount  int
+	CausalEdgeCount  int
+	TotalTokens      int
+	TypeCounts       map[string]int
+	ActiveWings      []string
 }
 
 // ArchiveResult archiving result
@@ -184,4 +174,10 @@ type TimelineItem struct {
 	Timestamp time.Time
 	Type      MemoryType
 	Summary   string
+}
+
+// OverlapCache interface for caching pairwise overlap similarity
+type OverlapCache interface {
+	Get(idA, idB uuid.UUID) (float64, bool)
+	Set(idA, idB uuid.UUID, similarity float64)
 }

@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/benoitpetit/mira/types"
+	"github.com/google/uuid"
 )
 
 func TestNormalizeL2(t *testing.T) {
@@ -171,7 +171,7 @@ func TestSimpleEmbedder(t *testing.T) {
 
 func TestDetectCausalRelations(t *testing.T) {
 	embedder := NewSimpleEmbedder(384)
-	ext, _ := NewExtractor("test-model", embedder)
+	ext, _ := NewExtractorWithOptions("test-model", embedder, ExtractorOptions{})
 
 	newFp := &types.Fingerprint{
 		ID:          uuid.New(),
@@ -212,21 +212,21 @@ func TestExtractEntities(t *testing.T) {
 
 func TestExtractPipeline(t *testing.T) {
 	embedder := NewSimpleEmbedder(384)
-	ext, err := NewExtractor("test-model", embedder)
+	ext, err := NewExtractorWithOptions("test-model", embedder, ExtractorOptions{})
 	if err != nil {
-		t.Fatalf("NewExtractor() error = %v", err)
+		t.Fatalf("NewExtractorWithOptions() error = %v", err)
 	}
 
 	tests := []struct {
-		name         string
-		content      string
-		expectedType types.MemoryType
+		name          string
+		content       string
+		expectedType  types.MemoryType
 		checkDecision bool
 	}{
 		{
-			name:         "decision extraction",
-			content:      "We decided to use PostgreSQL for the database.",
-			expectedType: types.TypeDecision,
+			name:          "decision extraction",
+			content:       "We decided to use PostgreSQL for the database.",
+			expectedType:  types.TypeDecision,
 			checkDecision: true,
 		},
 		{
@@ -308,7 +308,7 @@ func TestExtractPipeline(t *testing.T) {
 
 func TestExtractPipelineEmptyContent(t *testing.T) {
 	embedder := NewSimpleEmbedder(384)
-	ext, _ := NewExtractor("test-model", embedder)
+	ext, _ := NewExtractorWithOptions("test-model", embedder, ExtractorOptions{})
 
 	verbatim := &types.Verbatim{
 		ID:        uuid.New(),
@@ -331,7 +331,7 @@ func TestExtractPipelineEmptyContent(t *testing.T) {
 
 func TestModelMethods(t *testing.T) {
 	embedder := NewSimpleEmbedder(384)
-	ext, _ := NewExtractor("my-test-model", embedder)
+	ext, _ := NewExtractorWithOptions("my-test-model", embedder, ExtractorOptions{})
 
 	// Test ModelHash
 	hash := ext.ModelHash()
@@ -340,12 +340,6 @@ func TestModelMethods(t *testing.T) {
 	}
 	if len(hash) != 16 {
 		t.Errorf("ModelHash should be 16 chars, got %d", len(hash))
-	}
-
-	// Test ModelName
-	name := ext.ModelName()
-	if name != "my-test-model" {
-		t.Errorf("ModelName = %q, want %q", name, "my-test-model")
 	}
 
 	// Test Encode
@@ -362,7 +356,7 @@ func TestNormalizeL2Zero(t *testing.T) {
 	// Test zero vector
 	zero := []float32{0, 0, 0}
 	result := normalizeL2(zero)
-	
+
 	// Should return the same vector without division by zero
 	if len(result) != 3 {
 		t.Error("Zero vector normalization should preserve length")
@@ -402,7 +396,7 @@ func TestHasOverlapEdgeCases(t *testing.T) {
 
 func TestDetectCausalRelationsNoOverlap(t *testing.T) {
 	embedder := NewSimpleEmbedder(384)
-	ext, _ := NewExtractor("test-model", embedder)
+	ext, _ := NewExtractorWithOptions("test-model", embedder, ExtractorOptions{})
 
 	newFp := &types.Fingerprint{
 		ID:          uuid.New(),
@@ -438,7 +432,7 @@ func TestDetectCausalRelationsNoOverlap(t *testing.T) {
 
 func TestDetectCausalRelationsTooOld(t *testing.T) {
 	embedder := NewSimpleEmbedder(384)
-	ext, _ := NewExtractor("test-model", embedder)
+	ext, _ := NewExtractorWithOptions("test-model", embedder, ExtractorOptions{})
 
 	newFp := &types.Fingerprint{
 		ID:          uuid.New(),
@@ -453,8 +447,8 @@ func TestDetectCausalRelationsTooOld(t *testing.T) {
 		{
 			ID:          uuid.New(),
 			Type:        types.TypeDecision,
-			Entities:    []string{"API"},       // Chevauchement
-			Subjects:    []string{"migration"}, // Chevauchement
+			Entities:    []string{"API"},                      // Chevauchement
+			Subjects:    []string{"migration"},                // Chevauchement
 			ExtractedAt: time.Now().Add(-40 * 24 * time.Hour), // 40 jours
 		},
 	}
@@ -473,7 +467,7 @@ func TestDetectCausalRelationsTooOld(t *testing.T) {
 
 func TestDetectCausalRelationsSelfReference(t *testing.T) {
 	embedder := NewSimpleEmbedder(384)
-	ext, _ := NewExtractor("test-model", embedder)
+	ext, _ := NewExtractorWithOptions("test-model", embedder, ExtractorOptions{})
 
 	id := uuid.New()
 	newFp := &types.Fingerprint{
@@ -525,7 +519,7 @@ func TestInferSubjectFallback(t *testing.T) {
 
 func TestExtractPipelineVerbatimRef(t *testing.T) {
 	embedder := NewSimpleEmbedder(384)
-	ext, _ := NewExtractor("test-model", embedder)
+	ext, _ := NewExtractorWithOptions("test-model", embedder, ExtractorOptions{})
 
 	id := uuid.New()
 	verbatim := &types.Verbatim{
@@ -547,7 +541,7 @@ func TestExtractPipelineVerbatimRef(t *testing.T) {
 
 func TestExtractStructuredPatterns(t *testing.T) {
 	embedder := NewSimpleEmbedder(384)
-	ext, _ := NewExtractor("test-model", embedder)
+	ext, _ := NewExtractorWithOptions("test-model", embedder, ExtractorOptions{})
 
 	tests := []struct {
 		name         string

@@ -1,13 +1,14 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/benoitpetit/mira/types"
+	"github.com/google/uuid"
 )
 
 func setupTestDB(t *testing.T) (*Store, func()) {
@@ -17,7 +18,7 @@ func setupTestDB(t *testing.T) (*Store, func()) {
 	}
 
 	dbPath := tmpDir + "/test.db"
-	store, err := New(dbPath)
+	store, err := NewWithOptions(dbPath, StoreOptions{})
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create store: %v", err)
@@ -36,13 +37,13 @@ func TestStoreVerbatim(t *testing.T) {
 	defer cleanup()
 
 	verbatim := &types.Verbatim{
-		ID:        uuid.New(),
-		Content:   "Test content for verbatim storage",
+		ID:         uuid.New(),
+		Content:    "Test content for verbatim storage",
 		TokenCount: 10,
-		CreatedAt: time.Now(),
-		Wing:      "test-wing",
-		Room:      strPtr("test-room"),
-		Metadata:  map[string]any{"key": "value"},
+		CreatedAt:  time.Now(),
+		Wing:       "test-wing",
+		Room:       strPtr("test-room"),
+		Metadata:   map[string]any{"key": "value"},
 	}
 
 	tx, err := store.BeginTx()
@@ -91,21 +92,21 @@ func TestStoreFingerprint(t *testing.T) {
 
 	// Store verbatim, fingerprint and embedding together
 	verbatim := &types.Verbatim{
-		ID:        uuid.New(),
-		Content:   "Test decision content",
+		ID:         uuid.New(),
+		Content:    "Test decision content",
 		TokenCount: 15,
-		CreatedAt: time.Now(),
-		Wing:      "backend",
+		CreatedAt:  time.Now(),
+		Wing:       "backend",
 	}
 
 	fp := &types.Fingerprint{
-		ID:            verbatim.ID,
-		VerbatimID:    verbatim.ID,
-		Type:          types.TypeDecision,
-		ExtractedAt:   time.Now(),
-		Entities:      []string{"PostgreSQL", "API"},
-		Subjects:      []string{"database"},
-		Decision:      strPtr("Use PostgreSQL"),
+		ID:          verbatim.ID,
+		VerbatimID:  verbatim.ID,
+		Type:        types.TypeDecision,
+		ExtractedAt: time.Now(),
+		Entities:    []string{"PostgreSQL", "API"},
+		Subjects:    []string{"database"},
+		Decision:    strPtr("Use PostgreSQL"),
 		Data: types.FingerprintData{
 			ID:          verbatim.ID.String(),
 			Type:        "decision",
@@ -133,11 +134,11 @@ func TestStoreFingerprint(t *testing.T) {
 		CreatedAt:  time.Now(),
 	}
 
-	tx, _ := store.BeginTx()
+	tx := beginTxHelper(t, store)
 	store.StoreVerbatimTx(tx, verbatim)
 	store.StoreFingerprintTx(tx, fp)
 	store.StoreEmbeddingTx(tx, emb)
-	tx.Commit()
+	commitTxHelper(t, tx)
 
 	// Verify via SearchCandidates
 	candidates, err := store.SearchCandidates(strPtr("backend"), nil, 10)
@@ -167,16 +168,16 @@ func TestStoreEmbedding(t *testing.T) {
 
 	// Store verbatim
 	verbatim := &types.Verbatim{
-		ID:        uuid.New(),
-		Content:   "Test content",
+		ID:         uuid.New(),
+		Content:    "Test content",
 		TokenCount: 5,
-		CreatedAt: time.Now(),
-		Wing:      "test",
+		CreatedAt:  time.Now(),
+		Wing:       "test",
 	}
 
-	tx, _ := store.BeginTx()
+	tx := beginTxHelper(t, store)
 	store.StoreVerbatimTx(tx, verbatim)
-	tx.Commit()
+	commitTxHelper(t, tx)
 
 	// Store embedding
 	vector := make([]float32, 384)
@@ -198,7 +199,7 @@ func TestStoreEmbedding(t *testing.T) {
 		tx.Rollback()
 		t.Fatalf("Failed to store embedding: %v", err)
 	}
-	tx.Commit()
+	commitTxHelper(t, tx)
 
 	// Retrieve and verify
 	retrieved, err := store.GetEmbedding(verbatim.ID)
@@ -231,15 +232,15 @@ func TestGetStats(t *testing.T) {
 	// Add some data
 	for i := 0; i < 5; i++ {
 		verbatim := &types.Verbatim{
-			ID:        uuid.New(),
-			Content:   "Test content",
+			ID:         uuid.New(),
+			Content:    "Test content",
 			TokenCount: 10,
-			CreatedAt: time.Now(),
-			Wing:      "test-wing",
+			CreatedAt:  time.Now(),
+			Wing:       "test-wing",
 		}
-		tx, _ := store.BeginTx()
+		tx := beginTxHelper(t, store)
 		store.StoreVerbatimTx(tx, verbatim)
-		tx.Commit()
+		commitTxHelper(t, tx)
 	}
 
 	stats, _ = store.GetStats()
@@ -254,16 +255,16 @@ func TestArchiveOldMemories(t *testing.T) {
 
 	// Add old session_note (should be archived)
 	oldSessionNote := &types.Verbatim{
-		ID:        uuid.New(),
-		Content:   "Old session note",
+		ID:         uuid.New(),
+		Content:    "Old session note",
 		TokenCount: 5,
-		CreatedAt: time.Now().AddDate(0, 0, -31), // 31 days ago
-		Wing:      "test",
+		CreatedAt:  time.Now().AddDate(0, 0, -31), // 31 days ago
+		Wing:       "test",
 	}
 
-	tx, _ := store.BeginTx()
+	tx := beginTxHelper(t, store)
 	store.StoreVerbatimTx(tx, oldSessionNote)
-	tx.Commit()
+	commitTxHelper(t, tx)
 
 	// Add fingerprint for session_note
 	fp := &types.Fingerprint{
@@ -277,7 +278,7 @@ func TestArchiveOldMemories(t *testing.T) {
 	}
 	tx, _ = store.BeginTx()
 	store.StoreFingerprintTx(tx, fp)
-	tx.Commit()
+	commitTxHelper(t, tx)
 
 	// Archive
 	result, err := store.ArchiveOldMemories()
@@ -297,16 +298,16 @@ func BenchmarkStoreVerbatim(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		verbatim := &types.Verbatim{
-			ID:        uuid.New(),
-			Content:   "Benchmark content for verbatim storage testing",
+			ID:         uuid.New(),
+			Content:    "Benchmark content for verbatim storage testing",
 			TokenCount: 10,
-			CreatedAt: time.Now(),
-			Wing:      "benchmark",
+			CreatedAt:  time.Now(),
+			Wing:       "benchmark",
 		}
 
-		tx, _ := store.BeginTx()
+		tx := beginTxHelperBench(b, store)
 		store.StoreVerbatimTx(tx, verbatim)
-		tx.Commit()
+		commitTxHelperBench(b, tx)
 	}
 }
 
@@ -325,14 +326,14 @@ func BenchmarkStoreCompletePipeline(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		tx, _ := store.BeginTx()
+		tx := beginTxHelperBench(b, store)
 
 		verbatim := &types.Verbatim{
-			ID:        uuid.New(),
-			Content:   "Complete pipeline benchmark test",
+			ID:         uuid.New(),
+			Content:    "Complete pipeline benchmark test",
 			TokenCount: 10,
-			CreatedAt: time.Now(),
-			Wing:      "benchmark",
+			CreatedAt:  time.Now(),
+			Wing:       "benchmark",
 		}
 		store.StoreVerbatimTx(tx, verbatim)
 
@@ -359,12 +360,46 @@ func BenchmarkStoreCompletePipeline(b *testing.B) {
 		}
 		store.StoreEmbeddingTx(tx, emb)
 
-		tx.Commit()
+		commitTxHelperBench(b, tx)
 	}
 }
 
 func strPtr(s string) *string {
 	return &s
+}
+
+// beginTxHelper starts a transaction and fails the test if it cannot
+func beginTxHelper(t *testing.T, s *Store) *sql.Tx {
+	t.Helper()
+	tx, err := s.BeginTx()
+	if err != nil {
+		t.Fatalf("Failed to begin transaction: %v", err)
+	}
+	return tx
+}
+
+// commitTxHelper commits a transaction and fails the test if it cannot
+func commitTxHelper(t *testing.T, tx *sql.Tx) {
+	t.Helper()
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Failed to commit transaction: %v", err)
+	}
+}
+
+// beginTxHelperBench starts a transaction for benchmarks (panics on error)
+func beginTxHelperBench(b *testing.B, s *Store) *sql.Tx {
+	tx, err := s.BeginTx()
+	if err != nil {
+		b.Fatalf("Failed to begin transaction: %v", err)
+	}
+	return tx
+}
+
+// commitTxHelperBench commits a transaction for benchmarks (panics on error)
+func commitTxHelperBench(b *testing.B, tx *sql.Tx) {
+	if err := tx.Commit(); err != nil {
+		b.Fatalf("Failed to commit transaction: %v", err)
+	}
 }
 
 func TestGetEmbeddingModels(t *testing.T) {
@@ -503,12 +538,12 @@ func TestSearchCandidatesFilters(t *testing.T) {
 	for _, wing := range wings {
 		for _, room := range rooms {
 			v := &types.Verbatim{
-				ID:        uuid.New(),
-				Content:   "Content for " + wing,
+				ID:         uuid.New(),
+				Content:    "Content for " + wing,
 				TokenCount: 10,
-				CreatedAt: time.Now(),
-				Wing:      wing,
-				Room:      room,
+				CreatedAt:  time.Now(),
+				Wing:       wing,
+				Room:       room,
 			}
 
 			fp := &types.Fingerprint{
@@ -531,11 +566,11 @@ func TestSearchCandidatesFilters(t *testing.T) {
 				CreatedAt:  time.Now(),
 			}
 
-			tx, _ := store.BeginTx()
+			tx := beginTxHelper(t, store)
 			store.StoreVerbatimTx(tx, v)
 			store.StoreFingerprintTx(tx, fp)
 			store.StoreEmbeddingTx(tx, emb)
-			tx.Commit()
+			commitTxHelper(t, tx)
 		}
 	}
 
@@ -606,11 +641,11 @@ func TestSearchCandidatesLimit(t *testing.T) {
 	// Create 10 verbatims
 	for i := 0; i < 10; i++ {
 		v := &types.Verbatim{
-			ID:        uuid.New(),
-			Content:   "Content",
+			ID:         uuid.New(),
+			Content:    "Content",
 			TokenCount: 10,
-			CreatedAt: time.Now().Add(-time.Duration(i) * time.Minute),
-			Wing:      "test",
+			CreatedAt:  time.Now().Add(-time.Duration(i) * time.Minute),
+			Wing:       "test",
 		}
 
 		fp := &types.Fingerprint{
@@ -633,11 +668,11 @@ func TestSearchCandidatesLimit(t *testing.T) {
 			CreatedAt:  time.Now(),
 		}
 
-		tx, _ := store.BeginTx()
+		tx := beginTxHelper(t, store)
 		store.StoreVerbatimTx(tx, v)
 		store.StoreFingerprintTx(tx, fp)
 		store.StoreEmbeddingTx(tx, emb)
-		tx.Commit()
+		commitTxHelper(t, tx)
 	}
 
 	// Test with different limits
@@ -690,11 +725,11 @@ func TestTransactionRollback(t *testing.T) {
 
 	// Insert data
 	v := &types.Verbatim{
-		ID:        uuid.New(),
-		Content:   "Test content",
+		ID:         uuid.New(),
+		Content:    "Test content",
 		TokenCount: 10,
-		CreatedAt: time.Now(),
-		Wing:      "test",
+		CreatedAt:  time.Now(),
+		Wing:       "test",
 	}
 	if err := store.StoreVerbatimTx(tx, v); err != nil {
 		t.Fatalf("StoreVerbatimTx() error = %v", err)
@@ -736,19 +771,19 @@ func TestGetTimeline(t *testing.T) {
 	// Create multiple fingerprints
 	for i := 0; i < 5; i++ {
 		v := &types.Verbatim{
-			ID:        uuid.New(),
-			Content:   "Test content",
+			ID:         uuid.New(),
+			Content:    "Test content",
 			TokenCount: 10,
-			CreatedAt: now.Add(-time.Duration(i) * time.Hour),
-			Wing:      wing,
-			Room:      &room,
+			CreatedAt:  now.Add(-time.Duration(i) * time.Hour),
+			Wing:       wing,
+			Room:       &room,
 		}
 
 		fp := &types.Fingerprint{
-			ID:            v.ID,
-			VerbatimID:    v.ID,
-			Type:          types.TypeDecision,
-			ExtractedAt:   v.CreatedAt,
+			ID:          v.ID,
+			VerbatimID:  v.ID,
+			Type:        types.TypeDecision,
+			ExtractedAt: v.CreatedAt,
 			Data: types.FingerprintData{
 				Subject:     []string{"Topic " + string(rune('A'+i))},
 				Decision:    "Decision " + string(rune('A'+i)),
@@ -768,11 +803,11 @@ func TestGetTimeline(t *testing.T) {
 			CreatedAt:  now,
 		}
 
-		tx, _ := store.BeginTx()
+		tx := beginTxHelper(t, store)
 		store.StoreVerbatimTx(tx, v)
 		store.StoreFingerprintTx(tx, fp)
 		store.StoreEmbeddingTx(tx, emb)
-		tx.Commit()
+		commitTxHelper(t, tx)
 	}
 
 	// Test: Timeline without filters

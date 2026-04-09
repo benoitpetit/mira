@@ -5,8 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/benoitpetit/mira/internal/util"
 	"github.com/benoitpetit/mira/types"
+	"github.com/google/uuid"
 )
 
 func TestSigmoidDensity(t *testing.T) {
@@ -159,7 +160,7 @@ func TestCosineSimilarity(t *testing.T) {
 	// Identical vectors
 	a := []float32{1, 0, 0}
 	b := []float32{1, 0, 0}
-	result := cosineSimilarity(a, b)
+	result := util.CosineSimilarity(a, b)
 	if math.Abs(result-1.0) > 0.0001 {
 		t.Errorf("Cosine similarity of identical vectors should be 1.0, got %v", result)
 	}
@@ -167,7 +168,7 @@ func TestCosineSimilarity(t *testing.T) {
 	// Orthogonal vectors
 	a = []float32{1, 0, 0}
 	b = []float32{0, 1, 0}
-	result = cosineSimilarity(a, b)
+	result = util.CosineSimilarity(a, b)
 	if math.Abs(result-0.0) > 0.0001 {
 		t.Errorf("Cosine similarity of orthogonal vectors should be 0.0, got %v", result)
 	}
@@ -175,32 +176,32 @@ func TestCosineSimilarity(t *testing.T) {
 	// Opposite vectors
 	a = []float32{1, 0, 0}
 	b = []float32{-1, 0, 0}
-	result = cosineSimilarity(a, b)
+	result = util.CosineSimilarity(a, b)
 	if math.Abs(result-(-1.0)) > 0.0001 {
 		t.Errorf("Cosine similarity of opposite vectors should be -1.0, got %v", result)
 	}
 }
 
 func TestEmbeddingCache(t *testing.T) {
-	cache := NewEmbeddingCache(3)
+	cache := newEmbeddingCache(3)
 
 	// Add 3 items
-	cache.Set("a", []float32{1, 2, 3})
-	cache.Set("b", []float32{4, 5, 6})
-	cache.Set("c", []float32{7, 8, 9})
+	cache.set("a", []float32{1, 2, 3})
+	cache.set("b", []float32{4, 5, 6})
+	cache.set("c", []float32{7, 8, 9})
 
 	// Check they exist
-	if _, ok := cache.Get("a"); !ok {
+	if _, ok := cache.get("a"); !ok {
 		t.Error("'a' should be in cache")
 	}
 
 	// Add 4th item (should evict 'a')
-	cache.Set("d", []float32{10, 11, 12})
+	cache.set("d", []float32{10, 11, 12})
 
-	if _, ok := cache.Get("a"); ok {
+	if _, ok := cache.get("a"); ok {
 		t.Error("'a' should have been evicted from cache")
 	}
-	if _, ok := cache.Get("d"); !ok {
+	if _, ok := cache.get("d"); !ok {
 		t.Error("'d' should be in cache")
 	}
 }
@@ -218,7 +219,7 @@ func TestRenderMode(t *testing.T) {
 		{5000, types.ModeVerbatim},
 	}
 
-	alloc := &Allocator{}
+	alloc := &Allocator{opts: AllocatorOptions{}.withDefaults()}
 	for _, test := range tests {
 		// Create dummy candidate
 		c := &types.Candidate{
@@ -234,7 +235,7 @@ func TestRenderMode(t *testing.T) {
 }
 
 func TestScoreCandidates(t *testing.T) {
-	alloc := &Allocator{}
+	alloc := &Allocator{opts: AllocatorOptions{}.withDefaults()}
 
 	now := time.Now()
 	candidates := []*types.Candidate{

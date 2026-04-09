@@ -12,8 +12,3 @@ func CosineSimilarity(a, b []float32) float64 {
 	}
 	return dot
 }
-
-// CosineDistance computes cosine distance (1 - similarity)
-func CosineDistance(a, b []float32) float64 {
-	return 1 - CosineSimilarity(a, b)
-}

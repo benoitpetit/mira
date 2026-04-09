@@ -10,15 +10,13 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/benoitpetit/mira/types"
 	"github.com/jdkato/prose/v2"
 	"github.com/pkoukk/tiktoken-go"
-	"github.com/benoitpetit/mira/types"
 )
 
 const (
-	MaxVerbatimSize   = 64 * 1024
-	MaxSentenceLength = 500
-	MinEntityLength   = 2
+	MinEntityLength = 2
 )
 
 // UTF-8 aware regex patterns
@@ -61,6 +59,15 @@ var (
 		types.RelUpdates:     regexp.MustCompile(`(?i)(?:updates|replaces)`),
 		types.RelResolves:    regexp.MustCompile(`(?i)(?:resolves|solves|fixes)`),
 	}
+
+	// Pre-compiled patterns for detectType (avoid per-call compilation)
+	preferencePattern = regexp.MustCompile(`(?i)(?:prefer|preference|like|dislike)`)
+	factStatePattern  = regexp.MustCompile(`(?i)(?:is|are|was|were|has|have|contains|equals|means|requires|supports|runs on|uses|costs|weighs|measures)\s+`)
+	factDataPattern   = regexp.MustCompile(`(?i)(?:\d{2,}|true|false|v\d+\.\d+|version\s+\d|port\s+\d|http[s]?://|[A-Z]{2,}\d+)`)
+
+	// Pre-compiled patterns for inferSubject (avoid per-call compilation)
+	subjectExplicitPattern = regexp.MustCompile(`(?i)(?:subject|topic|about|regarding)\s*[:\s]+([\p{L}\p{N}\s.]+?)(?:\.|\n|$)`)
+	subjectDomainPattern   = regexp.MustCompile(`(?i)(?:migration|architecture|auth|api|db|database|frontend|backend|deploy)\s+(?:of\s+)?([\p{L}\p{N}\s]+?)(?:\.|\n|$)`)
 )
 
 // Embedder interface for embeddings
@@ -68,16 +75,30 @@ type Embedder interface {
 	Encode(text string) ([]float32, error)
 }
 
+// ExtractorOptions holds configurable parameters for the extractor.
+// Zero values are replaced by the default constants above.
+type ExtractorOptions struct {
+	MinEntityLength int
+}
+
+func (o ExtractorOptions) withDefaults() ExtractorOptions {
+	if o.MinEntityLength <= 0 {
+		o.MinEntityLength = MinEntityLength
+	}
+	return o
+}
+
 // Extractor manages T0 → T1, T2 extraction
 type Extractor struct {
 	tokenizer *tiktoken.Tiktoken
 	embedder  Embedder
 	modelHash string
-	modelName string
+	opts      ExtractorOptions
 }
 
-// NewExtractor creates a new extractor
-func NewExtractor(modelName string, embedder Embedder) (*Extractor, error) {
+// NewExtractorWithOptions creates a new extractor with explicit options
+func NewExtractorWithOptions(modelName string, embedder Embedder, opts ExtractorOptions) (*Extractor, error) {
+	opts = opts.withDefaults()
 	tok, err := tiktoken.GetEncoding("cl100k_base")
 	if err != nil {
 		return nil, err
@@ -91,7 +112,7 @@ func NewExtractor(modelName string, embedder Embedder) (*Extractor, error) {
 		tokenizer: tok,
 		embedder:  embedder,
 		modelHash: modelHash,
-		modelName: modelName,
+		opts:      opts,
 	}, nil
 }
 
@@ -162,7 +183,7 @@ func (e *Extractor) extractEntities(doc *prose.Document) []string {
 	for _, tok := range doc.Tokens() {
 		if tok.Label == "PERSON" || tok.Label == "ORG" || tok.Label == "GPE" {
 			name := strings.TrimSpace(tok.Text)
-			if utf8.RuneCountInString(name) >= MinEntityLength {
+			if utf8.RuneCountInString(name) >= e.opts.MinEntityLength {
 				entitySet[name] = true
 			}
 		}
@@ -186,12 +207,12 @@ func (e *Extractor) detectType(content string) types.MemoryType {
 		}
 	}
 
-	if regexp.MustCompile(`(?i)(?:prefer|preference|like|dislike)`).MatchString(contentLower) {
+	if preferencePattern.MatchString(contentLower) {
 		return types.TypePreference
 	}
 
-	if regexp.MustCompile(`(?i)(?:is|are|was|were|has|have)\s+`).MatchString(contentLower) &&
-		regexp.MustCompile(`\d{4}`).MatchString(contentLower) {
+	if factStatePattern.MatchString(contentLower) &&
+		factDataPattern.MatchString(contentLower) {
 		return types.TypeFact
 	}
 
@@ -266,12 +287,7 @@ func (e *Extractor) extractStructured(v *types.Verbatim, doc *prose.Document, en
 }
 
 func (e *Extractor) inferSubject(content string, entities []string) []string {
-	patterns := []*regexp.Regexp{
-		regexp.MustCompile(`(?i)(?:subject|topic|about|regarding)\s*[:\s]+([\p{L}\p{N}\s.]+?)(?:\.|\n|$)`),
-		regexp.MustCompile(`(?i)(?:migration|architecture|auth|api|db|database|frontend|backend|deploy)\s+(?:of\s+)?([\p{L}\p{N}\s]+?)(?:\.|\n|$)`),
-	}
-
-	for _, pattern := range patterns {
+	for _, pattern := range []*regexp.Regexp{subjectExplicitPattern, subjectDomainPattern} {
 		if matches := pattern.FindStringSubmatch(content); matches != nil {
 			return []string{strings.TrimSpace(matches[1])}
 		}
@@ -379,11 +395,6 @@ func hasOverlap(a, b []string) bool {
 // ModelHash returns model hash
 func (e *Extractor) ModelHash() string {
 	return e.modelHash
-}
-
-// ModelName returns model name
-func (e *Extractor) ModelName() string {
-	return e.modelName
 }
 
 // Encode encodes text into embedding vector
