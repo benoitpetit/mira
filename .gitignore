@@ -1,46 +1,26 @@
-# Binaries
-bin/
-dist/
+# Development/internal documentation (not for public release)
+docs/adr/
+docs/dev/
+
+# Build artifacts
+mira
 *.exe
 *.dll
 *.so
 *.dylib
-mira
-mira-cli
-!cmd/mira/
 
 # Test binary
 *.test
-*_test_output.txt
-test-results/
-.jest/
-.nyc_output/
 
 # Output of the go coverage tool
 *.out
 coverage.html
 
-# Profiling files
-*.prof
-cpu.prof
-mem.prof
-*.pprof
-
-# Go workspace files
-go.work
-go.work.sum
-
 # Dependency directories
 vendor/
 
-# Data directories
-mira_data/
-data/
-*.db
-*.db-shm
-*.db-wal
-*.sqlite
-*.sqlite3
+# Go workspace file
+go.work
 
 # IDE
 .idea/
@@ -48,33 +28,19 @@ data/
 *.swp
 *.swo
 *~
-.DS_Store
-
-# Environment files
-.env
-.env.local
-.env.*.local
-
-# Config (keep example but ignore local)
-config.yaml
-config.local.yaml
-
-# Logs
-*.log
-logs/
-
-# Temporary files
-tmp/
-temp/
-*.tmp
-*.bak
-*.backup
-.cache/
-__pycache__/
-.pytest_cache/
 
 # OS
+.DS_Store
 Thumbs.db
 
-# Backup files
-backup/
+# Data directories (runtime)
+mira_data/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Temporary files
+/tmp/
+tmp/
+*.tmp

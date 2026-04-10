@@ -18,10 +18,11 @@ func getTestConfig() *config.Config {
 			Path: "",
 		},
 		Embeddings: config.EmbeddingsConfig{
-			CurrentModel: "sentence-transformers/all-MiniLM-L6-v2",
-			Dimension:    384,
-			BatchSize:    32,
-			CacheSize:    1000,
+			CurrentModel:      "sentence-transformers/all-MiniLM-L6-v2",
+			Dimension:         384,
+			BatchSize:         32,
+			CacheSize:         1000,
+			UseSimpleEmbedder: true, // Use SimpleEmbedder to avoid race conditions in tests
 		},
 		Allocator: config.AllocatorConfig{
 			DefaultBudget:         4000,

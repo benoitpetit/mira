@@ -65,8 +65,10 @@ func (c *CybertronEmbedder) Encode(ctx context.Context, text string) ([]float32,
 		return make([]float32, c.dimension), nil
 	}
 
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	// Use full Lock instead of RLock because the underlying spago library
+	// has race conditions when called concurrently
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	result, err := c.model.Encode(ctx, text, int(bert.MeanPooling))
 	if err != nil {

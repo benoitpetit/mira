@@ -97,8 +97,7 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 	}
 
 	// 4. Initialize embedder (Cybertron or Simple)
-	useSimpleEmbedder := false // TODO: Add UseSimpleEmbedder to config
-	if useSimpleEmbedder {
+	if cfg.Embeddings.UseSimpleEmbedder {
 		log.Println("[Embedder] Using SimpleEmbedder (deterministic)")
 		app.embedder = extraction.NewSimpleEmbedder(cfg.Embeddings.Dimension)
 	} else {
@@ -307,8 +306,9 @@ func (a *Application) Run() error {
 		if a.config.MCP.Transport == "stdio" {
 			errChan <- server.ServeStdio(s)
 		} else {
-			// TODO: Support other transports
-			errChan <- fmt.Errorf("unsupported transport: %s", a.config.MCP.Transport)
+			// Note: Only stdio transport is currently supported.
+			// SSE and HTTP transports may be added in future versions.
+			errChan <- fmt.Errorf("unsupported transport: %s (only stdio is supported)", a.config.MCP.Transport)
 		}
 	}()
 

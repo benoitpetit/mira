@@ -36,10 +36,11 @@ type StorageConfig struct {
 }
 
 type EmbeddingsConfig struct {
-	CurrentModel string `yaml:"current_model"`
-	Dimension    int    `yaml:"dimension"`
-	BatchSize    int    `yaml:"batch_size"`
-	CacheSize    int    `yaml:"cache_size"`
+	CurrentModel      string `yaml:"current_model"`
+	Dimension         int    `yaml:"dimension"`
+	BatchSize         int    `yaml:"batch_size"`
+	CacheSize         int    `yaml:"cache_size"`
+	UseSimpleEmbedder bool   `yaml:"use_simple_embedder,omitempty"` // For testing
 }
 
 type AllocatorConfig struct {

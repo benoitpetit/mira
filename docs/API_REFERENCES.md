@@ -6,13 +6,44 @@ Practical examples for using MIRA's MCP tools in real-world scenarios.
 
 ## Table of Contents
 
-1. [Basic Operations](#basic-operations)
-2. [Knowledge Management](#knowledge-management)
-3. [Decision Tracking](#decision-tracking)
-4. [Debugging & Troubleshooting](#debugging--troubleshooting)
-5. [Advanced Queries](#advanced-queries)
-6. [Integration Patterns](#integration-patterns)
-7. [System Monitoring](#system-monitoring)
+1. [Tool Reference](#tool-reference)
+2. [Basic Operations](#basic-operations)
+3. [Knowledge Management](#knowledge-management)
+4. [Decision Tracking](#decision-tracking)
+5. [Debugging & Troubleshooting](#debugging--troubleshooting)
+6. [Advanced Queries](#advanced-queries)
+7. [Integration Patterns](#integration-patterns)
+8. [System Monitoring](#system-monitoring)
+9. [HTTP API](#http-api)
+10. [Best Practices](#best-practices)
+
+---
+
+## Tool Reference
+
+### Available MCP Tools
+
+| Tool | Description | Arguments |
+|------|-------------|-----------|
+| `mira_store` | Store a memory with T0/T1/T2 extraction | `content` (required), `wing` (required), `room` (optional), `type` (optional) |
+| `mira_recall` | Retrieve optimal context with budget | `query` (required), `budget` (optional), `wing` (optional), `room` (optional) |
+| `mira_load` | Load full verbatim by ID | `id` (required) |
+| `mira_causal_chain` | Trace causal chain | `id` (required), `max_depth` (optional), `include_consequences` (optional) |
+| `mira_timeline` | Chronological reconstruction | `wing` (required), `room` (optional), `since` (optional), `until` (optional), `type` (optional) |
+| `mira_status` | System statistics and health | none |
+| `mira_archive` | Archive old memories | none |
+
+### Memory Types
+
+When storing with `mira_store`, you can specify a type or let MIRA auto-detect:
+
+| Type | Description | Decay Rate | Auto-Archive |
+|------|-------------|------------|--------------|
+| `decision` | Architectural/design decisions | Very slow (693 days) | Never |
+| `fact` | Objective information | Slow (139 days) | Never |
+| `preference` | Subjective preferences | Medium (69 days) | Never |
+| `session_note` | Temporary session context | Fast (7 days) | 30 days |
+| `debug_log` | Debug/troubleshooting logs | Very fast (1.4 days) | 7 days |
 
 ---
 
@@ -77,6 +108,22 @@ Model: a1b2c3d4
 }
 ```
 
+### Store Session Notes (Auto-Archived)
+
+```json
+{
+  "tool": "mira_store",
+  "arguments": {
+    "content": "Working on the payment integration today. Need to test the webhook handling.",
+    "wing": "payment-service",
+    "room": "daily-notes",
+    "type": "session_note"
+  }
+}
+```
+
+**Note:** Session notes are automatically archived after 30 days.
+
 ---
 
 ## Knowledge Management
@@ -93,6 +140,12 @@ Model: a1b2c3d4
   }
 }
 ```
+
+**Parameters:**
+- `query` (required): Search query text
+- `budget` (optional): Token budget, default 4000
+- `wing` (optional): Filter by wing/namespace
+- `room` (optional): Filter by room/sub-category
 
 **Response:**
 ```
@@ -128,6 +181,8 @@ INSTRUCTIONS:
 }
 ```
 
+**Note:** IDs can be specified as full UUID or short form `T0:550e8400`.
+
 **Response:**
 ```
 [ID: 550e8400-e29b-41d4-a716-446655440000 | Wing: auth-service | Date: 2026-04-09T10:30:00Z]
@@ -148,6 +203,13 @@ The authentication service runs on port 8080 and uses JWT tokens with a 24-hour 
   }
 }
 ```
+
+**Parameters:**
+- `wing` (required): Namespace/project
+- `room` (optional): Filter by room
+- `since` (optional): Start date (ISO 8601)
+- `until` (optional): End date (ISO 8601)
+- `type` (optional): Filter by memory type
 
 **Response:**
 ```
@@ -174,6 +236,11 @@ The authentication service runs on port 8080 and uses JWT tokens with a 24-hour 
   }
 }
 ```
+
+**Parameters:**
+- `id` (required): Fingerprint UUID
+- `max_depth` (optional): Maximum depth to traverse, default 5
+- `include_consequences` (optional): Include downstream effects, default false
 
 **Response:**
 ```
@@ -218,6 +285,13 @@ When you store related decisions, MIRA automatically detects causal relationship
 
 MIRA will automatically create a causal edge: `PostgreSQL decision → pgAdmin decision`
 
+**Causal Relations Detected:**
+- `BECAUSE` - B explains why A happened
+- `TRIGGERED` - B triggered/caused A
+- `CONTRADICTS` - A and B contradict each other
+- `UPDATES` - B replaces/updates A
+- `RESOLVES` - B resolves the problem in A
+
 ---
 
 ## Debugging & Troubleshooting
@@ -236,6 +310,8 @@ MIRA will automatically create a causal edge: `PostgreSQL decision → pgAdmin d
 }
 ```
 
+**Note:** Debug logs are automatically archived after 7 days.
+
 ### Recall Error Context
 
 ```json
@@ -249,7 +325,7 @@ MIRA will automatically create a causal edge: `PostgreSQL decision → pgAdmin d
 }
 ```
 
-### Archive Old Debug Logs
+### Archive Old Memories
 
 ```json
 {
@@ -424,6 +500,57 @@ Active Wings: [auth-service, api-gateway, payment-service, user-service]
 
 ---
 
+## HTTP API
+
+When metrics are enabled in configuration, MIRA exposes HTTP endpoints for monitoring.
+
+### Health Checks
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /health` | Full health check with component status |
+| `GET /health/live` | Liveness probe (Kubernetes) |
+| `GET /health/ready` | Readiness probe (Kubernetes) |
+| `GET /metrics` | Prometheus metrics export |
+
+**Example:**
+```bash
+curl http://localhost:9090/health
+```
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "timestamp": "2026-04-10T14:30:00Z",
+  "version": "0.3.0",
+  "checks": {
+    "database": {"status": "pass", "message": "connected"},
+    "vector_store": {"status": "pass", "message": "HNSW ready"},
+    "embedder": {"status": "pass", "message": "model loaded"}
+  }
+}
+```
+
+### Prometheus Metrics
+
+Available metrics at `/metrics`:
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `mira_store_total` | Counter | Total store operations |
+| `mira_recall_total` | Counter | Total recall operations |
+| `mira_search_total` | Counter | Total vector searches |
+| `mira_store_duration_seconds` | Histogram | Store latency |
+| `mira_recall_duration_seconds` | Histogram | Recall latency |
+| `mira_search_duration_seconds` | Histogram | Search latency |
+| `mira_active_searches` | Gauge | Active searches |
+| `mira_verbatim_count` | Gauge | Stored verbatims |
+| `mira_fingerprint_count` | Gauge | Stored fingerprints |
+| `mira_embedding_count` | Gauge | Stored embeddings |
+
+---
+
 ## Best Practices
 
 ### 1. Wing Naming Convention
@@ -441,6 +568,8 @@ Use rooms to categorize within wings:
 - `migrations` - Database changes
 - `incidents` - Post-mortems, debug logs
 - `api` - API documentation, contracts
+- `code-reviews` - Review feedback
+- `onboarding` - Documentation for new team members
 
 ### 3. Memory Type Selection
 
@@ -463,6 +592,12 @@ Choose appropriate types for better retrieval:
 Write specific queries for better results:
 - ❌ "Tell me about auth"
 - ✅ "JWT token expiration configuration auth service"
+
+### 6. ID References
+
+Reference memories by ID:
+- Full UUID: `550e8400-e29b-41d4-a716-446655440000`
+- Short form: `T0:550e8400`
 
 ---
 
@@ -490,6 +625,11 @@ Error: invalid UUID: invalid syntax
 Use mira_recall to find valid IDs, then mira_load to retrieve full content
 ```
 
+**Wing Required:**
+```
+Error: wing is required
+```
+
 ---
 
 ## Tips & Tricks
@@ -499,8 +639,10 @@ Use mira_recall to find valid IDs, then mira_load to retrieve full content
 3. **Filter by type**: Use `mira_timeline` with `type: decision` to see all decisions
 4. **Cross-wing search**: Omit `wing` parameter to search across all wings
 5. **Causal exploration**: Use `include_consequences: true` to see both causes and effects
+6. **Session boost**: Memories from the same 2-hour window get a 20% relevance boost
+7. **Auto-detection**: Omit `type` parameter to let MIRA auto-detect the memory type
 
 ---
 
-*Last updated: 2026-04-09*
+*Last updated: 2026-04-10*
 *Version: 0.3.0*
