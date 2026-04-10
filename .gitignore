@@ -75,3 +75,6 @@ __pycache__/
 
 # OS
 Thumbs.db
+
+# Backup files
+backup/

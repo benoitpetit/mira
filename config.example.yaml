@@ -1,5 +1,5 @@
 system:
-  version: "0.1.2"
+  version: "0.3.0"
   max_concurrent_queries: 10
 
 storage:
@@ -18,13 +18,14 @@ embeddings:
   batch_size: 32
   cache_size: 1000
 
-vector_index:
-  type: "hnswlib"
-  path: "./mira_data/vectors.bin"
-  ef_construction: 200
-  ef_search: 50
-  M: 16
-  max_elements: 100000
+# HNSW Vector Index Configuration
+# Provides O(log n) approximate nearest neighbor search
+# Falls back to SQLite exact search during index building
+hnsw:
+  M: 16                    # Max neighbors per node (higher = more accurate, more memory)
+  Ml: 0.25                 # Level generation factor (0.25 = 1/ln(M))
+  ef_construction: 200     # Size of dynamic candidate list for construction
+  ef_search: 50            # Size of dynamic candidate list for search
 
 allocator:
   default_budget: 4000
@@ -36,13 +37,6 @@ allocator:
   density_sigmoid:
     k: 2.0
     mu: 0.3
-
-decay_rates:
-  decision: 0.001
-  fact: 0.005
-  preference: 0.01
-  session_note: 0.1
-  debug_log: 0.5
 
 archive_thresholds:
   session_note: 30
@@ -61,6 +55,53 @@ extraction:
 
 mcp:
   name: "mira"
-  version: "0.1.2"
+  version: "0.3.0"
   transport: "stdio"
   timeout_seconds: 30
+
+# =============================================================================
+# METRICS EXPORT
+# =============================================================================
+# Prometheus-compatible metrics export for monitoring and alerting.
+# Access metrics at http://localhost:9090/metrics
+
+metrics:
+  enabled: true            # Enable metrics collection and export
+  prometheus_addr: ":9090" # Address for Prometheus scrape endpoint (":9090" = all interfaces)
+  report_interval_seconds: 60  # Interval for logging metric reports
+
+# =============================================================================
+# WEBHOOK NOTIFICATIONS
+# =============================================================================
+# Receive HTTP callbacks when async operations complete.
+# Useful for integrating with external systems and building reactive workflows.
+
+webhooks:
+  enabled: false           # Enable webhook notifications
+  workers: 3               # Number of webhook delivery workers
+  queue_size: 1000         # Maximum webhook event queue depth
+  timeout_seconds: 30      # HTTP timeout for webhook delivery
+  endpoints: []            # List of default webhook URLs (optional)
+                           # Example: ["https://example.com/mira-webhook"]
+  
+# Webhook events include:
+#   - embedding.completed : Embedding generation finished
+#   - embedding.failed    : Embedding generation failed
+#   - store.completed     : Full T0/T1/T2 store completed
+#   - causal.detected     : New causal relationships detected
+#   - index.maintenance   : Background index maintenance completed
+#
+# Webhook payload format:
+#   {
+#     "id": "uuid",
+#     "type": "embedding.completed",
+#     "timestamp": "2026-04-09T14:30:45Z",
+#     "data": { ... event-specific data ... }
+#   }
+#
+# Headers sent with each webhook:
+#   Content-Type: application/json
+#   X-MIRA-Event-ID: <uuid>
+#   X-MIRA-Event-Type: <event-type>
+#   X-MIRA-Webhook-ID: <webhook-uuid>
+#   X-MIRA-Signature: sha256=... (if secret configured)

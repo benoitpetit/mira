@@ -1,8 +1,11 @@
 # MIRA - Memory with Information-theoretic Relevance Allocation
 
-**Version:** 0.1.2 | **Langage:** Go 1.21+ | **License:** MIT
+**Version:** 0.3.0 | **Langage:** Go 1.23+ | **License:** MIT
 
-Système de mémoire longue durée pour LLM avec allocation optimale de budget contextuel, garanties d'approximation et cohérence temporelle. 100% local, déterministe, O(n log n).
+Système de mémoire longue durée pour LLM avec allocation optimale de budget contextuel, recherche sémantique et cohérence temporelle. 100% local, déterministe, O(n log n).
+
+📄 **Whitepaper Technique:** [WHITEPAPER.md](WHITEPAPER.md) (Anglais) - Architecture et détails d'implémentation  
+📘 **Exemples API:** [API_EXAMPLES.md](API_EXAMPLES.md) (Anglais) - Exemples pratiques d'utilisation
 
 ---
 
@@ -24,7 +27,7 @@ Système de mémoire longue durée pour LLM avec allocation optimale de budget c
 
 ## Installation
 
-### Depuis les sources (Go 1.21+)
+### Depuis les sources (Go 1.23+)
 
 ```bash
 go install github.com/benoitpetit/mira/cmd/mira@latest
@@ -83,7 +86,7 @@ mira
    ┌────┴────┐           ┌─────┴──────┐        ┌────┴──────┐
    │ Extract │           │   Store    │        │  Causal   │
    │ Pipeline│           │  (SQLite)  │        │   Graph   │
-   │T0→T1,T2 │           │            │        │   (BFS)   │
+   │T0→T1,T2 │           │  + HNSW    │        │   (BFS)   │
    └────┬────┘           └────────────┘        └───────────┘
         │
    ┌────┴────────────────────────┐
@@ -93,6 +96,61 @@ mira
    │  • cybertron (embeddings)   │
    └─────────────────────────────┘
 ```
+
+### Clean Architecture
+
+MIRA v0.3.0 suit les principes de la Clean Architecture :
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Frameworks & Drivers                                           │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐           │
+│  │  SQLite  │ │  Prose   │ │Cybertron │ │   MCP    │           │
+│  │    DB    │ │   NLP    │ │  Embed   │ │  Server  │           │
+│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘           │
+└───────┼────────────┼────────────┼────────────┼─────────────────┘
+        │            │            │            │
+        └────────────┴────────────┴────────────┘
+                         │
+        ┌────────────────┴────────────────┐
+        │      Interface Adapters         │
+        │  ┌──────────────────────────┐   │
+        │  │  SQLiteRepository        │   │
+        │  │  ProseExtractor          │   │
+        │  │  HNSWStore               │   │
+        │  │  MCPController           │   │
+        │  └──────────────────────────┘   │
+        └────────────────┬────────────────┘
+                         │
+        ┌────────────────┴────────────────┐
+        │         Use Cases               │
+        │  ┌──────────────────────────┐   │
+        │  │  StoreMemory             │   │
+        │  │  RecallMemory (CBA)      │   │
+        │  │  LoadMemory              │   │
+        │  │  GetTimeline             │   │
+        │  │  GetStatus               │   │
+        │  │  GetCausalChain          │   │
+        │  │  ArchiveMemories         │   │
+        │  └──────────────────────────┘   │
+        └────────────────┬────────────────┘
+                         │
+        ┌────────────────┴────────────────┐
+        │           Domain                │
+        │  ┌──────────────────────────┐   │
+        │  │  Entities (Verbatim,     │   │
+        │  │  Fingerprint, Embedding) │   │
+        │  │  Value Objects           │   │
+        │  └──────────────────────────┘   │
+        └─────────────────────────────────┘
+```
+
+**Principes :**
+- **Dependency Rule:** Les dépendances pointent vers l'intérieur uniquement
+- **Domain:** Logique métier pure, sans dépendances externes
+- **Use Cases:** Règles métier applicatives, orchestration des entités
+- **Interface Adapters:** Conversion des données pour les frameworks
+- **Frameworks:** Outils externes (DB, HTTP, NLP)
 
 ### Flux de Données
 
@@ -125,7 +183,7 @@ m = (id, t₀, t₁, t₂, c, τ, ω, γ, δ, ν)
 | Champ | Type                  | Description                         |
 | ----- | --------------------- | ----------------------------------- |
 | `id`  | UUIDv4 (128 bits)     | Identifiant unique                  |
-| `t₀`  | Σ\* (UTF-8, max 64KB) | Verbatim - texte original           |
+| `t₀`  | Σ* (UTF-8, max 64KB) | Verbatim - texte original           |
 | `t₁`  | JSON canonique        | Fingerprint structuré               |
 | `t₂`  | ℝ³⁸⁴                  | Embedding vector (all-MiniLM-L6-v2) |
 | `c`   | ℕ                     | Token count (tiktoken cl100k_base)  |
@@ -440,8 +498,8 @@ vector = normalize_L2(vector)
 Le mode dépend uniquement du **budget restant**, pas de l'overlap:
 
 | Budget Restant | Mode        | Tokens | Contenu             |
-| -------------- | ----------- | ------ | ------------------- | ---- | -------------- |
-| < 100          | Header      | 2-5    | `[type              | date | wing] → T0:id` |
+| -------------- | ----------- | ------ | ------------------- |
+| < 100          | Header      | 2-5    | `[type|date|wing]`  |
 | < 1000         | Fingerprint | ~15%   | Faits essentiels T1 |
 | ≥ 1000         | Verbatim    | 100%   | Texte original T0   |
 
@@ -503,7 +561,7 @@ func (g *Graph) GetConsequences(nodeID UUID, maxDepth int) []*CausalNode
 | Opération             | Complexité | Notes                               |
 | --------------------- | ---------- | ----------------------------------- |
 | Stockage (T0→T1,T2)   | O(1)       | Amorti, insertion unique            |
-| Recherche vectorielle | O(n)       | SQLite linear scan (HNSW: O(log n)) |
+| Recherche vectorielle | O(log n)   | HNSW approximate nearest neighbor   |
 | Scoring               | O(n)       | n = nombre de candidats             |
 | Allocation Greedy     | O(n log n) | Max-heap operations                 |
 | BFS Graphe causal     | O(V + E)   | V=nœuds, E=arêtes                   |
@@ -544,53 +602,82 @@ Puis modifiez `config.yaml` selon votre environnement.
 
 ```yaml
 system:
-  version: "0.1.2"
+  version: "0.3.0"
   max_concurrent_queries: 10
 
 storage:
   path: "./mira_data"
   sqlite:
-    journal_mode: WAL # Write-Ahead Logging
-    synchronous: NORMAL # Équilibre perf/sécurité
-    cache_size: -64000 # 64MB
-    mmap_size: 268435456 # 256MB
+    journal_mode: WAL
+    synchronous: NORMAL
+    cache_size: -64000
+    mmap_size: 268435456
     temp_store: MEMORY
 
 embeddings:
   current_model: "sentence-transformers/all-MiniLM-L6-v2"
-  model_hash: "a2d8f3e9" # SHA256 truncated
+  model_hash: "a2d8f3e9"
   dimension: 384
   batch_size: 32
-  cache_size: 1000 # LRU cache
+  cache_size: 1000
+
+# Configuration HNSW
+hnsw:
+  M: 16
+  Ml: 0.25
+  ef_construction: 200
+  ef_search: 50
 
 allocator:
-  default_budget: 4000 # tokens
+  default_budget: 4000
   max_candidates: 100
-  early_pruning_threshold: 0.6 # ρ_min
-  session_window_seconds: 7200 # 2h
-  session_boost_beta: 0.2 # 20%
+  early_pruning_threshold: 0.6
+  session_window_seconds: 7200
+  session_boost_beta: 0.2
   causal_penalty_alpha: 0.15
   density_sigmoid:
     k: 2.0
     mu: 0.3
 
 decay_rates:
-  decision: 0.001 # ~2 ans demi-vie
-  fact: 0.005 # ~5 mois
-  preference: 0.01 # ~2 mois
-  session_note: 0.1 # ~1 semaine
-  debug_log: 0.5 # ~1.4 jour
+  decision: 0.001
+  fact: 0.005
+  preference: 0.01
+  session_note: 0.1
+  debug_log: 0.5
 
 archive_thresholds:
-  session_note: 30 # jours
-  debug_log: 7 # jours
+  session_note: 30
+  debug_log: 7
 
 extraction:
-  max_verbatim_size: 65536 # 64KB
+  max_verbatim_size: 65536
   max_sentence_length: 500
   min_entity_length: 2
   causal_lookback: 50
   causal_max_days: 30
+
+mcp:
+  name: "mira"
+  version: "0.3.0"
+  transport: "stdio"
+  timeout_seconds: 30
+  queue_size: 1000
+  non_blocking: false
+
+# Export de métriques
+metrics:
+  enabled: true
+  prometheus_addr: ":9090"
+  report_interval_seconds: 60
+
+# Notifications webhook
+webhooks:
+  enabled: false
+  workers: 3
+  queue_size: 1000
+  timeout_seconds: 30
+  endpoints: []
 ```
 
 ---
@@ -599,75 +686,19 @@ extraction:
 
 ### Outils Disponibles
 
-#### `mira_store`
+MIRA expose 7 outils MCP :
 
-Stocke une mémoire avec extraction automatique T0→T1,T2.
+| Outil | Description |
+|-------|-------------|
+| `mira_store` | Stocker une mémoire avec extraction T0→T1,T2 |
+| `mira_recall` | Récupérer le contexte optimal avec budget |
+| `mira_load` | Charger le verbatim complet par ID (T0) |
+| `mira_causal_chain` | Remonter la chaîne causale |
+| `mira_status` | Statistiques système et santé |
+| `mira_timeline` | Reconstruction chronologique filtrée |
+| `mira_archive` | Archiver et nettoyer les vieilles mémoires |
 
-```json
-{
-  "content": "On a décidé d'utiliser PostgreSQL pour la DB",
-  "wing": "backend-service",
-  "room": "database-migration"
-}
-```
-
-**Réponse:**
-
-```
-Stored: 550e8400-e29b-41d4-a716-446655440000
-Type: decision
-Facts: 3
-Tokens: 42
-Model: a2d8f3e9
-```
-
-#### `mira_recall`
-
-Récupère contexte optimal avec budget.
-
-```json
-{
-  "query": "Quelle base de données?",
-  "budget": 4000,
-  "wing": "backend-service"
-}
-```
-
-**Réponse:**
-
-```
-=== MIRA CONTEXT ===
-Query: Quelle base de données? | Budget: 4000
-Wing: backend-service
-
---- [1] VERBATIM (42 tokens) ---
-On a décidé d'utiliser PostgreSQL pour la DB
-
-=== Total: 42/4000 tokens (1.1%) ===
-```
-
-#### `mira_causal_chain`
-
-Remonte chaîne causale.
-
-```json
-{
-  "id": "550e8400...",
-  "max_depth": 5,
-  "include_consequences": true
-}
-```
-
-**Réponse:**
-
-```
-=== CAUSAL CHAIN (Upstream) ===
- → [decision] Évaluer options DB (2026-04-01)
-  → [fact] Benchmark PostgreSQL vs MySQL (2026-03-28)
-
-=== CONSEQUENCES (Downstream) ===
-→ [decision] Configurer connexion pool (2026-04-09)
-```
+Voir [API_EXAMPLES.md](API_EXAMPLES.md) pour des exemples d'utilisation détaillés.
 
 ---
 
@@ -676,16 +707,24 @@ Remonte chaîne causale.
 ### Structure du Code
 
 ```
-mira/
-├── cmd/mira/           # Entry point
-├── types/              # Domain models
-├── store/              # SQLite persistence
-├── extract/            # T0→T1,T2 pipeline
-├── budget/             # CBA algorithm
-├── causal/             # Graph operations
-├── mcp/                # MCP server
-├── config/             # Configuration
-└── vector/             # Vector search adapter
+internal/
+├── domain/                  # Règles métier enterprise
+│   ├── entities/            # Entités domaine (Verbatim, Fingerprint, etc.)
+│   └── valueobjects/        # Value objects (MemoryType, RenderMode, etc.)
+├── usecases/                # Règles métier applicatives
+│   ├── ports/               # Interfaces repositories & services
+│   └── interactors/         # Implémentations use cases
+├── adapters/                # Adapters d'interface
+│   ├── extraction/          # Implémentations NLP/embeddings
+│   ├── metrics/             # Adapter collecte métriques
+│   ├── storage/             # Implémentation SQLite
+│   ├── vector/              # Implémentations vector store (HNSW, SQLite)
+│   └── webhook/             # Adapter webhook
+├── interfaces/              # Interfaces externes
+│   └── mcp/                 # Contrôleur protocole MCP
+├── config/                  # Configuration
+└── app/                     # Racine de composition
+    └── main.go              # Injection de dépendances
 ```
 
 ### Commandes Make
@@ -708,7 +747,7 @@ go test -v ./...
 go test -race ./...
 
 # Benchmarks
-go test -bench=. -benchmem ./budget
+go test -bench=. -benchmem ./...
 ```
 
 ---
@@ -720,6 +759,7 @@ go test -bench=. -benchmem ./budget
 - [tiktoken-go](https://github.com/pkoukk/tiktoken-go) - Tokenization OpenAI
 - [prose](https://github.com/jdkato/prose) - NLP/NER en Go
 - [cybertron](https://github.com/nlpodyssey/cybertron) - Embeddings transformers
+- [hnsw](https://github.com/coder/hnsw) - Hierarchical Navigable Small World graphs
 - [mcp-go](https://github.com/mark3labs/mcp-go) - Protocole MCP
 
 ### Modèle d'Embedding
@@ -733,9 +773,26 @@ go test -bench=. -benchmem ./budget
 
 ## Changelog
 
-### v0.1.2 (2026-04-09)
+### v0.3.0 (2026-04-10)
 
-- 🚀 Nouvelle version 0.1.2
+- 🚀 Nouvelle version 0.3.0
+
+### v0.3.0 (2026-04-10)
+
+- 🚀 Nouvelle version 0.3.0
+
+### v0.3.0 (2026-04-09)
+
+- ✅ **Clean Architecture Refactor**: Restructuration complète du codebase
+- ✅ **Index Vectoriel HNSW**: Recherche approximative O(log n)
+- ✅ **Embeddings Cybertron**: Embeddings transformers réels
+- ✅ **Système de Métriques**: Métriques compatibles Prometheus
+- ✅ **Notifications Webhook**: Callbacks HTTP pour les événements
+
+### v0.2.0 (2026-04-09)
+
+- ✅ Fondation Index HNSW
+- ✅ Whitepaper technique
 
 ### v0.1.0 (2026-04-08)
 
@@ -745,13 +802,6 @@ go test -bench=. -benchmem ./budget
 - ✅ Stockage SQLite avec WAL mode
 - ✅ Serveur MCP avec 7 outils
 - ✅ Graphe causal avec 5 types de relations
-- ✅ Extraction UTF-8 avec reconnaissance d'entités
-- ✅ Scoring par densité sigmoïde
-- ✅ Boost de session et pénalité causale
-- ✅ Allocation gloutonne avec renormalisation dynamique
-- ✅ Versioning des modèles d'embedding
-- ✅ Rendu selon budget restant uniquement
-- ✅ Versioning des modèles d'embedding
 
 ---
 

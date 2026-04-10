@@ -18,7 +18,7 @@ cd "$PROJECT_DIR"
 
 # Get version from argument or prompt
 if [ -z "$1" ]; then
-    echo -e "${BLUE}Current version:$(grep -h "version.*0\." config.yaml config/config.go 2>/dev/null | head -1 | sed 's/.*version.*"\([0-9.]*\)".*/\1/')${NC}"
+    echo -e "${BLUE}Current version: $(grep -h "version.*0\." config.yaml internal/config/config.go 2>/dev/null | head -1 | sed 's/.*version.*"\([0-9.]*\)".*/\1/')${NC}"
     read -p "Enter new version (e.g., 0.1.1): " VERSION
 else
     VERSION="$1"
@@ -35,13 +35,13 @@ echo -e "${BLUE}  MIRA Pre-publish Script v${VERSION}${NC}"
 echo -e "${BLUE}═══════════════════════════════════════════════════${NC}\n"
 
 # Store old version for comparison
-OLD_VERSION=$(grep -oP 'Version:.*"\K[0-9.]+' config/config.go 2>/dev/null | head -1 || echo "unknown")
+OLD_VERSION=$(grep -oP 'Version:.*"\K[0-9.]+' internal/config/config.go 2>/dev/null | head -1 || echo "unknown")
 
 echo -e "${YELLOW}Step 1/6: Updating version from ${OLD_VERSION} to ${VERSION}...${NC}"
 
 # Update version in config.go
-sed -i "s/Version:.*\"[0-9.]*\"/Version:              \"${VERSION}\"/g" config/config.go
-sed -i "s/Version:.*\"[0-9.]*\"/Version:        \"${VERSION}\"/g" config/config.go
+sed -i "s/Version:.*\"[0-9.]*\"/Version:              \"${VERSION}\"/g" internal/config/config.go
+sed -i "s/Version:.*\"[0-9.]*\"/Version:        \"${VERSION}\"/g" internal/config/config.go
 
 # Update version in cmd/mira/main.go
 sed -i "s/MIRA v[0-9.]* /MIRA v${VERSION} /g" cmd/mira/main.go
@@ -52,13 +52,11 @@ if [ -f "config.yaml" ]; then
     sed -i "s/version: \"[0-9.]*\"/version: \"${VERSION}\"/g" config.yaml
 fi
 
-# Update version in config_test.go
-sed -i "s/Expected version [0-9.]*/Expected version ${VERSION}/g" config/config_test.go
-sed -i "s/!= \"[0-9.]*\"/!= \"${VERSION}\"/g" config/config_test.go
+# Note: config_test.go doesn't exist - tests are in internal/usecases/interactors/*_test.go
 
 # Update version in README files
 sed -i "s/\*\*Version:\*\* [0-9.]*/**Version:** ${VERSION}/g" README.md README_FR.md
-sed -i "s/version: \"[0-9.]*\"/version: \"${VERSION}\"/g" README.md README_FR.md
+sed -i "s/version: \"[0-9.]*\"/version: \"${VERSION}\"/g" README.md README_FR.md docs/API_REFERENCES.md
 
 # Update changelog headers (only if not already updated)
 if ! grep -q "### v${VERSION}" README.md 2>/dev/null; then
@@ -120,7 +118,7 @@ if [ -d ".git" ]; then
     echo -e "${BLUE}Modified files:${NC}"
     git diff --name-only 2>/dev/null || echo "(none yet)"
     echo ""
-    
+
     # Count changes
     CHANGED=$(git diff --name-only 2>/dev/null | wc -l)
     if [ "$CHANGED" -gt 0 ]; then
