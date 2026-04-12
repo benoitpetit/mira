@@ -51,3 +51,4 @@ config.yaml
 # Backup files
 backup/*.zip
 backup/*.tar.gz
+docs/PLAN.md
