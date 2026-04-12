@@ -5,6 +5,70 @@ All notable changes to MIRA will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-04-12
+
+### Added
+- **Structured Logging Interface**: New `Logger` port with implementations
+  - `SimpleLogger`: Production-ready logger with prefix support
+  - `NoOpLogger`: No-op implementation for testing
+  - Integrated into `StoreMemory` to fix silent error handling
+  - Logs warnings for non-fatal errors (vector store, causal graph)
+
+- **Complete Causal Graph BFS**: Full implementation of causal chain traversal
+  - `GetChain()`: BFS traversal up to `maxDepth` levels for ancestors
+  - `GetConsequences()`: BFS traversal up to `maxDepth` levels for descendants
+  - Proper cycle detection with visited node tracking
+  - Respects the `max_depth` parameter in `mira_causal_chain` tool
+
+- **EmbeddingSource Interface**: Dependency inversion for vector stores
+  - New `EmbeddingSource` port defining data access for vector stores
+  - `GetCandidatesWithEmbeddings()`: Batch fetch candidates by ID
+  - `GetAllEmbeddings()`: Fetch all embeddings for index building
+  - `HNSWStore` now depends on `EmbeddingSource` interface (was concrete `SQLiteRepository`)
+  - Enables swapping SQLite with other storage backends
+
+- **Centralized Vector Utilities**: Eliminated cosine similarity duplication
+  - `util.CosineSimilarity()`: Full cosine similarity calculation
+  - `util.CosineSimilarityNormalized()`: Optimized for pre-normalized vectors
+  - `util.CosineDistance()`: Returns distance (1 - similarity)
+  - Removed 4 duplicate implementations across the codebase
+  - All vector operations now use centralized, tested functions
+
+- **Comprehensive Documentation**: Complete godoc for all ports
+  - Package-level documentation for `ports` packages
+  - Interface documentation with usage examples
+  - Method documentation with parameter descriptions
+  - Architecture notes and dependency explanations
+
+### Changed
+- **Configuration Completeness**: Added missing config fields
+  - `embeddings.model_hash`: Model identifier for tracking
+  - `mcp.timeout_seconds`: MCP operation timeout
+  - `storage.sqlite.*`: Full SQLite configuration (journal_mode, synchronous, cache_size, mmap_size, temp_store)
+  - `overlap_cache.*`: TTL and max entries for overlap cache
+  - All fields validated with sensible defaults
+
+- **Documentation Accuracy**: 100% consistency between README and code
+  - Removed references to non-existent files (WHITEPAPER.md, API_EXAMPLES.md)
+  - Fixed Prometheus metrics names to match implementation
+  - Synchronized causal detection patterns with actual code
+  - Documented all webhook headers including legacy ones
+  - Corrected project structure diagrams
+
+### Removed
+- **Unused Configuration**: Removed `max_concurrent_queries`
+  - Parameter was documented but never implemented
+  - Removed from config struct, validation, and documentation
+
+### Fixed
+- **Silent Error Handling**: StoreMemory now logs all non-fatal errors
+  - Vector store addition failures
+  - Causal node creation failures
+  - Causal relation detection failures
+  - Edge addition failures
+
+---
+
 ## [0.3.0] - 2026-04-10
 
 ### Changed
@@ -151,6 +215,7 @@ hnsw:
 
 ---
 
+[0.3.1]: https://github.com/benoitpetit/mira/releases/tag/v0.3.1
 [0.3.0]: https://github.com/benoitpetit/mira/releases/tag/v0.3.0
 [0.2.0]: https://github.com/benoitpetit/mira/releases/tag/v0.2.0
 [0.1.0]: https://github.com/benoitpetit/mira/releases/tag/v0.1.0

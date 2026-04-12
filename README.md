@@ -753,7 +753,25 @@ make install    # Install to GOPATH/bin
 
 ### v0.3.1 (2026-04-12)
 
-- 🚀 New version 0.3.1
+**Architecture Improvements & Documentation Consistency**
+
+#### ✅ New Features
+
+- **Structured Logging**: `Logger` interface with `SimpleLogger` and `NoOpLogger` implementations
+- **Complete Causal Graph BFS**: Full implementation respecting `max_depth` parameter
+- **EmbeddingSource Interface**: Dependency inversion for HNSW store (Clean Architecture)
+- **Centralized Vector Utilities**: Single source of truth for cosine similarity
+- **Comprehensive Documentation**: Complete godoc for all ports
+
+#### ✅ Improvements
+
+- **Configuration Completeness**: Added missing fields (model_hash, timeout_seconds, sqlite settings)
+- **Documentation Accuracy**: 100% consistency between README and source code
+- **Error Handling**: Fixed silent errors in StoreMemory with proper logging
+
+#### ✅ Removed
+
+- **Unused Parameter**: Removed `max_concurrent_queries` (documented but not implemented)
 
 ### v0.3.0 (2026-04-10)
 
