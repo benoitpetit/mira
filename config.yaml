@@ -1,0 +1,59 @@
+system:
+  version: "0.3.0"
+
+storage:
+  path: "./mira_data"
+  sqlite:
+    journal_mode: WAL
+    synchronous: NORMAL
+    cache_size: -64000
+    mmap_size: 268435456
+    temp_store: MEMORY
+
+embeddings:
+  current_model: "sentence-transformers/all-MiniLM-L6-v2"
+  model_hash: "a2d8f3e9"
+  dimension: 384
+  batch_size: 32
+  cache_size: 1000
+
+# HNSW Vector Index Configuration
+# Provides O(log n) approximate nearest neighbor search
+# Falls back to SQLite exact search during index building
+hnsw:
+  M: 16                    # Max neighbors per node (higher = more accurate, more memory)
+  Ml: 0.25                 # Level generation factor (0.25 = 1/ln(M))
+  ef_construction: 200     # Size of dynamic candidate list for construction
+  ef_search: 50            # Size of dynamic candidate list for search
+
+allocator:
+  default_budget: 4000
+  max_candidates: 100
+  early_pruning_threshold: 0.6
+  session_window_seconds: 7200
+  session_boost_beta: 0.2
+  causal_penalty_alpha: 0.15
+  density_sigmoid:
+    k: 2.0
+    mu: 0.3
+
+archive_thresholds:
+  session_note: 30
+  debug_log: 7
+
+overlap_cache:
+  ttl_days: 30
+  max_entries: 1000000
+
+extraction:
+  max_verbatim_size: 65536
+  max_sentence_length: 500
+  min_entity_length: 2
+  causal_lookback: 50
+  causal_max_days: 30
+
+mcp:
+  name: "mira"
+  version: "0.3.0"
+  transport: "stdio"
+  timeout_seconds: 30

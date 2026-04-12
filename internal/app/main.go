@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/benoitpetit/mira/internal/adapters/extraction"
+	"github.com/benoitpetit/mira/internal/adapters/logging"
 	"github.com/benoitpetit/mira/internal/adapters/metrics"
 	"github.com/benoitpetit/mira/internal/adapters/storage"
 	"github.com/benoitpetit/mira/internal/adapters/vector"
@@ -101,8 +102,6 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 		log.Println("[Embedder] Using SimpleEmbedder (deterministic)")
 		app.embedder = extraction.NewSimpleEmbedder(cfg.Embeddings.Dimension)
 	} else {
-		log.Printf("[Embedder] Loading model: %s", cfg.Embeddings.CurrentModel)
-
 		cybertronEmbedder, err := extraction.NewCybertronEmbedder(extraction.CybertronEmbedderOptions{
 			ModelName: cfg.Embeddings.CurrentModel,
 			ModelsDir: modelsDir,
@@ -114,7 +113,6 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 			app.embedder = extraction.NewSimpleEmbedder(cfg.Embeddings.Dimension)
 		} else {
 			app.embedder = cybertronEmbedder
-			log.Println("[Embedder] Model loaded successfully")
 		}
 	}
 
@@ -207,9 +205,12 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 	// 10. Initialize renderer
 	app.renderer = interactors.NewDefaultFingerprintRenderer()
 
+	// 10.5 Initialize logger
+	logger := logging.NewSimpleLoggerWithPrefix("[StoreMemory]", false)
+
 	// 11. Initialize use cases (interactors)
 	app.storeMemory = interactors.NewStoreMemory(
-		repo, app.extractor, app.extractor, app.vectorStore, app.metricsCollector,
+		repo, app.extractor, app.extractor, app.vectorStore, app.metricsCollector, logger,
 	)
 
 	app.recallMemory = interactors.NewRecallMemory(

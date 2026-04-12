@@ -364,9 +364,9 @@ Relations are automatically detected via linguistic patterns:
 ```go
 causalPatterns := map[RelationType]*regexp.Regexp{
     RelTriggered:   regexp.MustCompile(`(?i)(?:following|after|in response to)`),
-    RelBecause:     regexp.MustCompile(`(?i)(?:because|since|due to)`),
-    RelContradicts: regexp.MustCompile(`(?i)(?:contradicts|however|but)`),
-    RelUpdates:     regexp.MustCompile(`(?i)(?:updates|replaces|new version)`),
+    RelBecause:     regexp.MustCompile(`(?i)(?:because|since|due to|in reason of)`),
+    RelContradicts: regexp.MustCompile(`(?i)(?:contradicts|in contradiction|however)`),
+    RelUpdates:     regexp.MustCompile(`(?i)(?:updates|replaces)`),
     RelResolves:    regexp.MustCompile(`(?i)(?:resolves|solves|fixes)`),
 }
 ```
@@ -511,7 +511,6 @@ We decided to migrate to PostgreSQL for v2...
 ```yaml
 system:
   version: "0.3.0"
-  max_concurrent_queries: 10
 
 storage:
   path: "./mira_data"
@@ -699,8 +698,9 @@ mira/
 │   │   └── interactors/   # Use case implementations
 │   ├── adapters/          # Adapters Layer
 │   │   ├── storage/       # SQLite repository
-│   │   ├── vector/        # HNSW, SQLite vector store
+│   │   ├── vector/        # HNSW, SQLite vector store, overlap cache
 │   │   ├── extraction/    # NLP, embeddings
+│   │   ├── logging/       # Structured logging
 │   │   ├── webhook/       # HTTP notifications
 │   │   └── metrics/       # Prometheus metrics
 │   ├── interfaces/        # Interfaces Layer
@@ -709,11 +709,9 @@ mira/
 │   └── app/               # Composition root (DI)
 │       ├── main.go        # Dependency injection
 │       ├── health.go      # Health checks
-│       ├── metrics.go     # Metrics collection
-│       └── retry.go       # Retry logic
+│       ├── health_test.go # Health check tests
+│       └── main_test.go   # Application tests
 ├── docs/                  # Documentation
-│   ├── WHITEPAPER.md      # Technical whitepaper
-│   ├── API_EXAMPLES.md    # API usage examples
 │   ├── API_REFERENCES.md  # API reference
 │   └── adr/               # Architecture Decision Records
 ├── config.example.yaml    # Example configuration
@@ -746,8 +744,9 @@ go test -cover ./...
 make build      # Build
 make test       # Tests
 make bench      # Benchmarks
-make migrate    # DB migrations
 make clean      # Clean
+make lint       # Run linters
+make install    # Install to GOPATH/bin
 ```
 
 ## Changelog

@@ -35,6 +35,7 @@ type StoreMemory struct {
 	causalDetector   ports.CausalRelationDetector
 	vectorStore      ports.VectorStore
 	metricsCollector ports.MetricsCollector
+	logger           ports.Logger
 }
 
 // NewStoreMemory creates a new store memory interactor
@@ -44,6 +45,7 @@ func NewStoreMemory(
 	causalDetector ports.CausalRelationDetector,
 	vectorStore ports.VectorStore,
 	metricsCollector ports.MetricsCollector,
+	logger ports.Logger,
 ) *StoreMemory {
 	return &StoreMemory{
 		repository:       repository,
@@ -51,6 +53,7 @@ func NewStoreMemory(
 		causalDetector:   causalDetector,
 		vectorStore:      vectorStore,
 		metricsCollector: metricsCollector,
+		logger:           logger,
 	}
 }
 
@@ -113,23 +116,56 @@ func (uc *StoreMemory) Execute(ctx context.Context, input StoreMemoryInput) (*St
 	candidate := entities.NewCandidate(fp, verbatim, emb.Vector)
 	if err := uc.vectorStore.AddCandidate(ctx, candidate); err != nil {
 		// Non-fatal: continue with SQLite only
-		// Log warning
+		if uc.logger != nil {
+			uc.logger.Warn("Failed to add candidate to vector store, continuing with SQLite only",
+				"error", err,
+				"fingerprint_id", fp.ID.String(),
+			)
+		}
 	}
 
 	// 5. Create causal node (non-fatal)
 	node := entities.NewCausalNode(fp.ID, string(fp.Type), fp.Data.Subject[0], input.Wing, input.Room)
 	if err := uc.repository.AddNode(ctx, node); err != nil {
 		// Non-fatal: continue without causal node
-		// Log warning
+		if uc.logger != nil {
+			uc.logger.Warn("Failed to create causal node, continuing without",
+				"error", err,
+				"fingerprint_id", fp.ID.String(),
+			)
+		}
 	}
 
 	// 6. Detect causal relations (non-fatal)
 	recentFps, err := uc.repository.GetRecentFingerprintsByWing(ctx, input.Wing, fp.ID, 50)
-	if err == nil && len(recentFps) > 0 && uc.causalDetector != nil {
+	if err != nil {
+		if uc.logger != nil {
+			uc.logger.Warn("Failed to get recent fingerprints for causal detection",
+				"error", err,
+				"wing", input.Wing,
+			)
+		}
+	} else if len(recentFps) > 0 && uc.causalDetector != nil {
 		edges, err := uc.causalDetector.DetectCausalRelations(ctx, fp, recentFps, input.Content)
-		if err == nil {
+		if err != nil {
+			if uc.logger != nil {
+				uc.logger.Warn("Failed to detect causal relations",
+					"error", err,
+					"fingerprint_id", fp.ID.String(),
+				)
+			}
+		} else {
 			for _, edge := range edges {
-				_ = uc.repository.AddEdge(ctx, edge)
+				if err := uc.repository.AddEdge(ctx, edge); err != nil {
+					if uc.logger != nil {
+						uc.logger.Warn("Failed to add causal edge",
+							"error", err,
+							"from_id", edge.FromID.String(),
+							"to_id", edge.ToID.String(),
+							"relation", string(edge.Relation),
+						)
+					}
+				}
 			}
 		}
 	}

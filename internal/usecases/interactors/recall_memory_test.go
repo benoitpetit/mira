@@ -9,6 +9,7 @@ import (
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
+	"github.com/benoitpetit/mira/internal/util"
 	"github.com/google/uuid"
 )
 
@@ -604,9 +605,9 @@ func TestCosineSimilarity(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := cosineSimilarity(tt.a, tt.b)
+			result := util.CosineSimilarity(tt.a, tt.b)
 			if math.Abs(result-tt.expected) > 0.0001 {
-				t.Errorf("cosineSimilarity() = %v, want %v", result, tt.expected)
+				t.Errorf("CosineSimilarity() = %v, want %v", result, tt.expected)
 			}
 		})
 	}
@@ -803,7 +804,7 @@ func BenchmarkCosineSimilarity(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		cosineSimilarity(a, b_vec)
+		util.CosineSimilarity(a, b_vec)
 	}
 }
 

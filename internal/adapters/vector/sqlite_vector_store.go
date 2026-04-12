@@ -12,6 +12,7 @@ import (
 
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
+	"github.com/benoitpetit/mira/internal/util"
 	"github.com/google/uuid"
 )
 
@@ -117,8 +118,8 @@ func (s *SQLiteVectorStore) Search(ctx context.Context, vector []float32, limit 
 
 	// Sort by cosine similarity to query vector (highest first)
 	sort.Slice(candidates, func(i, j int) bool {
-		simI := cosineSimilarity(candidates[i].Embedding, vector)
-		simJ := cosineSimilarity(candidates[j].Embedding, vector)
+		simI := util.CosineSimilarity(candidates[i].Embedding, vector)
+		simJ := util.CosineSimilarity(candidates[j].Embedding, vector)
 		return simI > simJ
 	})
 
@@ -130,22 +131,7 @@ func (s *SQLiteVectorStore) Search(ctx context.Context, vector []float32, limit 
 	return candidates, nil
 }
 
-// cosineSimilarity computes the cosine similarity between two vectors
-func cosineSimilarity(a, b []float32) float64 {
-	if len(a) != len(b) {
-		return 0
-	}
-	var dot, normA, normB float64
-	for i := range a {
-		dot += float64(a[i] * b[i])
-		normA += float64(a[i] * a[i])
-		normB += float64(b[i] * b[i])
-	}
-	if normA == 0 || normB == 0 {
-		return 0
-	}
-	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
-}
+
 
 // AddCandidate implements VectorStore
 func (s *SQLiteVectorStore) AddCandidate(ctx context.Context, candidate *entities.Candidate) error {

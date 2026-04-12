@@ -8,6 +8,7 @@ import (
 	"github.com/benoitpetit/mira/internal/adapters/storage"
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
+	"github.com/benoitpetit/mira/internal/util"
 	"github.com/google/uuid"
 )
 
@@ -81,8 +82,8 @@ func TestSQLiteVectorStoreSearch(t *testing.T) {
 	// The first result should have the highest similarity to query (0.95)
 	if len(results) > 0 {
 		// Vector with 0.9 value should be most similar to 0.95 query
-		expectedSimilarity := cosineSimilarity(createTestVector(dim, 0.9), query)
-		actualSimilarity := cosineSimilarity(results[0].Embedding, query)
+		expectedSimilarity := util.CosineSimilarity(createTestVector(dim, 0.9), query)
+		actualSimilarity := util.CosineSimilarity(results[0].Embedding, query)
 		if actualSimilarity < expectedSimilarity-0.01 {
 			t.Logf("First result similarity %f, expected at least %f", actualSimilarity, expectedSimilarity)
 		}
@@ -349,16 +350,16 @@ func TestSQLiteVectorStoreSearchOrdering(t *testing.T) {
 
 	// Verify ordering - similarities should be decreasing
 	for i := 1; i < len(results); i++ {
-		simPrev := cosineSimilarity(results[i-1].Embedding, query)
-		simCurr := cosineSimilarity(results[i].Embedding, query)
+		simPrev := util.CosineSimilarity(results[i-1].Embedding, query)
+		simCurr := util.CosineSimilarity(results[i].Embedding, query)
 		if simPrev < simCurr {
 			t.Errorf("Results not ordered by similarity: index %d (%f) < index %d (%f)", i-1, simPrev, i, simCurr)
 		}
 	}
 
 	// The most similar should be the one with 0.5 value
-	mostSimilar := cosineSimilarity(results[0].Embedding, query)
-	expectedMostSimilar := cosineSimilarity(createTestVector(dim, 0.5), query)
+	mostSimilar := util.CosineSimilarity(results[0].Embedding, query)
+	expectedMostSimilar := util.CosineSimilarity(createTestVector(dim, 0.5), query)
 	if mostSimilar < expectedMostSimilar-0.001 {
 		t.Errorf("Most similar result has wrong similarity: got %f, expected %f", mostSimilar, expectedMostSimilar)
 	}

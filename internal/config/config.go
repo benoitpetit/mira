@@ -13,6 +13,7 @@ type Config struct {
 	Embeddings        EmbeddingsConfig   `yaml:"embeddings"`
 	Allocator         AllocatorConfig    `yaml:"allocator"`
 	ArchiveThresholds map[string]float64 `yaml:"archive_thresholds"`
+	OverlapCache      OverlapCacheConfig `yaml:"overlap_cache"`
 	Extraction        ExtractionConfig   `yaml:"extraction"`
 	MCP               MCPConfig          `yaml:"mcp"`
 	HNSW              HNSWConfig         `yaml:"hnsw"`
@@ -31,12 +32,22 @@ type SystemConfig struct {
 	Version string `yaml:"version"`
 }
 
+type SQLiteSettingsConfig struct {
+	JournalMode   string `yaml:"journal_mode"`
+	Synchronous   string `yaml:"synchronous"`
+	CacheSize     int    `yaml:"cache_size"`
+	MmapSize      int    `yaml:"mmap_size"`
+	TempStore     string `yaml:"temp_store"`
+}
+
 type StorageConfig struct {
-	Path string `yaml:"path"`
+	Path   string               `yaml:"path"`
+	SQLite SQLiteSettingsConfig `yaml:"sqlite"`
 }
 
 type EmbeddingsConfig struct {
 	CurrentModel      string `yaml:"current_model"`
+	ModelHash         string `yaml:"model_hash"`
 	Dimension         int    `yaml:"dimension"`
 	BatchSize         int    `yaml:"batch_size"`
 	CacheSize         int    `yaml:"cache_size"`
@@ -60,25 +71,42 @@ type DensitySigmoidConfig struct {
 
 type ExtractionConfig struct {
 	MinEntityLength int `yaml:"min_entity_length"`
+	CausalLookback  int `yaml:"causal_lookback"`
+	CausalMaxDays   int `yaml:"causal_max_days"`
+}
+
+// OverlapCacheConfig configures the overlap cache for CBA
+type OverlapCacheConfig struct {
+	TTLDays    int `yaml:"ttl_days"`
+	MaxEntries int `yaml:"max_entries"`
 }
 
 type MCPConfig struct {
-	Name      string `yaml:"name"`
-	Version   string `yaml:"version"`
-	Transport string `yaml:"transport"`
+	Name           string `yaml:"name"`
+	Version        string `yaml:"version"`
+	Transport      string `yaml:"transport"`
+	TimeoutSeconds int    `yaml:"timeout_seconds"`
 }
 
 // Default returns default configuration
 func Default() *Config {
 	return &Config{
 		System: SystemConfig{
-			Version:        "0.3.0",
+			Version: "0.3.0",
 		},
 		Storage: StorageConfig{
 			Path: "./mira_data",
+			SQLite: SQLiteSettingsConfig{
+				JournalMode: "WAL",
+				Synchronous: "NORMAL",
+				CacheSize:   -64000,
+				MmapSize:    268435456,
+				TempStore:   "MEMORY",
+			},
 		},
 		Embeddings: EmbeddingsConfig{
 			CurrentModel: "sentence-transformers/all-MiniLM-L6-v2",
+			ModelHash:    "a2d8f3e9",
 			Dimension:    384,
 			BatchSize:    32,
 			CacheSize:    1000,
@@ -101,11 +129,18 @@ func Default() *Config {
 		},
 		Extraction: ExtractionConfig{
 			MinEntityLength: 2,
+			CausalLookback:  50,
+			CausalMaxDays:   30,
+		},
+		OverlapCache: OverlapCacheConfig{
+			TTLDays:    30,
+			MaxEntries: 1000000,
 		},
 		MCP: MCPConfig{
-			Name:      "mira",
+			Name:           "mira",
 			Version:        "0.3.0",
-			Transport: "stdio",
+			Transport:      "stdio",
+			TimeoutSeconds: 30,
 		},
 		// HNSW configuration - vector search index
 		HNSW: HNSWConfig{
@@ -264,6 +299,20 @@ func (c *Config) Validate() error {
 	if c.Extraction.MinEntityLength <= 0 {
 		c.Extraction.MinEntityLength = 2
 	}
+	if c.Extraction.CausalLookback <= 0 {
+		c.Extraction.CausalLookback = 50
+	}
+	if c.Extraction.CausalMaxDays <= 0 {
+		c.Extraction.CausalMaxDays = 30
+	}
+
+	// Overlap cache validation
+	if c.OverlapCache.TTLDays <= 0 {
+		c.OverlapCache.TTLDays = 30
+	}
+	if c.OverlapCache.MaxEntries <= 0 {
+		c.OverlapCache.MaxEntries = 1000000
+	}
 
 	// Archive thresholds validation
 	if c.ArchiveThresholds == nil {
@@ -282,6 +331,31 @@ func (c *Config) Validate() error {
 	}
 	if c.MCP.Transport == "" {
 		c.MCP.Transport = "stdio"
+	}
+	if c.MCP.TimeoutSeconds <= 0 {
+		c.MCP.TimeoutSeconds = 30
+	}
+
+	// Embeddings validation - ModelHash
+	if c.Embeddings.ModelHash == "" {
+		c.Embeddings.ModelHash = "a2d8f3e9"
+	}
+
+	// Storage SQLite validation
+	if c.Storage.SQLite.JournalMode == "" {
+		c.Storage.SQLite.JournalMode = "WAL"
+	}
+	if c.Storage.SQLite.Synchronous == "" {
+		c.Storage.SQLite.Synchronous = "NORMAL"
+	}
+	if c.Storage.SQLite.CacheSize == 0 {
+		c.Storage.SQLite.CacheSize = -64000
+	}
+	if c.Storage.SQLite.MmapSize <= 0 {
+		c.Storage.SQLite.MmapSize = 268435456
+	}
+	if c.Storage.SQLite.TempStore == "" {
+		c.Storage.SQLite.TempStore = "MEMORY"
 	}
 
 	return nil

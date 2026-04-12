@@ -12,6 +12,7 @@ import (
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
+	"github.com/benoitpetit/mira/internal/util"
 	"github.com/google/uuid"
 )
 
@@ -237,7 +238,7 @@ func (uc *RecallMemory) scoreCandidates(candidates []*entities.Candidate, queryV
 
 	for _, c := range candidates {
 		// ρ: semantic relevance [0,1]
-		c.Relevance = cosineSimilarity(c.Embedding, queryVec)
+		c.Relevance = util.CosineSimilarity(c.Embedding, queryVec)
 		// Normalize from [-1,1] to [0,1] only if needed
 		// If vectors are pre-normalized (L2), similarity is already in [0,1]
 		if c.Relevance < 0 {
@@ -329,11 +330,11 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 					if cached, ok := uc.overlapCache.Get(ctx, c.ID(), selID); ok {
 						overlap = cached
 					} else {
-						overlap = cosineSimilarity(c.Embedding, selectedEmbeddings[i])
+						overlap = util.CosineSimilarity(c.Embedding, selectedEmbeddings[i])
 						uc.overlapCache.Set(ctx, c.ID(), selID, overlap)
 					}
 				} else {
-					overlap = cosineSimilarity(c.Embedding, selectedEmbeddings[i])
+					overlap = util.CosineSimilarity(c.Embedding, selectedEmbeddings[i])
 				}
 				if overlap > maxOverlap {
 					maxOverlap = overlap
@@ -454,18 +455,4 @@ func (uc *RecallMemory) render(c *entities.Candidate, mode valueobjects.RenderMo
 	}
 }
 
-func cosineSimilarity(a, b []float32) float64 {
-	if len(a) != len(b) {
-		return 0
-	}
-	var dot, normA, normB float64
-	for i := range a {
-		dot += float64(a[i] * b[i])
-		normA += float64(a[i] * a[i])
-		normB += float64(b[i] * b[i])
-	}
-	if normA == 0 || normB == 0 {
-		return 0
-	}
-	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
-}
+

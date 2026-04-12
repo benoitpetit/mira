@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/benoitpetit/mira/internal/domain/entities"
@@ -501,18 +502,93 @@ func (r *SQLiteRepository) HasEdge(ctx context.Context, fromID, toID uuid.UUID) 
 }
 
 // GetChain implements CausalGraphRepository
+// Performs a BFS traversal up the causal chain (parents) up to maxDepth levels
 func (r *SQLiteRepository) GetChain(ctx context.Context, id uuid.UUID, maxDepth int) ([]*entities.CausalNode, error) {
-	// Simplified implementation - get direct parents
-	parents, err := r.GetParents(ctx, id)
-	if err != nil {
-		return nil, err
+	if maxDepth <= 0 {
+		maxDepth = 5 // Default depth
 	}
-	return parents, nil
+
+	var result []*entities.CausalNode
+	visited := make(map[uuid.UUID]bool)
+	queue := []struct {
+		node  uuid.UUID
+		depth int
+	}{{id, 0}}
+
+	for len(queue) > 0 {
+		// Dequeue
+		current := queue[0]
+		queue = queue[1:]
+
+		if current.depth >= maxDepth {
+			continue
+		}
+
+		// Get parents of current node
+		parents, err := r.GetParents(ctx, current.node)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, parent := range parents {
+			if visited[parent.ID] {
+				continue
+			}
+			visited[parent.ID] = true
+			result = append(result, parent)
+			queue = append(queue, struct {
+				node  uuid.UUID
+				depth int
+			}{parent.ID, current.depth + 1})
+		}
+	}
+
+	return result, nil
 }
 
 // GetConsequences implements CausalGraphRepository
+// Performs a BFS traversal down the causal chain (children) up to maxDepth levels
 func (r *SQLiteRepository) GetConsequences(ctx context.Context, id uuid.UUID, maxDepth int) ([]*entities.CausalNode, error) {
-	return r.GetChildren(ctx, id)
+	if maxDepth <= 0 {
+		maxDepth = 5 // Default depth
+	}
+
+	var result []*entities.CausalNode
+	visited := make(map[uuid.UUID]bool)
+	queue := []struct {
+		node  uuid.UUID
+		depth int
+	}{{id, 0}}
+
+	for len(queue) > 0 {
+		// Dequeue
+		current := queue[0]
+		queue = queue[1:]
+
+		if current.depth >= maxDepth {
+			continue
+		}
+
+		// Get children of current node
+		children, err := r.GetChildren(ctx, current.node)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, child := range children {
+			if visited[child.ID] {
+				continue
+			}
+			visited[child.ID] = true
+			result = append(result, child)
+			queue = append(queue, struct {
+				node  uuid.UUID
+				depth int
+			}{child.ID, current.depth + 1})
+		}
+	}
+
+	return result, nil
 }
 
 // GetParents implements CausalGraphRepository
@@ -802,4 +878,161 @@ func (r *SQLiteRepository) collectArchiveTargets(ctx context.Context, tx *sql.Tx
 	}
 
 	return ids, totalTokens
+}
+
+// GetCandidatesWithEmbeddings implements EmbeddingSource
+// Retrieves candidates (fingerprint, verbatim, embedding) by their IDs
+func (r *SQLiteRepository) GetCandidatesWithEmbeddings(ctx context.Context, ids []uuid.UUID, wing, room *string) ([]*entities.Candidate, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id[:]
+	}
+
+	query := fmt.Sprintf(`
+		SELECT v.id, v.content, v.wing, v.room, v.token_count, v.created_at,
+			   f.id, f.ftype, f.fact_count, f.token_estimate, f.model_hash, f.data,
+			   e.vector, e.dim
+		FROM verbatim v
+		JOIN fingerprints f ON v.id = f.verbatim_id
+		JOIN embeddings e ON v.id = e.id
+		WHERE v.id IN (%s)
+	`, strings.Join(placeholders, ","))
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("batch query failed: %w", err)
+	}
+	defer rows.Close()
+
+	var candidates []*entities.Candidate
+	for rows.Next() {
+		var vID, fID []byte
+		var vContent, vWing, fType, fModelHash string
+		var vRoom sql.NullString
+		var vTokenCount, fFactCount, fTokenEstimate, eDim int
+		var vCreatedAt float64
+		var fData []byte
+		var eVector []byte
+
+		err := rows.Scan(
+			&vID, &vContent, &vWing, &vRoom, &vTokenCount, &vCreatedAt,
+			&fID, &fType, &fFactCount, &fTokenEstimate, &fModelHash, &fData,
+			&eVector, &eDim,
+		)
+		if err != nil {
+			continue
+		}
+
+		// Apply wing/room filters
+		if wing != nil && vWing != *wing {
+			continue
+		}
+		if room != nil && (!vRoom.Valid || vRoom.String != *room) {
+			continue
+		}
+
+		// Parse UUID
+		id, err := uuid.FromBytes(vID)
+		if err != nil {
+			continue
+		}
+
+		// Decode embedding vector
+		vec := make([]float32, eDim)
+		vecLen := len(eVector) / 4
+		if vecLen > eDim {
+			vecLen = eDim
+		}
+		for i := 0; i < vecLen; i++ {
+			u := binary.LittleEndian.Uint32(eVector[i*4 : i*4+4])
+			vec[i] = math.Float32frombits(u)
+		}
+
+		// Build entities
+		verbatim := &entities.Verbatim{
+			ID:         id,
+			Content:    vContent,
+			Wing:       vWing,
+			TokenCount: vTokenCount,
+			CreatedAt:  time.Unix(int64(vCreatedAt), 0),
+		}
+		if vRoom.Valid {
+			verbatim.Room = &vRoom.String
+		}
+
+		fp := &entities.Fingerprint{
+			ID:            id,
+			VerbatimID:    id,
+			Type:          valueobjects.MemoryType(fType),
+			FactCount:     fFactCount,
+			TokenEstimate: fTokenEstimate,
+			ModelHash:     fModelHash,
+			Data:          valueobjects.FingerprintData{},
+		}
+
+		candidates = append(candidates, entities.NewCandidate(fp, verbatim, vec))
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
+
+	return candidates, nil
+}
+
+// GetAllEmbeddings implements EmbeddingSource
+// Retrieves all embeddings from the store
+func (r *SQLiteRepository) GetAllEmbeddings(ctx context.Context) ([]*entities.Embedding, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT v.id, e.vector, e.dim
+		FROM verbatim v
+		JOIN embeddings e ON v.id = e.id
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query embeddings: %w", err)
+	}
+	defer rows.Close()
+
+	var embeddings []*entities.Embedding
+	for rows.Next() {
+		var idBytes, vectorBytes []byte
+		var dim int
+		if err := rows.Scan(&idBytes, &vectorBytes, &dim); err != nil {
+			continue
+		}
+
+		id, err := uuid.FromBytes(idBytes)
+		if err != nil {
+			continue
+		}
+
+		// Decode vector
+		vec := make([]float32, dim)
+		vecLen := len(vectorBytes) / 4
+		if vecLen > dim {
+			vecLen = dim
+		}
+		for i := 0; i < vecLen; i++ {
+			u := binary.LittleEndian.Uint32(vectorBytes[i*4 : i*4+4])
+			vec[i] = math.Float32frombits(u)
+		}
+
+		embeddings = append(embeddings, &entities.Embedding{
+			ID:     id,
+			Vector: vec,
+			Dim:    dim,
+		})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
+
+	return embeddings, nil
 }

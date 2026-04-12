@@ -192,6 +192,14 @@ type mockStoreVectorStore struct {
 	candidates []*entities.Candidate
 }
 
+// Mock Logger
+type mockLogger struct{}
+
+func (m *mockLogger) Debug(_ string, _ ...interface{}) {}
+func (m *mockLogger) Info(_ string, _ ...interface{})  {}
+func (m *mockLogger) Warn(_ string, _ ...interface{})  {}
+func (m *mockLogger) Error(_ string, _ error, _ ...interface{}) {}
+
 func (m *mockStoreVectorStore) Search(ctx context.Context, vector []float32, limit int, wing, room *string) ([]*entities.Candidate, error) {
 	return m.candidates, nil
 }
@@ -211,7 +219,7 @@ func TestStoreMemoryExecute(t *testing.T) {
 	extractor := &mockStoreExtractor{}
 	vectorStore := &mockStoreVectorStore{}
 	
-	interactor := NewStoreMemory(repo, extractor, extractor, vectorStore, nil)
+	interactor := NewStoreMemory(repo, extractor, extractor, vectorStore, nil, &mockLogger{})
 	
 	input := StoreMemoryInput{
 		Content: "Test content for storage",
@@ -264,7 +272,7 @@ func TestStoreMemoryWithRoom(t *testing.T) {
 	extractor := &mockStoreExtractor{}
 	vectorStore := &mockStoreVectorStore{}
 	
-	interactor := NewStoreMemory(repo, extractor, extractor, vectorStore, nil)
+	interactor := NewStoreMemory(repo, extractor, extractor, vectorStore, nil, &mockLogger{})
 	
 	room := "test-room"
 	input := StoreMemoryInput{
@@ -292,7 +300,7 @@ func BenchmarkStoreMemoryExecute(b *testing.B) {
 	repo := newMockStoreRepository()
 	extractor := &mockStoreExtractor{}
 	vectorStore := &mockStoreVectorStore{}
-	interactor := NewStoreMemory(repo, extractor, extractor, vectorStore, nil)
+	interactor := NewStoreMemory(repo, extractor, extractor, vectorStore, nil, &mockLogger{})
 	
 	input := StoreMemoryInput{
 		Content: "Benchmark content",

@@ -5,22 +5,17 @@ package vector
 
 import (
 	"context"
-	"database/sql"
-	"encoding/binary"
 	"encoding/gob"
 	"fmt"
 	"log"
-	"math"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/benoitpetit/mira/internal/adapters/storage"
 	"github.com/benoitpetit/mira/internal/domain/entities"
-	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
+	"github.com/benoitpetit/mira/internal/util"
 	"github.com/coder/hnsw"
 	"github.com/google/uuid"
 )
@@ -28,7 +23,7 @@ import (
 // HNSWStore implements VectorStore using HNSW algorithm for O(log n) ANN search
 type HNSWStore struct {
 	graph     *hnsw.Graph[node]
-	store     *storage.SQLiteRepository
+	store     ports.EmbeddingSource
 	dimension int
 	indexPath string
 	mu        sync.RWMutex
@@ -66,7 +61,7 @@ func DefaultHNSWOptions() HNSWOptions {
 }
 
 // NewHNSWStore creates a new HNSW vector store
-func NewHNSWStore(store *storage.SQLiteRepository, dimension int, indexPath string, opts HNSWOptions) (*HNSWStore, error) {
+func NewHNSWStore(store ports.EmbeddingSource, dimension int, indexPath string, opts HNSWOptions) (*HNSWStore, error) {
 	h := &HNSWStore{
 		store:     store,
 		dimension: dimension,
@@ -78,7 +73,7 @@ func NewHNSWStore(store *storage.SQLiteRepository, dimension int, indexPath stri
 	}
 
 	// Register cosine distance function
-	hnsw.RegisterDistanceFunc("cosine", hnsw.DistanceFunc(cosineDistance))
+	hnsw.RegisterDistanceFunc("cosine", hnsw.DistanceFunc(util.CosineDistance))
 
 	// Create new empty graph
 	h.graph = hnsw.NewGraph[node]()
@@ -98,7 +93,7 @@ func (h *HNSWStore) applyOptions(opts HNSWOptions) {
 	h.graph.M = opts.M
 	h.graph.Ml = opts.Ml
 	h.graph.EfSearch = opts.EfSearch
-	h.graph.Distance = hnsw.DistanceFunc(cosineDistance)
+	h.graph.Distance = hnsw.DistanceFunc(util.CosineDistance)
 }
 
 // Search implements VectorStore
@@ -135,113 +130,9 @@ func (h *HNSWStore) Search(ctx context.Context, queryVec []float32, limit int, w
 	return candidates, nil
 }
 
-// batchGetCandidates fetches multiple candidates in a single JOIN query
+// batchGetCandidates fetches multiple candidates using the EmbeddingSource interface
 func (h *HNSWStore) batchGetCandidates(ctx context.Context, ids []uuid.UUID, wing, room *string) ([]*entities.Candidate, error) {
-	if len(ids) == 0 {
-		return nil, nil
-	}
-
-	placeholders := make([]string, len(ids))
-	args := make([]interface{}, len(ids))
-	for i, id := range ids {
-		placeholders[i] = "?"
-		args[i] = id[:]
-	}
-
-	query := fmt.Sprintf(`
-		SELECT v.id, v.content, v.wing, v.room, v.token_count, v.created_at,
-			   f.id, f.ftype, f.fact_count, f.token_estimate, f.model_hash, f.data,
-			   e.vector, e.dim
-		FROM verbatim v
-		JOIN fingerprints f ON v.id = f.verbatim_id
-		JOIN embeddings e ON v.id = e.id
-		WHERE v.id IN (%s)
-	`, strings.Join(placeholders, ","))
-
-	rows, err := h.store.DB().QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("batch query failed: %w", err)
-	}
-	defer rows.Close()
-
-	var candidates []*entities.Candidate
-	for rows.Next() {
-		var vID, fID []byte
-		var vContent, vWing, fType, fModelHash string
-		var vRoom sql.NullString
-		var vTokenCount, fFactCount, fTokenEstimate, eDim int
-		var vCreatedAt float64
-		var fData []byte
-		var eVector []byte
-
-		err := rows.Scan(
-			&vID, &vContent, &vWing, &vRoom, &vTokenCount, &vCreatedAt,
-			&fID, &fType, &fFactCount, &fTokenEstimate, &fModelHash, &fData,
-			&eVector, &eDim,
-		)
-		if err != nil {
-			log.Printf("Warning: failed to scan row: %v", err)
-			continue
-		}
-
-		// Apply wing/room filters
-		if wing != nil && vWing != *wing {
-			continue
-		}
-		if room != nil && (!vRoom.Valid || vRoom.String != *room) {
-			continue
-		}
-
-		// Parse UUID
-		id, err := uuid.FromBytes(vID)
-		if err != nil {
-			log.Printf("Warning: invalid UUID: %v", err)
-			continue
-		}
-
-		// Decode embedding vector
-		vec := make([]float32, h.dimension)
-		vecLen := len(eVector) / 4
-		if vecLen > h.dimension {
-			vecLen = h.dimension
-		}
-		for i := 0; i < vecLen; i++ {
-			u := binary.LittleEndian.Uint32(eVector[i*4 : i*4+4])
-			vec[i] = math.Float32frombits(u)
-		}
-
-		// Build entities
-		verbatim := &entities.Verbatim{
-			ID:          id,
-			Content:     vContent,
-			Wing:        vWing,
-			TokenCount:  vTokenCount,
-			CreatedAt:   timeUnix(vCreatedAt),
-		}
-		if vRoom.Valid {
-			verbatim.Room = &vRoom.String
-		}
-
-		fp := &entities.Fingerprint{
-			ID:            id,
-			VerbatimID:    id,
-			Type:          valueobjects.MemoryType(fType),
-			FactCount:     fFactCount,
-			TokenEstimate: fTokenEstimate,
-			ModelHash:     fModelHash,
-			Data:          valueobjects.FingerprintData{},
-		}
-		// Note: fData contains serialized data, we'd need to deserialize it properly
-		// For now, we'll fetch fingerprints separately if needed, or we can skip the Data field
-
-		candidates = append(candidates, entities.NewCandidate(fp, verbatim, vec))
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating rows: %w", err)
-	}
-
-	return candidates, nil
+	return h.store.GetCandidatesWithEmbeddings(ctx, ids, wing, room)
 }
 
 // AddCandidate implements VectorStore
@@ -280,56 +171,24 @@ func (h *HNSWStore) BuildFromStore(ctx context.Context) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	rows, err := h.store.DB().QueryContext(ctx, `
-		SELECT v.id, e.vector 
-		FROM verbatim v 
-		JOIN embeddings e ON v.id = e.id
-	`)
+	embeddings, err := h.store.GetAllEmbeddings(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to query embeddings: %w", err)
 	}
-	defer rows.Close()
 
 	count := 0
-	for rows.Next() {
-		var idBytes, vectorBytes []byte
-		if err := rows.Scan(&idBytes, &vectorBytes); err != nil {
-			log.Printf("Warning: failed to scan row: %v", err)
-			continue
-		}
-
-		id, err := uuid.FromBytes(idBytes)
-		if err != nil {
-			log.Printf("Warning: invalid UUID: %v", err)
-			continue
-		}
-
-		// Decode vector
-		vec := make([]float32, h.dimension)
-		vecLen := len(vectorBytes) / 4
-		if vecLen > h.dimension {
-			vecLen = h.dimension
-		}
-		for i := 0; i < vecLen; i++ {
-			u := binary.LittleEndian.Uint32(vectorBytes[i*4 : i*4+4])
-			vec[i] = math.Float32frombits(u)
-		}
-
+	for _, emb := range embeddings {
 		// Add to HNSW
 		strID := h.getNextID()
-		h.idToUUID[strID] = id
-		h.uuidToID[id] = strID
+		h.idToUUID[strID] = emb.ID
+		h.uuidToID[emb.ID] = strID
 
 		n := node{
 			id:        strID,
-			embedding: floatsToEmbedding(vec),
+			embedding: floatsToEmbedding(emb.Vector),
 		}
 		h.graph.Add(n)
 		count++
-	}
-
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("error iterating rows: %w", err)
 	}
 
 	h.ready = true
@@ -359,40 +218,6 @@ func (h *HNSWStore) getNextID() string {
 
 func floatsToEmbedding(v []float32) hnsw.Embedding {
 	return v
-}
-
-func cosineDistance(a, b []float32) float32 {
-	if len(a) != len(b) {
-		return 0
-	}
-	var dot, normA, normB float32
-	for i := range a {
-		dot += a[i] * b[i]
-		normA += a[i] * a[i]
-		normB += b[i] * b[i]
-	}
-	if normA == 0 || normB == 0 {
-		return 0
-	}
-	return 1.0 - (dot / (sqrt32(normA) * sqrt32(normB)))
-}
-
-func sqrt32(x float32) float32 {
-	if x <= 0 {
-		return 0
-	}
-	return float32(sqrt(float64(x)))
-}
-
-func sqrt(x float64) float64 {
-	if x <= 0 {
-		return 0
-	}
-	z := x
-	for i := 0; i < 10; i++ {
-		z = (z + x/z) / 2
-	}
-	return z
 }
 
 // hnswNodeData représente un nœud à persister

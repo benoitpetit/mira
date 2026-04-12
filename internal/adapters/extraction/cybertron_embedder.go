@@ -4,8 +4,11 @@ package extraction
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
+	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/benoitpetit/mira/internal/usecases/ports"
 	"github.com/nlpodyssey/cybertron/pkg/models/bert"
@@ -41,14 +44,55 @@ func NewCybertronEmbedder(opts CybertronEmbedderOptions) (*CybertronEmbedder, er
 	// Cybertron uses zerolog for logging
 	zerolog.SetGlobalLevel(zerolog.Disabled)
 
+	// Check if model already exists locally
+	modelPath := filepath.Join(opts.ModelsDir, opts.ModelName)
+	modelExists := false
+	if info, err := os.Stat(modelPath); err == nil && info.IsDir() {
+		// Check if directory contains model files (config.json or spago_model.bin)
+		if _, err := os.Stat(filepath.Join(modelPath, "config.json")); err == nil {
+			modelExists = true
+		}
+	}
+
+	// If model doesn't exist, show download message and start progress indicator
+	var progressStop chan struct{}
+	if !modelExists {
+		log.Printf("[Embedder] Model not found locally, downloading: %s", opts.ModelName)
+		log.Printf("[Embedder] This may take several minutes depending on your connection...")
+		
+		progressStop = make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			
+			for {
+				select {
+				case <-ticker.C:
+					log.Printf("[Embedder] Download in progress... please wait")
+				case <-progressStop:
+					return
+				}
+			}
+		}()
+	}
+
 	// Load the model
 	m, err := tasks.Load[textencoding.Interface](&tasks.Config{
 		ModelsDir: opts.ModelsDir,
 		ModelName: opts.ModelName,
 	})
 
+	// Stop progress indicator if it was started
+	if progressStop != nil {
+		close(progressStop)
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to load cybertron model %s: %w", opts.ModelName, err)
+	}
+
+	if !modelExists {
+		log.Printf("[Embedder] Model downloaded and loaded successfully")
 	}
 
 	return &CybertronEmbedder{

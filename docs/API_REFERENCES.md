@@ -541,13 +541,13 @@ Available metrics at `/metrics`:
 | `mira_store_total` | Counter | Total store operations |
 | `mira_recall_total` | Counter | Total recall operations |
 | `mira_search_total` | Counter | Total vector searches |
+| `mira_errors_total` | Counter | Total errors |
 | `mira_store_duration_seconds` | Histogram | Store latency |
 | `mira_recall_duration_seconds` | Histogram | Recall latency |
 | `mira_search_duration_seconds` | Histogram | Search latency |
-| `mira_active_searches` | Gauge | Active searches |
-| `mira_verbatim_count` | Gauge | Stored verbatims |
-| `mira_fingerprint_count` | Gauge | Stored fingerprints |
-| `mira_embedding_count` | Gauge | Stored embeddings |
+| `mira_embed_duration_seconds` | Histogram | Embedding latency |
+| `mira_memory_count` | Gauge | Current number of memories |
+| `mira_vector_count` | Gauge | Current number of vectors in index |
 
 ---
 

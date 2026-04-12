@@ -364,9 +364,9 @@ Les relations sont détectées automatiquement via des patterns linguistiques :
 ```go
 causalPatterns := map[RelationType]*regexp.Regexp{
     RelTriggered:   regexp.MustCompile(`(?i)(?:following|after|in response to)`),
-    RelBecause:     regexp.MustCompile(`(?i)(?:because|since|due to)`),
-    RelContradicts: regexp.MustCompile(`(?i)(?:contradicts|however|but)`),
-    RelUpdates:     regexp.MustCompile(`(?i)(?:updates|replaces|new version)`),
+    RelBecause:     regexp.MustCompile(`(?i)(?:because|since|due to|in reason of)`),
+    RelContradicts: regexp.MustCompile(`(?i)(?:contradicts|in contradiction|however)`),
+    RelUpdates:     regexp.MustCompile(`(?i)(?:updates|replaces)`),
     RelResolves:    regexp.MustCompile(`(?i)(?:resolves|solves|fixes)`),
 }
 ```
@@ -511,7 +511,6 @@ Nous avons décidé de migrer vers PostgreSQL pour la v2...
 ```yaml
 system:
   version: "0.3.0"
-  max_concurrent_queries: 10
 
 storage:
   path: "./mira_data"
@@ -699,8 +698,9 @@ mira/
 │   │   └── interactors/   # Implémentations use cases
 │   ├── adapters/          # Couche Adapters
 │   │   ├── storage/       # SQLite repository
-│   │   ├── vector/        # HNSW, SQLite vector store
+│   │   ├── vector/        # HNSW, SQLite vector store, overlap cache
 │   │   ├── extraction/    # NLP, embeddings
+│   │   ├── logging/       # Logging structuré
 │   │   ├── webhook/       # Notifications HTTP
 │   │   └── metrics/       # Métriques Prometheus
 │   ├── interfaces/        # Couche Interfaces
@@ -709,12 +709,11 @@ mira/
 │   └── app/               # Racine de composition (DI)
 │       ├── main.go        # Injection de dépendances
 │       ├── health.go      # Health checks
-│       ├── metrics.go     # Collecte de métriques
-│       └── retry.go       # Logique de retry
+│       ├── health_test.go # Tests health checks
+│       └── main_test.go   # Tests application
 ├── docs/                  # Documentation
-│   ├── WHITEPAPER.md      # Whitepaper technique
-│   ├── API_EXAMPLES.md    # Exemples d'usage API
-│   └── API_REFERENCES.md  # Référence API
+│   ├── API_REFERENCES.md  # Référence API
+│   └── adr/               # Architecture Decision Records
 ├── config.example.yaml    # Configuration exemple
 └── README_FR.md           # Ce fichier
 ```
@@ -745,8 +744,9 @@ go test -cover ./...
 make build      # Compiler
 make test       # Tests
 make bench      # Benchmarks
-make migrate    # Migrations DB
 make clean      # Nettoyer
+make lint       # Lancers les linters
+make install    # Installer dans GOPATH/bin
 ```
 
 

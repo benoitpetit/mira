@@ -1,6 +1,5 @@
 system:
   version: "0.3.0"
-  max_concurrent_queries: 10
 
 storage:
   path: "./mira_data"
@@ -101,7 +100,10 @@ webhooks:
 #
 # Headers sent with each webhook:
 #   Content-Type: application/json
+#   X-Webhook-ID: <event-uuid>              (legacy, use X-MIRA-Event-ID)
+#   X-Webhook-Event: <event-type>           (legacy, use X-MIRA-Event-Type)
 #   X-MIRA-Event-ID: <uuid>
 #   X-MIRA-Event-Type: <event-type>
 #   X-MIRA-Webhook-ID: <webhook-uuid>
-#   X-MIRA-Signature: sha256=... (if secret configured)
+#   X-MIRA-Signature: sha256=...            (if secret configured)
+#   X-MIRA-Signature-Version: v1            (if secret configured)
