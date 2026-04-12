@@ -92,7 +92,7 @@ type MCPConfig struct {
 func Default() *Config {
 	return &Config{
 		System: SystemConfig{
-			Version: "0.3.0",
+			Version:        "0.3.1",
 		},
 		Storage: StorageConfig{
 			Path: "./mira_data",
@@ -138,7 +138,7 @@ func Default() *Config {
 		},
 		MCP: MCPConfig{
 			Name:           "mira",
-			Version:        "0.3.0",
+			Version:        "0.3.1",
 			Transport:      "stdio",
 			TimeoutSeconds: 30,
 		},

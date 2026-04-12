@@ -510,7 +510,7 @@ Nous avons décidé de migrer vers PostgreSQL pour la v2...
 
 ```yaml
 system:
-  version: "0.3.0"
+  version: "0.3.1"
 
 storage:
   path: "./mira_data"
@@ -552,7 +552,7 @@ archive_thresholds:
 
 mcp:
   name: "mira"
-  version: "0.3.0"
+  version: "0.3.1"
   transport: "stdio"
   timeout_seconds: 30
 
@@ -752,6 +752,10 @@ make install    # Installer dans GOPATH/bin
 
 
 ## Changelog
+
+### v0.3.1 (2026-04-12)
+
+- 🚀 Nouvelle version 0.3.1
 
 ### v0.3.0 (2026-04-10)
 

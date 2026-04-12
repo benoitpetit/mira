@@ -1,5 +1,5 @@
 system:
-  version: "0.3.0"
+  version: "0.3.1"
 
 storage:
   path: "./mira_data"
@@ -54,7 +54,7 @@ extraction:
 
 mcp:
   name: "mira"
-  version: "0.3.0"
+  version: "0.3.1"
   transport: "stdio"
   timeout_seconds: 30
 
