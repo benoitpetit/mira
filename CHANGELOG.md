@@ -5,6 +5,18 @@ All notable changes to MIRA will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **Replaced archived prose library with native Go implementation**
+  - Removed `github.com/jdkato/prose` dependency (library is archived/unmaintained)
+  - Created `NativeExtractor`: Rule-based NLP/NER using regex patterns and gazetteers
+  - Full interface compliance: `FingerprintExtractor`, `Embedder`, `CausalRelationDetector`
+  - Tokenization with `tiktoken-go` for accurate token counting
+  - Entity extraction via capitalized word detection + known entity lists
+  - Causal relation detection using regex patterns (BECAUSE, TRIGGERED, CONTRADICTS, etc.)
+  - Zero breaking changes: External MCP API unchanged
+
 ## [0.3.1] - 2026-04-12
 
 ### Added
@@ -83,7 +95,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - Ports: Repository interfaces, Service interfaces
   - Adapters Layer (`internal/adapters/`): Concrete implementations
     - SQLite repository implementing all repository ports
-    - Prose-based NLP extractor with cybertron/simple embedders
+    - Native Go NLP extractor with rule-based NER and cybertron/simple embedders
     - SQLite vector store and overlap cache
     - HNSW vector store for approximate nearest neighbor search
   - Interfaces Layer (`internal/interfaces/`): External protocol adapters

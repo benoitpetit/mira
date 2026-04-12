@@ -29,7 +29,7 @@ type Application struct {
 	config           *config.Config
 	repository       *storage.SQLiteRepository
 	embedder         ports.Embedder
-	extractor        *extraction.ProseExtractor
+	extractor        ports.Extractor
 	vectorStore      ports.VectorStore
 	overlapCache     *vector.SQLiteOverlapCache
 	hnswIndex        *vector.HNSWStore
@@ -116,8 +116,8 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 		}
 	}
 
-	// 5. Initialize extractor
-	app.extractor, err = extraction.NewProseExtractor(app.embedder, extraction.ProseExtractorOptions{
+	// 5. Initialize extractor (NativeExtractor replaces archived prose library)
+	app.extractor, err = extraction.NewNativeExtractor(app.embedder, extraction.NativeExtractorOptions{
 		ModelName:       cfg.Embeddings.CurrentModel,
 		MinEntityLength: cfg.Extraction.MinEntityLength,
 	})

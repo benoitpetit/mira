@@ -669,7 +669,7 @@ curl http://localhost:9090/metrics
 │   │  INTERFACE ADAPTERS                                         │   │
 │   │  • storage: SQLiteRepository                                │   │
 │   │  • vector: HNSWStore, SQLiteVectorStore                     │   │
-│   │  • extraction: ProseExtractor, CybertronEmbedder            │   │
+│   │  • extraction: NativeExtractor, CybertronEmbedder           │   │
 │   │  • webhook, metrics                                         │   │
 │   │  ✓ Implémente les ports                                     │   │
 │   └─────────────────────────────────────────────────────────────┘   │
@@ -822,7 +822,7 @@ make install    # Installer dans GOPATH/bin
 ### Librairies Clés
 
 - [tiktoken-go](https://github.com/pkoukk/tiktoken-go) - Tokenization OpenAI
-- [prose](https://github.com/jdkato/prose) - NLP/NER en Go
+- Implémentation native Go - NLP/NER basé sur règles (remplace prose archivé)
 - [cybertron](https://github.com/nlpodyssey/cybertron) - Embeddings transformers
 - [hnsw](https://github.com/coder/hnsw) - Graphes HNSW
 - [mcp-go](https://github.com/mark3labs/mcp-go) - Protocole MCP

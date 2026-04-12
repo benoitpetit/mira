@@ -5,7 +5,6 @@ go 1.23.2
 require (
 	github.com/coder/hnsw v0.4.0
 	github.com/google/uuid v1.6.0
-	github.com/jdkato/prose/v2 v2.0.0
 	github.com/mark3labs/mcp-go v0.2.0
 	github.com/mattn/go-sqlite3 v1.14.19
 	github.com/nlpodyssey/cybertron v0.1.0
@@ -22,7 +21,6 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/charmbracelet/lipgloss v0.10.0 // indirect
 	github.com/charmbracelet/log v0.4.0 // indirect
-	github.com/deckarep/golang-set v1.7.1 // indirect
 	github.com/dgraph-io/badger/v3 v3.2103.2 // indirect
 	github.com/dgraph-io/ristretto v0.1.0 // indirect
 	github.com/dlclark/regexp2 v1.10.0 // indirect
@@ -40,7 +38,6 @@ require (
 	github.com/mattn/go-colorable v0.1.12 // indirect
 	github.com/mattn/go-isatty v0.0.19 // indirect
 	github.com/mattn/go-runewidth v0.0.15 // indirect
-	github.com/mingrammer/commonregex v1.0.1 // indirect
 	github.com/muesli/reflow v0.3.0 // indirect
 	github.com/muesli/termenv v0.15.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
@@ -60,7 +57,5 @@ require (
 	golang.org/x/sync v0.16.0 // indirect
 	golang.org/x/sys v0.35.0 // indirect
 	golang.org/x/text v0.28.0 // indirect
-	gonum.org/v1/gonum v0.12.0 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
-	gopkg.in/neurosnap/sentences.v1 v1.0.6 // indirect
 )
