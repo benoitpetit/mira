@@ -339,28 +339,31 @@
         }
         
         function generateSampleData() {
-            // Generate realistic sample benchmark data
+            // Generate realistic sample benchmark data (based on actual HNSW benchmarks)
             return {
                 Benchmarks: [
-                    { Name: "BenchmarkHNSWAdd", NsPerOp: 1250, AllocedBytesPerOp: 512, AllocsPerOp: 8 },
-                    { Name: "BenchmarkHNSWSearch", NsPerOp: 45600, AllocedBytesPerOp: 2048, AllocsPerOp: 15 },
-                    { Name: "BenchmarkHNSWSearchScalability/size_100", NsPerOp: 12300, AllocedBytesPerOp: 1024, AllocsPerOp: 10 },
-                    { Name: "BenchmarkHNSWSearchScalability/size_1000", NsPerOp: 45600, AllocedBytesPerOp: 2048, AllocsPerOp: 15 },
-                    { Name: "BenchmarkHNSWSearchScalability/size_10000", NsPerOp: 189000, AllocedBytesPerOp: 4096, AllocsPerOp: 25 },
-                    { Name: "BenchmarkHNSWConcurrentAccess/parallel_1", NsPerOp: 45600, AllocedBytesPerOp: 2048, AllocsPerOp: 15 },
-                    { Name: "BenchmarkHNSWConcurrentAccess/parallel_4", NsPerOp: 12300, AllocedBytesPerOp: 2048, AllocsPerOp: 15 },
-                    { Name: "BenchmarkHNSWConcurrentAccess/parallel_8", NsPerOp: 6800, AllocedBytesPerOp: 2048, AllocsPerOp: 15 },
-                    { Name: "BenchmarkHNSWBuildTime", NsPerOp: 12500000, AllocedBytesPerOp: 1048576, AllocsPerOp: 100 }
+                    { Name: "BenchmarkHNSWAdd-12", NsPerOp: 250000, AllocedBytesPerOp: 18000, AllocsPerOp: 220 },
+                    { Name: "BenchmarkHNSWSearch-12", NsPerOp: 85000, AllocedBytesPerOp: 24000, AllocsPerOp: 270 },
+                    { Name: "BenchmarkHNSWSearchScalability/size_100-12", NsPerOp: 60000, AllocedBytesPerOp: 18000, AllocsPerOp: 220 },
+                    { Name: "BenchmarkHNSWSearchScalability/size_500-12", NsPerOp: 75000, AllocedBytesPerOp: 21000, AllocsPerOp: 250 },
+                    { Name: "BenchmarkHNSWSearchScalability/size_1000-12", NsPerOp: 90000, AllocedBytesPerOp: 25000, AllocsPerOp: 280 },
+                    { Name: "BenchmarkHNSWSearchScalability/size_5000-12", NsPerOp: 95000, AllocedBytesPerOp: 29000, AllocsPerOp: 340 },
+                    { Name: "BenchmarkHNSWSearchScalability/size_10000-12", NsPerOp: 115000, AllocedBytesPerOp: 31000, AllocsPerOp: 360 },
+                    { Name: "BenchmarkHNSWConcurrentAccess-12", NsPerOp: 100000, AllocedBytesPerOp: 26000, AllocsPerOp: 290 },
+                    { Name: "BenchmarkHNSWBuildTime-12", NsPerOp: 10000, AllocedBytesPerOp: 500, AllocsPerOp: 12 }
                 ]
             };
         }
         
         function processBenchmarkData(data) {
-            const benchmarks = data.Benchmarks || data.benchmarks || [];
+            let benchmarks = data.Benchmarks || data.benchmarks || [];
             if (benchmarks.length === 0) {
                 alert('No benchmark data found');
                 return;
             }
+            
+            // Deduplicate: if same benchmark appears multiple times (from -count=N), average the values
+            benchmarks = deduplicateBenchmarks(benchmarks);
             
             document.getElementById('uploadSection').classList.add('hidden');
             document.getElementById('dashboard').classList.remove('hidden');
@@ -376,6 +379,37 @@
             
             // Populate table
             populateTable(benchmarks);
+        }
+        
+        function deduplicateBenchmarks(benchmarks) {
+            const groups = {};
+            
+            // Group by benchmark name (remove GOMAXPROCS suffix for grouping)
+            benchmarks.forEach(b => {
+                const baseName = b.Name.replace(/-\d+$/, ''); // Remove -12 suffix
+                if (!groups[baseName]) {
+                    groups[baseName] = [];
+                }
+                groups[baseName].push(b);
+            });
+            
+            // Average each group
+            return Object.keys(groups).map(name => {
+                const group = groups[name];
+                if (group.length === 1) {
+                    return { ...group[0], Name: name }; // Use base name
+                }
+                
+                // Calculate averages
+                const avg = (arr) => Math.round(arr.reduce((a, b) => a + b, 0) / arr.length);
+                
+                return {
+                    Name: name,
+                    NsPerOp: avg(group.map(b => b.NsPerOp || b.ns_per_op || 0)),
+                    AllocedBytesPerOp: avg(group.map(b => b.AllocedBytesPerOp || b.alloced_bytes_per_op || 0)),
+                    AllocsPerOp: avg(group.map(b => b.AllocsPerOp || b.allocs_per_op || 0))
+                };
+            });
         }
         
         function updateStats(benchmarks) {

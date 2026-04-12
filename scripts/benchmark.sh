@@ -15,42 +15,32 @@ echo "Running HNSW Vector Search Benchmarks..."
 echo "Note: This may take a few minutes for accurate results"
 echo ""
 
-# Run basic HNSW benchmarks
-echo "1. Basic HNSW Operations (Add)"
-go test ./internal/adapters/vector/... -bench=^BenchmarkHNSWAdd$ -benchtime=500ms -count=3
-
+# Run all benchmarks with single pass, longer benchtime for stability
+echo "Running all benchmarks (single pass, 1s each)..."
 echo ""
-echo "2. Search Performance"
-go test ./internal/adapters/vector/... -bench=^BenchmarkHNSWSearch$ -benchtime=500ms -count=3
 
-echo ""
-echo "3. Scalability Tests (various dataset sizes)"
-echo "   - Size 100:"
-go test ./internal/adapters/vector/... -bench=BenchmarkHNSWSearchScalability/size_100$ -benchtime=500ms -count=2
-echo "   - Size 1000:"
-go test ./internal/adapters/vector/... -bench=BenchmarkHNSWSearchScalability/size_1000$ -benchtime=500ms -count=2
-echo "   - Size 10000:"
-go test ./internal/adapters/vector/... -bench=BenchmarkHNSWSearchScalability/size_10000$ -benchtime=1s -count=2
+# Capture output to file while displaying it
+OUTPUT_FILE=$(mktemp)
+trap "rm -f $OUTPUT_FILE" EXIT
 
-echo ""
-echo "4. Concurrent Access (parallel searches)"
-go test ./internal/adapters/vector/... -bench=^BenchmarkHNSWConcurrentAccess$ -benchtime=1s -count=2
+go test ./internal/adapters/vector/... -bench=. -benchmem -benchtime=1s -run=^$ 2>&1 | \
+    tee "$OUTPUT_FILE"
 
-echo ""
-echo "5. Build Time (index construction)"
-go test ./internal/adapters/vector/... -bench=^BenchmarkHNSWBuildTime$ -benchtime=500ms -count=3
-
-echo ""
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
 echo "Benchmarks complete!"
 echo ""
-echo "To save results for visualization:"
-echo "  go test ./internal/adapters/vector/... -bench=. -benchmem | go run scripts/benchmark_to_json.go > benchmark_results.json"
-echo ""
-echo "To view visualizations:"
-echo "  Open scripts/benchmark.html in your browser and load benchmark_results.json"
-echo ""
-echo "Or run benchmarks directly with automatic conversion:"
-echo "  ./scripts/benchmark.sh 2>&1 | go run scripts/benchmark_to_json.go > results.json"
+
+# Convert to JSON for visualization
+cat "$OUTPUT_FILE" | go run scripts/benchmark_to_json.go > benchmark_results.json 2>/dev/null || true
+
+if [ -f benchmark_results.json ] && [ -s benchmark_results.json ]; then
+    echo "✓ Results saved to: benchmark_results.json"
+    echo "  Load this file in scripts/benchmark.html to visualize"
+else
+    echo "To save results for visualization, run:"
+    echo "  go test ./internal/adapters/vector/... -bench=. -benchmem -benchtime=1s -run=^$ 2>&1 | \\"
+    echo "    go run scripts/benchmark_to_json.go > benchmark_results.json"
+fi
+
 echo "═══════════════════════════════════════════════════════════════"
