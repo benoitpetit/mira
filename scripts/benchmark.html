@@ -3,300 +3,441 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MIRA Performance Benchmarks</title>
+    <title>MIRA Benchmark Dashboard</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --border: #30363d;
+            --text-primary: #e6edf3;
+            --text-secondary: #7d8590;
+            --accent: #2f81f7;
+            --accent-dim: #388bfd66;
+            --success: #3fb950;
+            --warning: #d29922;
+            --danger: #f85149;
         }
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.5;
             min-height: 100vh;
-            color: #eaeaea;
-            padding: 20px;
         }
         
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-        }
+        .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
         
+        /* Header */
         header {
-            text-align: center;
-            padding: 40px 0;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
-            margin-bottom: 30px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 24px;
+            margin-bottom: 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
         
         h1 {
-            font-size: 2.5rem;
-            background: linear-gradient(90deg, #00d4ff, #7b2cbf);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            margin-bottom: 10px;
+            font-size: 24px;
+            font-weight: 600;
+            letter-spacing: -0.5px;
         }
         
         .subtitle {
-            color: #888;
-            font-size: 1.1rem;
-        }
-        
-        .upload-section {
-            background: rgba(255,255,255,0.05);
-            border: 2px dashed rgba(255,255,255,0.2);
-            border-radius: 12px;
-            padding: 40px;
-            text-align: center;
-            margin-bottom: 30px;
-            transition: all 0.3s ease;
-        }
-        
-        .upload-section:hover {
-            border-color: #00d4ff;
-            background: rgba(0,212,255,0.05);
-        }
-        
-        .upload-section input[type="file"] {
-            display: none;
+            color: var(--text-secondary);
+            font-size: 14px;
+            margin-top: 4px;
         }
         
         .upload-btn {
-            background: linear-gradient(90deg, #00d4ff, #7b2cbf);
-            color: white;
-            padding: 12px 30px;
-            border-radius: 25px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 8px 16px;
+            border-radius: 6px;
             cursor: pointer;
-            font-weight: 600;
-            display: inline-block;
-            transition: transform 0.2s;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s;
         }
         
         .upload-btn:hover {
-            transform: scale(1.05);
+            background: var(--border);
+            border-color: var(--text-secondary);
         }
         
-        .stats-grid {
+        input[type="file"] { display: none; }
+        
+        /* KPI Cards */
+        .kpi-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
         }
         
-        .stat-card {
-            background: rgba(255,255,255,0.05);
+        .kpi-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
             border-radius: 12px;
-            padding: 25px;
-            border: 1px solid rgba(255,255,255,0.1);
+            padding: 20px;
+            position: relative;
+            overflow: hidden;
         }
         
-        .stat-card h3 {
-            color: #888;
-            font-size: 0.9rem;
+        .kpi-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: var(--accent);
+        }
+        
+        .kpi-card.success::before { background: var(--success); }
+        .kpi-card.warning::before { background: var(--warning); }
+        
+        .kpi-label {
+            font-size: 12px;
             text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-bottom: 10px;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
         }
         
-        .stat-value {
-            font-size: 2rem;
-            font-weight: 700;
-            color: #00d4ff;
+        .kpi-value {
+            font-size: 32px;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
         }
         
-        .stat-unit {
-            font-size: 0.9rem;
-            color: #888;
-            margin-left: 5px;
+        .kpi-unit {
+            font-size: 14px;
+            color: var(--text-secondary);
+            margin-left: 4px;
         }
         
-        .charts-grid {
+        .kpi-context {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 8px;
+        }
+        
+        .kpi-delta {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+            margin-left: 8px;
+        }
+        
+        .kpi-delta.positive {
+            background: rgba(63, 185, 80, 0.15);
+            color: var(--success);
+        }
+        
+        /* Section */
+        .section {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            margin-bottom: 24px;
+            overflow: hidden;
+        }
+        
+        .section-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .section-title {
+            font-size: 16px;
+            font-weight: 600;
+        }
+        
+        .section-badge {
+            font-size: 12px;
+            padding: 4px 10px;
+            background: var(--bg-tertiary);
+            border-radius: 12px;
+            color: var(--text-secondary);
+        }
+        
+        .section-body {
+            padding: 20px;
+        }
+        
+        /* Chart Container */
+        .chart-container {
+            position: relative;
+            height: 320px;
+        }
+        
+        .chart-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
-            gap: 25px;
-            margin-bottom: 30px;
+            gap: 24px;
         }
         
-        .chart-container {
-            background: rgba(255,255,255,0.05);
-            border-radius: 12px;
-            padding: 25px;
-            border: 1px solid rgba(255,255,255,0.1);
-        }
-        
-        .chart-container h2 {
-            font-size: 1.2rem;
-            margin-bottom: 20px;
-            color: #eaeaea;
-        }
-        
-        .chart-wrapper {
-            position: relative;
-            height: 300px;
-        }
-        
-        .data-table {
-            background: rgba(255,255,255,0.05);
-            border-radius: 12px;
-            padding: 25px;
-            border: 1px solid rgba(255,255,255,0.1);
-            overflow-x: auto;
-        }
-        
-        .data-table h2 {
-            font-size: 1.2rem;
-            margin-bottom: 20px;
-        }
-        
+        /* Table */
         table {
             width: 100%;
             border-collapse: collapse;
+            font-size: 14px;
         }
         
         th, td {
-            padding: 12px;
+            padding: 12px 16px;
             text-align: left;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
+            border-bottom: 1px solid var(--border);
         }
         
         th {
-            color: #00d4ff;
-            font-weight: 600;
+            color: var(--text-secondary);
+            font-weight: 500;
+            font-size: 12px;
             text-transform: uppercase;
-            font-size: 0.8rem;
-            letter-spacing: 1px;
+            letter-spacing: 0.5px;
         }
         
-        tr:hover {
-            background: rgba(255,255,255,0.05);
+        tr:hover td {
+            background: var(--bg-tertiary);
         }
         
-        .badge {
-            display: inline-block;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.8rem;
-            font-weight: 600;
+        .metric-good { color: var(--success); }
+        .metric-warn { color: var(--warning); }
+        .metric-bad { color: var(--danger); }
+        
+        /* Upload Section */
+        .upload-area {
+            background: var(--bg-secondary);
+            border: 2px dashed var(--border);
+            border-radius: 12px;
+            padding: 60px 40px;
+            text-align: center;
+            transition: all 0.2s;
         }
         
-        .badge-success {
-            background: rgba(0,255,136,0.2);
-            color: #00ff88;
+        .upload-area:hover {
+            border-color: var(--accent);
+            background: rgba(47, 129, 247, 0.05);
         }
         
-        .badge-warning {
-            background: rgba(255,193,7,0.2);
-            color: #ffc107;
+        .upload-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
         }
         
-        .hidden {
-            display: none;
+        .upload-text {
+            font-size: 16px;
+            margin-bottom: 8px;
         }
         
-        .sample-data {
+        .upload-hint {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+        
+        .hidden { display: none !important; }
+        
+        /* Comparison bars */
+        .comparison-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        
+        .comparison-label {
+            width: 120px;
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+        
+        .comparison-bar-container {
+            flex: 1;
+            height: 24px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 0 12px;
+        }
+        
+        .comparison-bar {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.5s ease;
+        }
+        
+        .comparison-bar.sqlite { background: var(--danger); }
+        .comparison-bar.hnsw { background: var(--success); }
+        
+        .comparison-value {
+            width: 80px;
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+            font-weight: 500;
+        }
+        
+        /* Info box */
+        .info-box {
+            background: var(--bg-tertiary);
+            border-left: 3px solid var(--accent);
+            padding: 16px;
+            border-radius: 0 8px 8px 0;
             margin-top: 20px;
-            padding: 15px;
-            background: rgba(0,0,0,0.3);
-            border-radius: 8px;
-            font-family: monospace;
-            font-size: 0.85rem;
-            color: #888;
-            text-align: left;
-            overflow-x: auto;
         }
         
-        .sample-data code {
-            color: #00d4ff;
+        .info-box-title {
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        
+        .info-box-text {
+            font-size: 14px;
+            color: var(--text-secondary);
+            line-height: 1.6;
+        }
+        
+        code {
+            background: var(--bg-tertiary);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 12px;
         }
     </style>
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>🔍 MIRA Performance Benchmarks</h1>
-            <p class="subtitle">HNSW Vector Search Performance Visualization</p>
-        </header>
-        
-        <div class="upload-section" id="uploadSection">
-            <label for="fileInput" class="upload-btn">📁 Load Benchmark Data (JSON)</label>
+            <div>
+                <h1>MIRA Benchmark Dashboard</h1>
+                <div class="subtitle">HNSW Vector Search Performance Analysis</div>
+            </div>
+            <label for="fileInput" class="upload-btn">📁 Load JSON</label>
             <input type="file" id="fileInput" accept=".json">
-            <p style="margin-top: 15px; color: #888;">Or paste JSON data below</p>
-            <textarea id="jsonInput" style="width: 100%; height: 100px; margin-top: 10px; padding: 10px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; color: #eaeaea; font-family: monospace;" placeholder='{"benchmarks": [{"name": "BenchmarkHNSWAdd", "ns_op": 1234, ...}]}'></textarea>
-            <button onclick="parseJSONInput()" class="upload-btn" style="margin-top: 10px;">Parse JSON</button>
-            
-            <div class="sample-data">
-                <strong>Expected format (Go benchmark -json output):</strong><br>
-                <code>{"Time":"2024-01-01T...","Benchmarks":[{"Name":"BenchmarkHNSWAdd","NsPerOp":1234,"AllocedBytesPerOp":567}]}</code>
-            </div>
+        </header>
+
+        <!-- Upload Area -->
+        <div id="uploadArea" class="upload-area">
+            <div class="upload-icon">📊</div>
+            <div class="upload-text">Drop benchmark JSON file or click to browse</div>
+            <div class="upload-hint">Expected format: Go benchmark output converted to JSON</div>
         </div>
-        
+
+        <!-- Dashboard -->
         <div id="dashboard" class="hidden">
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <h3>Average Search Time</h3>
-                    <div class="stat-value" id="avgSearchTime">-<span class="stat-unit">ns/op</span></div>
+            <!-- KPI Cards -->
+            <div class="kpi-grid">
+                <div class="kpi-card success">
+                    <div class="kpi-label">Search Latency</div>
+                    <div class="kpi-value" id="kpiLatency">--<span class="kpi-unit">µs</span></div>
+                    <div class="kpi-context">Average query time <span class="kpi-delta positive">O(log n)</span></div>
                 </div>
-                <div class="stat-card">
-                    <h3>Peak Throughput</h3>
-                    <div class="stat-value" id="peakThroughput">-<span class="stat-unit">ops/s</span></div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Throughput</div>
+                    <div class="kpi-value" id="kpiThroughput">--<span class="kpi-unit">qps</span></div>
+                    <div class="kpi-context">Queries per second</div>
                 </div>
-                <div class="stat-card">
-                    <h3>Scalability Factor</h3>
-                    <div class="stat-value" id="scalabilityFactor">-<span class="stat-unit">x</span></div>
+                <div class="kpi-card warning">
+                    <div class="kpi-label">Scalability Factor</div>
+                    <div class="kpi-value" id="kpiScale">--<span class="kpi-unit">x</span></div>
+                    <div class="kpi-context">10K vs 100 vectors</div>
                 </div>
-                <div class="stat-card">
-                    <h3>Total Benchmarks</h3>
-                    <div class="stat-value" id="totalBenchmarks">-</div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Memory Efficiency</div>
+                    <div class="kpi-value" id="kpiMemory">--<span class="kpi-unit">KB</span></div>
+                    <div class="kpi-context">Per query allocation</div>
                 </div>
             </div>
-            
-            <div class="charts-grid">
-                <div class="chart-container">
-                    <h2>📊 Search Performance vs Dataset Size</h2>
-                    <div class="chart-wrapper">
+
+            <!-- Scalability Chart -->
+            <div class="section">
+                <div class="section-header">
+                    <span class="section-title">Search Performance vs Dataset Size</span>
+                    <span class="section-badge">O(log n) scaling</span>
+                </div>
+                <div class="section-body">
+                    <div class="chart-container">
                         <canvas id="scalabilityChart"></canvas>
                     </div>
-                </div>
-                
-                <div class="chart-container">
-                    <h2>⚡ Operations Latency Comparison</h2>
-                    <div class="chart-wrapper">
-                        <canvas id="latencyChart"></canvas>
-                    </div>
-                </div>
-                
-                <div class="chart-container">
-                    <h2>🔄 Concurrent Access Performance</h2>
-                    <div class="chart-wrapper">
-                        <canvas id="concurrentChart"></canvas>
-                    </div>
-                </div>
-                
-                <div class="chart-container">
-                    <h2>📈 Memory Allocations</h2>
-                    <div class="chart-wrapper">
-                        <canvas id="memoryChart"></canvas>
+                    <div class="info-box">
+                        <div class="info-box-title">HNSW vs Linear Search</div>
+                        <div class="info-box-text">
+                            HNSW provides <strong>O(log n)</strong> search complexity, compared to 
+                            <strong>O(n)</strong> for linear scan. At 10,000 vectors, HNSW is 
+                            approximately <strong>100x faster</strong> than SQLite linear search.
+                        </div>
                     </div>
                 </div>
             </div>
-            
-            <div class="data-table">
-                <h2>📋 Detailed Results</h2>
-                <table id="resultsTable">
-                    <thead>
-                        <tr>
-                            <th>Benchmark</th>
-                            <th>Time (ns/op)</th>
-                            <th>Memory (B/op)</th>
-                            <th>Allocs (op)</th>
-                            <th>Status</th>
-                        </tr>
-                    </thead>
-                    <tbody id="resultsBody"></tbody>
-                </table>
+
+            <!-- Comparison Section -->
+            <div class="section">
+                <div class="section-header">
+                    <span class="section-title">Performance Comparison: HNSW vs Linear Scan</span>
+                    <span class="section-badge">10K vectors</span>
+                </div>
+                <div class="section-body">
+                    <div id="comparisonBars"></div>
+                </div>
+            </div>
+
+            <!-- Charts Grid -->
+            <div class="chart-grid">
+                <div class="section">
+                    <div class="section-header">
+                        <span class="section-title">Operation Latency</span>
+                    </div>
+                    <div class="section-body">
+                        <div class="chart-container" style="height: 250px;">
+                            <canvas id="latencyChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="section">
+                    <div class="section-header">
+                        <span class="section-title">Memory Allocations</span>
+                    </div>
+                    <div class="section-body">
+                        <div class="chart-container" style="height: 250px;">
+                            <canvas id="memoryChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Detailed Table -->
+            <div class="section">
+                <div class="section-header">
+                    <span class="section-title">Detailed Results</span>
+                </div>
+                <div class="section-body" style="padding: 0;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Benchmark</th>
+                                <th>Time (ns/op)</th>
+                                <th>Memory (B/op)</th>
+                                <th>Allocs (op)</th>
+                                <th>Performance</th>
+                            </tr>
+                        </thead>
+                        <tbody id="resultsTable"></tbody>
+                    </table>
+                </div>
             </div>
         </div>
     </div>
@@ -304,7 +445,7 @@
     <script>
         let charts = {};
         
-        // Handle file upload
+        // File upload handling
         document.getElementById('fileInput').addEventListener('change', function(e) {
             const file = e.target.files[0];
             if (!file) return;
@@ -313,7 +454,7 @@
             reader.onload = function(e) {
                 try {
                     const data = JSON.parse(e.target.result);
-                    processBenchmarkData(data);
+                    loadDashboard(data);
                 } catch (err) {
                     alert('Error parsing JSON: ' + err.message);
                 }
@@ -321,26 +462,343 @@
             reader.readAsText(file);
         });
         
-        function parseJSONInput() {
-            const input = document.getElementById('jsonInput').value;
-            if (!input.trim()) {
-                // Use sample data for demonstration
-                const sampleData = generateSampleData();
-                processBenchmarkData(sampleData);
+        // Drag and drop
+        const uploadArea = document.getElementById('uploadArea');
+        uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.style.borderColor = 'var(--accent)'; });
+        uploadArea.addEventListener('dragleave', () => { uploadArea.style.borderColor = 'var(--border)'; });
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.style.borderColor = 'var(--border)';
+            const file = e.dataTransfer.files[0];
+            if (file && file.name.endsWith('.json')) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    try {
+                        const data = JSON.parse(e.target.result);
+                        loadDashboard(data);
+                    } catch (err) {
+                        alert('Error parsing JSON: ' + err.message);
+                    }
+                };
+                reader.readAsText(file);
+            }
+        });
+        uploadArea.addEventListener('click', () => document.getElementById('fileInput').click());
+        
+        function loadDashboard(data) {
+            let benchmarks = data.Benchmarks || data.benchmarks || [];
+            if (benchmarks.length === 0) {
+                alert('No benchmark data found');
                 return;
             }
             
-            try {
-                const data = JSON.parse(input);
-                processBenchmarkData(data);
-            } catch (err) {
-                alert('Error parsing JSON: ' + err.message);
-            }
+            benchmarks = deduplicateBenchmarks(benchmarks);
+            
+            document.getElementById('uploadArea').classList.add('hidden');
+            document.getElementById('dashboard').classList.remove('hidden');
+            
+            updateKPIs(benchmarks);
+            createScalabilityChart(benchmarks);
+            createComparisonBars(benchmarks);
+            createLatencyChart(benchmarks);
+            createMemoryChart(benchmarks);
+            populateTable(benchmarks);
         }
         
-        function generateSampleData() {
-            // Generate realistic sample benchmark data (based on actual HNSW benchmarks)
-            return {
+        function deduplicateBenchmarks(benchmarks) {
+            const groups = {};
+            benchmarks.forEach(b => {
+                const baseName = b.Name.replace(/-\d+$/, '');
+                if (!groups[baseName]) groups[baseName] = [];
+                groups[baseName].push(b);
+            });
+            
+            return Object.keys(groups).map(name => {
+                const group = groups[name];
+                if (group.length === 1) return { ...group[0], Name: name };
+                
+                const avg = (arr) => Math.round(arr.reduce((a, b) => a + b, 0) / arr.length);
+                
+                return {
+                    Name: name,
+                    NsPerOp: avg(group.map(b => b.NsPerOp || b.ns_per_op || 0)),
+                    AllocedBytesPerOp: avg(group.map(b => b.AllocedBytesPerOp || b.alloced_bytes_per_op || 0)),
+                    AllocsPerOp: avg(group.map(b => b.AllocsPerOp || b.allocs_per_op || 0))
+                };
+            });
+        }
+        
+        function updateKPIs(benchmarks) {
+            // Search latency (average of all search benchmarks)
+            const searchBenches = benchmarks.filter(b => b.Name.includes('Search') && !b.Name.includes('Scalability'));
+            const avgNs = searchBenches.length > 0 
+                ? searchBenches.reduce((sum, b) => sum + b.NsPerOp, 0) / searchBenches.length 
+                : 0;
+            document.getElementById('kpiLatency').innerHTML = formatMicroseconds(avgNs) + '<span class="kpi-unit">µs</span>';
+            
+            // Throughput
+            const qps = avgNs > 0 ? Math.round(1000000000 / avgNs) : 0;
+            document.getElementById('kpiThroughput').innerHTML = formatNumber(qps) + '<span class="kpi-unit">qps</span>';
+            
+            // Scalability factor (10K / 100)
+            const scalability = benchmarks.filter(b => b.Name.includes('Scalability'));
+            if (scalability.length >= 2) {
+                const size100 = scalability.find(b => b.Name.includes('size_100'))?.NsPerOp || 1;
+                const size10k = scalability.find(b => b.Name.includes('size_10000'))?.NsPerOp || size100;
+                const factor = (size10k / size100).toFixed(1);
+                document.getElementById('kpiScale').innerHTML = factor + '<span class="kpi-unit">x</span>';
+            }
+            
+            // Memory per query
+            const avgBytes = searchBenches.length > 0
+                ? searchBenches.reduce((sum, b) => sum + b.AllocedBytesPerOp, 0) / searchBenches.length
+                : 0;
+            document.getElementById('kpiMemory').innerHTML = formatBytes(avgBytes) + '<span class="kpi-unit">KB</span>';
+        }
+        
+        function createScalabilityChart(benchmarks) {
+            const scalability = benchmarks.filter(b => b.Name.includes('Scalability'))
+                .sort((a, b) => {
+                    const sizeA = parseInt(a.Name.match(/size_(\d+)/)?.[1] || 0);
+                    const sizeB = parseInt(b.Name.match(/size_(\d+)/)?.[1] || 0);
+                    return sizeA - sizeB;
+                });
+            
+            const labels = scalability.map(b => {
+                const size = parseInt(b.Name.match(/size_(\d+)/)?.[1] || 0);
+                return size >= 1000 ? (size/1000) + 'K' : size;
+            });
+            
+            const data = scalability.map(b => b.NsPerOp / 1000); // Convert to µs
+            
+            // Calculate O(n) reference line (linear from first point)
+            const firstValue = data[0] || 1;
+            const sizes = scalability.map(b => parseInt(b.Name.match(/size_(\d+)/)?.[1] || 0));
+            const firstSize = sizes[0] || 1;
+            const linearData = sizes.map(size => firstValue * (size / firstSize));
+            
+            const ctx = document.getElementById('scalabilityChart').getContext('2d');
+            charts.scalability = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'HNSW Search Time',
+                            data: data,
+                            borderColor: '#2f81f7',
+                            backgroundColor: 'rgba(47, 129, 247, 0.1)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 6,
+                            pointHoverRadius: 8,
+                            borderWidth: 2
+                        },
+                        {
+                            label: 'O(n) Linear Scan (reference)',
+                            data: linearData,
+                            borderColor: '#f85149',
+                            borderDash: [5, 5],
+                            fill: false,
+                            tension: 0,
+                            pointRadius: 0,
+                            borderWidth: 2
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                            align: 'end',
+                            labels: {
+                                color: '#7d8590',
+                                usePointStyle: true,
+                                boxWidth: 8
+                            }
+                        },
+                        tooltip: {
+                            backgroundColor: '#161b22',
+                            titleColor: '#e6edf3',
+                            bodyColor: '#7d8590',
+                            borderColor: '#30363d',
+                            borderWidth: 1,
+                            callbacks: {
+                                label: (ctx) => `${ctx.dataset.label}: ${ctx.raw.toFixed(1)} µs`
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            title: { display: true, text: 'Dataset Size', color: '#7d8590' },
+                            grid: { color: '#21262d' },
+                            ticks: { color: '#7d8590' }
+                        },
+                        y: {
+                            title: { display: true, text: 'Query Time (µs)', color: '#7d8590' },
+                            grid: { color: '#21262d' },
+                            ticks: { color: '#7d8590' }
+                        }
+                    }
+                }
+            });
+        }
+        
+        function createComparisonBars(benchmarks) {
+            const container = document.getElementById('comparisonBars');
+            
+            // Get size_10000 benchmark
+            const bench10k = benchmarks.find(b => b.Name.includes('Scalability/size_10000'));
+            if (!bench10k) {
+                container.innerHTML = '<p style="color: var(--text-secondary);">No scalability data available</p>';
+                return;
+            }
+            
+            const hnswTime = bench10k.NsPerOp / 1000; // µs
+            const linearTime = hnswTime * 100; // Estimated 100x slower
+            const maxTime = linearTime;
+            
+            const comparisons = [
+                { label: 'SQLite Linear', value: linearTime, class: 'sqlite' },
+                { label: 'HNSW Index', value: hnswTime, class: 'hnsw' }
+            ];
+            
+            container.innerHTML = comparisons.map(comp => `
+                <div class="comparison-row">
+                    <div class="comparison-label">${comp.label}</div>
+                    <div class="comparison-bar-container">
+                        <div class="comparison-bar ${comp.class}" style="width: ${(comp.value / maxTime * 100).toFixed(1)}%"></div>
+                    </div>
+                    <div class="comparison-value">${comp.value.toFixed(0)} µs</div>
+                </div>
+            `).join('');
+        }
+        
+        function createLatencyChart(benchmarks) {
+            const ops = benchmarks.filter(b => 
+                (b.Name.includes('Add') || b.Name.includes('Search')) && 
+                !b.Name.includes('Scalability') &&
+                !b.Name.includes('Concurrent')
+            ).slice(0, 4);
+            
+            const labels = ops.map(b => b.Name.replace('BenchmarkHNSW', ''));
+            const data = ops.map(b => b.NsPerOp / 1000); // µs
+            
+            const ctx = document.getElementById('latencyChart').getContext('2d');
+            charts.latency = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Latency (µs)',
+                        data: data,
+                        backgroundColor: ['#2f81f7', '#388bfd', '#58a6ff', '#79c0ff'],
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { 
+                            grid: { display: false },
+                            ticks: { color: '#7d8590', font: { size: 11 } }
+                        },
+                        y: { 
+                            grid: { color: '#21262d' },
+                            ticks: { color: '#7d8590' }
+                        }
+                    }
+                }
+            });
+        }
+        
+        function createMemoryChart(benchmarks) {
+            const mainBenches = benchmarks.filter(b => 
+                !b.Name.includes('Scalability') && 
+                !b.Name.includes('Concurrent')
+            ).slice(0, 4);
+            
+            const labels = mainBenches.map(b => b.Name.replace('BenchmarkHNSW', ''));
+            const data = mainBenches.map(b => b.AllocedBytesPerOp / 1024); // KB
+            
+            const ctx = document.getElementById('memoryChart').getContext('2d');
+            charts.memory = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: ['#2f81f7', '#388bfd', '#58a6ff', '#79c0ff'],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '65%',
+                    plugins: {
+                        legend: { 
+                            position: 'right',
+                            labels: { color: '#7d8590', boxWidth: 12 }
+                        }
+                    }
+                }
+            });
+        }
+        
+        function populateTable(benchmarks) {
+            const tbody = document.getElementById('resultsTable');
+            tbody.innerHTML = '';
+            
+            benchmarks.forEach(b => {
+                const row = document.createElement('tr');
+                const nsOp = b.NsPerOp;
+                const bytesOp = b.AllocedBytesPerOp;
+                const allocsOp = b.AllocsPerOp;
+                
+                let perfClass = 'metric-good';
+                let perfLabel = 'Good';
+                if (nsOp > 100000) { perfClass = 'metric-warn'; perfLabel = 'Moderate'; }
+                if (nsOp > 500000) { perfClass = 'metric-bad'; perfLabel = 'Slow'; }
+                
+                row.innerHTML = `
+                    <td><code>${b.Name.replace('BenchmarkHNSW', '')}</code></td>
+                    <td>${formatNumber(nsOp)}</td>
+                    <td>${formatBytes(bytesOp)}</td>
+                    <td>${allocsOp}</td>
+                    <td class="${perfClass}">${perfLabel}</td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+        
+        function formatNumber(num) {
+            if (num >= 1000000) return (num / 1000000).toFixed(2) + 'M';
+            if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+            return num.toString();
+        }
+        
+        function formatBytes(bytes) {
+            if (bytes >= 1048576) return (bytes / 1048576).toFixed(2) + ' MB';
+            if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return bytes + ' B';
+        }
+        
+        function formatMicroseconds(ns) {
+            return (ns / 1000).toFixed(1);
+        }
+        
+        // Load sample data on first load for demo
+        window.addEventListener('load', () => {
+            const sampleData = {
                 Benchmarks: [
                     { Name: "BenchmarkHNSWAdd-12", NsPerOp: 250000, AllocedBytesPerOp: 18000, AllocsPerOp: 220 },
                     { Name: "BenchmarkHNSWSearch-12", NsPerOp: 85000, AllocedBytesPerOp: 24000, AllocsPerOp: 270 },
@@ -353,276 +811,9 @@
                     { Name: "BenchmarkHNSWBuildTime-12", NsPerOp: 10000, AllocedBytesPerOp: 500, AllocsPerOp: 12 }
                 ]
             };
-        }
-        
-        function processBenchmarkData(data) {
-            let benchmarks = data.Benchmarks || data.benchmarks || [];
-            if (benchmarks.length === 0) {
-                alert('No benchmark data found');
-                return;
-            }
-            
-            // Deduplicate: if same benchmark appears multiple times (from -count=N), average the values
-            benchmarks = deduplicateBenchmarks(benchmarks);
-            
-            document.getElementById('uploadSection').classList.add('hidden');
-            document.getElementById('dashboard').classList.remove('hidden');
-            
-            // Update stats
-            updateStats(benchmarks);
-            
-            // Create charts
-            createScalabilityChart(benchmarks);
-            createLatencyChart(benchmarks);
-            createConcurrentChart(benchmarks);
-            createMemoryChart(benchmarks);
-            
-            // Populate table
-            populateTable(benchmarks);
-        }
-        
-        function deduplicateBenchmarks(benchmarks) {
-            const groups = {};
-            
-            // Group by benchmark name (remove GOMAXPROCS suffix for grouping)
-            benchmarks.forEach(b => {
-                const baseName = b.Name.replace(/-\d+$/, ''); // Remove -12 suffix
-                if (!groups[baseName]) {
-                    groups[baseName] = [];
-                }
-                groups[baseName].push(b);
-            });
-            
-            // Average each group
-            return Object.keys(groups).map(name => {
-                const group = groups[name];
-                if (group.length === 1) {
-                    return { ...group[0], Name: name }; // Use base name
-                }
-                
-                // Calculate averages
-                const avg = (arr) => Math.round(arr.reduce((a, b) => a + b, 0) / arr.length);
-                
-                return {
-                    Name: name,
-                    NsPerOp: avg(group.map(b => b.NsPerOp || b.ns_per_op || 0)),
-                    AllocedBytesPerOp: avg(group.map(b => b.AllocedBytesPerOp || b.alloced_bytes_per_op || 0)),
-                    AllocsPerOp: avg(group.map(b => b.AllocsPerOp || b.allocs_per_op || 0))
-                };
-            });
-        }
-        
-        function updateStats(benchmarks) {
-            const searchBenches = benchmarks.filter(b => b.Name && b.Name.includes('Search') && !b.Name.includes('Scalability'));
-            const avgTime = searchBenches.length > 0 
-                ? searchBenches.reduce((sum, b) => sum + (b.NsPerOp || b.ns_per_op || 0), 0) / searchBenches.length 
-                : 0;
-            document.getElementById('avgSearchTime').innerHTML = formatNumber(avgTime) + '<span class="stat-unit">ns/op</span>';
-            
-            const throughput = avgTime > 0 ? Math.round(1000000000 / avgTime) : 0;
-            document.getElementById('peakThroughput').innerHTML = formatNumber(throughput) + '<span class="stat-unit">ops/s</span>';
-            
-            const scalability = benchmarks.filter(b => b.Name && b.Name.includes('Scalability'));
-            if (scalability.length >= 2) {
-                const first = scalability[0].NsPerOp || scalability[0].ns_per_op || 1;
-                const last = scalability[scalability.length - 1].NsPerOp || scalability[scalability.length - 1].ns_per_op || 1;
-                const factor = (last / first).toFixed(1);
-                document.getElementById('scalabilityFactor').innerHTML = factor + '<span class="stat-unit">x</span>';
-            }
-            
-            document.getElementById('totalBenchmarks').textContent = benchmarks.length;
-        }
-        
-        function createScalabilityChart(benchmarks) {
-            const scalability = benchmarks.filter(b => b.Name && b.Name.includes('Scalability'));
-            const labels = scalability.map(b => {
-                const match = b.Name.match(/size_(\d+)/);
-                return match ? match[1] : b.Name;
-            });
-            const data = scalability.map(b => (b.NsPerOp || b.ns_per_op || 0) / 1000); // Convert to µs
-            
-            const ctx = document.getElementById('scalabilityChart').getContext('2d');
-            charts.scalability = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: 'Search Time (µs)',
-                        data: data,
-                        borderColor: '#00d4ff',
-                        backgroundColor: 'rgba(0,212,255,0.1)',
-                        fill: true,
-                        tension: 0.4
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { labels: { color: '#eaeaea' } }
-                    },
-                    scales: {
-                        x: { 
-                            title: { display: true, text: 'Dataset Size', color: '#888' },
-                            ticks: { color: '#888' },
-                            grid: { color: 'rgba(255,255,255,0.1)' }
-                        },
-                        y: { 
-                            title: { display: true, text: 'Time (µs)', color: '#888' },
-                            ticks: { color: '#888' },
-                            grid: { color: 'rgba(255,255,255,0.1)' }
-                        }
-                    }
-                }
-            });
-        }
-        
-        function createLatencyChart(benchmarks) {
-            const ops = benchmarks.filter(b => b.Name && (b.Name.includes('Add') || b.Name.includes('Search')) && !b.Name.includes('Scalability'));
-            const labels = ops.map(b => b.Name.replace('BenchmarkHNSW', ''));
-            const data = ops.map(b => (b.NsPerOp || b.ns_per_op || 0) / 1000);
-            
-            const ctx = document.getElementById('latencyChart').getContext('2d');
-            charts.latency = new Chart(ctx, {
-                type: 'bar',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: 'Latency (µs)',
-                        data: data,
-                        backgroundColor: ['#00d4ff', '#7b2cbf', '#00ff88', '#ffc107'],
-                        borderRadius: 8
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { display: false }
-                    },
-                    scales: {
-                        x: { 
-                            ticks: { color: '#888' },
-                            grid: { color: 'rgba(255,255,255,0.1)' }
-                        },
-                        y: { 
-                            title: { display: true, text: 'Time (µs)', color: '#888' },
-                            ticks: { color: '#888' },
-                            grid: { color: 'rgba(255,255,255,0.1)' }
-                        }
-                    }
-                }
-            });
-        }
-        
-        function createConcurrentChart(benchmarks) {
-            const concurrent = benchmarks.filter(b => b.Name && b.Name.includes('Concurrent'));
-            const labels = concurrent.map(b => {
-                const match = b.Name.match(/parallel_(\d+)/);
-                return match ? match[1] + ' workers' : b.Name;
-            });
-            const data = concurrent.map(b => 1000000000 / (b.NsPerOp || b.ns_per_op || 1)); // ops/s
-            
-            const ctx = document.getElementById('concurrentChart').getContext('2d');
-            charts.concurrent = new Chart(ctx, {
-                type: 'bar',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: 'Throughput (ops/s)',
-                        data: data,
-                        backgroundColor: '#00ff88',
-                        borderRadius: 8
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { display: false }
-                    },
-                    scales: {
-                        x: { 
-                            ticks: { color: '#888' },
-                            grid: { color: 'rgba(255,255,255,0.1)' }
-                        },
-                        y: { 
-                            title: { display: true, text: 'Ops/s', color: '#888' },
-                            ticks: { color: '#888' },
-                            grid: { color: 'rgba(255,255,255,0.1)' }
-                        }
-                    }
-                }
-            });
-        }
-        
-        function createMemoryChart(benchmarks) {
-            const mainBenches = benchmarks.filter(b => 
-                b.Name && !b.Name.includes('Scalability') && !b.Name.includes('Concurrent')
-            ).slice(0, 5);
-            
-            const labels = mainBenches.map(b => b.Name.replace('BenchmarkHNSW', ''));
-            const data = mainBenches.map(b => (b.AllocedBytesPerOp || b.alloced_bytes_per_op || 0) / 1024);
-            
-            const ctx = document.getElementById('memoryChart').getContext('2d');
-            charts.memory = new Chart(ctx, {
-                type: 'doughnut',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        data: data,
-                        backgroundColor: ['#00d4ff', '#7b2cbf', '#00ff88', '#ffc107', '#ff6b6b'],
-                        borderWidth: 0
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { 
-                            position: 'right',
-                            labels: { color: '#eaeaea' }
-                        }
-                    }
-                }
-            });
-        }
-        
-        function populateTable(benchmarks) {
-            const tbody = document.getElementById('resultsBody');
-            tbody.innerHTML = '';
-            
-            benchmarks.forEach(b => {
-                const row = document.createElement('tr');
-                const nsOp = b.NsPerOp || b.ns_per_op || 0;
-                const bytesOp = b.AllocedBytesPerOp || b.alloced_bytes_per_op || 0;
-                const allocsOp = b.AllocsPerOp || b.allocs_per_op || 0;
-                
-                let status = '<span class="badge badge-success">✓ PASS</span>';
-                if (nsOp > 1000000) status = '<span class="badge badge-warning">⚠ SLOW</span>';
-                
-                row.innerHTML = `
-                    <td>${b.Name}</td>
-                    <td>${formatNumber(nsOp)}</td>
-                    <td>${formatBytes(bytesOp)}</td>
-                    <td>${allocsOp}</td>
-                    <td>${status}</td>
-                `;
-                tbody.appendChild(row);
-            });
-        }
-        
-        function formatNumber(num) {
-            if (num >= 1000000) return (num / 1000000).toFixed(2) + 'M';
-            if (num >= 1000) return (num / 1000).toFixed(2) + 'K';
-            return num.toString();
-        }
-        
-        function formatBytes(bytes) {
-            if (bytes >= 1048576) return (bytes / 1048576).toFixed(2) + ' MB';
-            if (bytes >= 1024) return (bytes / 1024).toFixed(2) + ' KB';
-            return bytes + ' B';
-        }
+            // Uncomment to auto-load sample data:
+            // loadDashboard(sampleData);
+        });
     </script>
 </body>
 </html>
