@@ -44,3 +44,10 @@ mira_data/
 /tmp/
 tmp/
 *.tmp
+
+# Local configuration (contains sensitive data)
+config.yaml
+
+# Backup files
+backup/*.zip
+backup/*.tar.gz
