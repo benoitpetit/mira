@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MIRA Performance Benchmarks</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #eaeaea;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        header {
+            text-align: center;
+            padding: 40px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            margin-bottom: 30px;
+        }
+        
+        h1 {
+            font-size: 2.5rem;
+            background: linear-gradient(90deg, #00d4ff, #7b2cbf);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            color: #888;
+            font-size: 1.1rem;
+        }
+        
+        .upload-section {
+            background: rgba(255,255,255,0.05);
+            border: 2px dashed rgba(255,255,255,0.2);
+            border-radius: 12px;
+            padding: 40px;
+            text-align: center;
+            margin-bottom: 30px;
+            transition: all 0.3s ease;
+        }
+        
+        .upload-section:hover {
+            border-color: #00d4ff;
+            background: rgba(0,212,255,0.05);
+        }
+        
+        .upload-section input[type="file"] {
+            display: none;
+        }
+        
+        .upload-btn {
+            background: linear-gradient(90deg, #00d4ff, #7b2cbf);
+            color: white;
+            padding: 12px 30px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: 600;
+            display: inline-block;
+            transition: transform 0.2s;
+        }
+        
+        .upload-btn:hover {
+            transform: scale(1.05);
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .stat-card {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 25px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .stat-card h3 {
+            color: #888;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+        }
+        
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #00d4ff;
+        }
+        
+        .stat-unit {
+            font-size: 0.9rem;
+            color: #888;
+            margin-left: 5px;
+        }
+        
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+            gap: 25px;
+            margin-bottom: 30px;
+        }
+        
+        .chart-container {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 25px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .chart-container h2 {
+            font-size: 1.2rem;
+            margin-bottom: 20px;
+            color: #eaeaea;
+        }
+        
+        .chart-wrapper {
+            position: relative;
+            height: 300px;
+        }
+        
+        .data-table {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 25px;
+            border: 1px solid rgba(255,255,255,0.1);
+            overflow-x: auto;
+        }
+        
+        .data-table h2 {
+            font-size: 1.2rem;
+            margin-bottom: 20px;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        th {
+            color: #00d4ff;
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.8rem;
+            letter-spacing: 1px;
+        }
+        
+        tr:hover {
+            background: rgba(255,255,255,0.05);
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        
+        .badge-success {
+            background: rgba(0,255,136,0.2);
+            color: #00ff88;
+        }
+        
+        .badge-warning {
+            background: rgba(255,193,7,0.2);
+            color: #ffc107;
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        .sample-data {
+            margin-top: 20px;
+            padding: 15px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 0.85rem;
+            color: #888;
+            text-align: left;
+            overflow-x: auto;
+        }
+        
+        .sample-data code {
+            color: #00d4ff;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔍 MIRA Performance Benchmarks</h1>
+            <p class="subtitle">HNSW Vector Search Performance Visualization</p>
+        </header>
+        
+        <div class="upload-section" id="uploadSection">
+            <label for="fileInput" class="upload-btn">📁 Load Benchmark Data (JSON)</label>
+            <input type="file" id="fileInput" accept=".json">
+            <p style="margin-top: 15px; color: #888;">Or paste JSON data below</p>
+            <textarea id="jsonInput" style="width: 100%; height: 100px; margin-top: 10px; padding: 10px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; color: #eaeaea; font-family: monospace;" placeholder='{"benchmarks": [{"name": "BenchmarkHNSWAdd", "ns_op": 1234, ...}]}'></textarea>
+            <button onclick="parseJSONInput()" class="upload-btn" style="margin-top: 10px;">Parse JSON</button>
+            
+            <div class="sample-data">
+                <strong>Expected format (Go benchmark -json output):</strong><br>
+                <code>{"Time":"2024-01-01T...","Benchmarks":[{"Name":"BenchmarkHNSWAdd","NsPerOp":1234,"AllocedBytesPerOp":567}]}</code>
+            </div>
+        </div>
+        
+        <div id="dashboard" class="hidden">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <h3>Average Search Time</h3>
+                    <div class="stat-value" id="avgSearchTime">-<span class="stat-unit">ns/op</span></div>
+                </div>
+                <div class="stat-card">
+                    <h3>Peak Throughput</h3>
+                    <div class="stat-value" id="peakThroughput">-<span class="stat-unit">ops/s</span></div>
+                </div>
+                <div class="stat-card">
+                    <h3>Scalability Factor</h3>
+                    <div class="stat-value" id="scalabilityFactor">-<span class="stat-unit">x</span></div>
+                </div>
+                <div class="stat-card">
+                    <h3>Total Benchmarks</h3>
+                    <div class="stat-value" id="totalBenchmarks">-</div>
+                </div>
+            </div>
+            
+            <div class="charts-grid">
+                <div class="chart-container">
+                    <h2>📊 Search Performance vs Dataset Size</h2>
+                    <div class="chart-wrapper">
+                        <canvas id="scalabilityChart"></canvas>
+                    </div>
+                </div>
+                
+                <div class="chart-container">
+                    <h2>⚡ Operations Latency Comparison</h2>
+                    <div class="chart-wrapper">
+                        <canvas id="latencyChart"></canvas>
+                    </div>
+                </div>
+                
+                <div class="chart-container">
+                    <h2>🔄 Concurrent Access Performance</h2>
+                    <div class="chart-wrapper">
+                        <canvas id="concurrentChart"></canvas>
+                    </div>
+                </div>
+                
+                <div class="chart-container">
+                    <h2>📈 Memory Allocations</h2>
+                    <div class="chart-wrapper">
+                        <canvas id="memoryChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="data-table">
+                <h2>📋 Detailed Results</h2>
+                <table id="resultsTable">
+                    <thead>
+                        <tr>
+                            <th>Benchmark</th>
+                            <th>Time (ns/op)</th>
+                            <th>Memory (B/op)</th>
+                            <th>Allocs (op)</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="resultsBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let charts = {};
+        
+        // Handle file upload
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    processBenchmarkData(data);
+                } catch (err) {
+                    alert('Error parsing JSON: ' + err.message);
+                }
+            };
+            reader.readAsText(file);
+        });
+        
+        function parseJSONInput() {
+            const input = document.getElementById('jsonInput').value;
+            if (!input.trim()) {
+                // Use sample data for demonstration
+                const sampleData = generateSampleData();
+                processBenchmarkData(sampleData);
+                return;
+            }
+            
+            try {
+                const data = JSON.parse(input);
+                processBenchmarkData(data);
+            } catch (err) {
+                alert('Error parsing JSON: ' + err.message);
+            }
+        }
+        
+        function generateSampleData() {
+            // Generate realistic sample benchmark data
+            return {
+                Benchmarks: [
+                    { Name: "BenchmarkHNSWAdd", NsPerOp: 1250, AllocedBytesPerOp: 512, AllocsPerOp: 8 },
+                    { Name: "BenchmarkHNSWSearch", NsPerOp: 45600, AllocedBytesPerOp: 2048, AllocsPerOp: 15 },
+                    { Name: "BenchmarkHNSWSearchScalability/size_100", NsPerOp: 12300, AllocedBytesPerOp: 1024, AllocsPerOp: 10 },
+                    { Name: "BenchmarkHNSWSearchScalability/size_1000", NsPerOp: 45600, AllocedBytesPerOp: 2048, AllocsPerOp: 15 },
+                    { Name: "BenchmarkHNSWSearchScalability/size_10000", NsPerOp: 189000, AllocedBytesPerOp: 4096, AllocsPerOp: 25 },
+                    { Name: "BenchmarkHNSWConcurrentAccess/parallel_1", NsPerOp: 45600, AllocedBytesPerOp: 2048, AllocsPerOp: 15 },
+                    { Name: "BenchmarkHNSWConcurrentAccess/parallel_4", NsPerOp: 12300, AllocedBytesPerOp: 2048, AllocsPerOp: 15 },
+                    { Name: "BenchmarkHNSWConcurrentAccess/parallel_8", NsPerOp: 6800, AllocedBytesPerOp: 2048, AllocsPerOp: 15 },
+                    { Name: "BenchmarkHNSWBuildTime", NsPerOp: 12500000, AllocedBytesPerOp: 1048576, AllocsPerOp: 100 }
+                ]
+            };
+        }
+        
+        function processBenchmarkData(data) {
+            const benchmarks = data.Benchmarks || data.benchmarks || [];
+            if (benchmarks.length === 0) {
+                alert('No benchmark data found');
+                return;
+            }
+            
+            document.getElementById('uploadSection').classList.add('hidden');
+            document.getElementById('dashboard').classList.remove('hidden');
+            
+            // Update stats
+            updateStats(benchmarks);
+            
+            // Create charts
+            createScalabilityChart(benchmarks);
+            createLatencyChart(benchmarks);
+            createConcurrentChart(benchmarks);
+            createMemoryChart(benchmarks);
+            
+            // Populate table
+            populateTable(benchmarks);
+        }
+        
+        function updateStats(benchmarks) {
+            const searchBenches = benchmarks.filter(b => b.Name && b.Name.includes('Search') && !b.Name.includes('Scalability'));
+            const avgTime = searchBenches.length > 0 
+                ? searchBenches.reduce((sum, b) => sum + (b.NsPerOp || b.ns_per_op || 0), 0) / searchBenches.length 
+                : 0;
+            document.getElementById('avgSearchTime').innerHTML = formatNumber(avgTime) + '<span class="stat-unit">ns/op</span>';
+            
+            const throughput = avgTime > 0 ? Math.round(1000000000 / avgTime) : 0;
+            document.getElementById('peakThroughput').innerHTML = formatNumber(throughput) + '<span class="stat-unit">ops/s</span>';
+            
+            const scalability = benchmarks.filter(b => b.Name && b.Name.includes('Scalability'));
+            if (scalability.length >= 2) {
+                const first = scalability[0].NsPerOp || scalability[0].ns_per_op || 1;
+                const last = scalability[scalability.length - 1].NsPerOp || scalability[scalability.length - 1].ns_per_op || 1;
+                const factor = (last / first).toFixed(1);
+                document.getElementById('scalabilityFactor').innerHTML = factor + '<span class="stat-unit">x</span>';
+            }
+            
+            document.getElementById('totalBenchmarks').textContent = benchmarks.length;
+        }
+        
+        function createScalabilityChart(benchmarks) {
+            const scalability = benchmarks.filter(b => b.Name && b.Name.includes('Scalability'));
+            const labels = scalability.map(b => {
+                const match = b.Name.match(/size_(\d+)/);
+                return match ? match[1] : b.Name;
+            });
+            const data = scalability.map(b => (b.NsPerOp || b.ns_per_op || 0) / 1000); // Convert to µs
+            
+            const ctx = document.getElementById('scalabilityChart').getContext('2d');
+            charts.scalability = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Search Time (µs)',
+                        data: data,
+                        borderColor: '#00d4ff',
+                        backgroundColor: 'rgba(0,212,255,0.1)',
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: '#eaeaea' } }
+                    },
+                    scales: {
+                        x: { 
+                            title: { display: true, text: 'Dataset Size', color: '#888' },
+                            ticks: { color: '#888' },
+                            grid: { color: 'rgba(255,255,255,0.1)' }
+                        },
+                        y: { 
+                            title: { display: true, text: 'Time (µs)', color: '#888' },
+                            ticks: { color: '#888' },
+                            grid: { color: 'rgba(255,255,255,0.1)' }
+                        }
+                    }
+                }
+            });
+        }
+        
+        function createLatencyChart(benchmarks) {
+            const ops = benchmarks.filter(b => b.Name && (b.Name.includes('Add') || b.Name.includes('Search')) && !b.Name.includes('Scalability'));
+            const labels = ops.map(b => b.Name.replace('BenchmarkHNSW', ''));
+            const data = ops.map(b => (b.NsPerOp || b.ns_per_op || 0) / 1000);
+            
+            const ctx = document.getElementById('latencyChart').getContext('2d');
+            charts.latency = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Latency (µs)',
+                        data: data,
+                        backgroundColor: ['#00d4ff', '#7b2cbf', '#00ff88', '#ffc107'],
+                        borderRadius: 8
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: { 
+                            ticks: { color: '#888' },
+                            grid: { color: 'rgba(255,255,255,0.1)' }
+                        },
+                        y: { 
+                            title: { display: true, text: 'Time (µs)', color: '#888' },
+                            ticks: { color: '#888' },
+                            grid: { color: 'rgba(255,255,255,0.1)' }
+                        }
+                    }
+                }
+            });
+        }
+        
+        function createConcurrentChart(benchmarks) {
+            const concurrent = benchmarks.filter(b => b.Name && b.Name.includes('Concurrent'));
+            const labels = concurrent.map(b => {
+                const match = b.Name.match(/parallel_(\d+)/);
+                return match ? match[1] + ' workers' : b.Name;
+            });
+            const data = concurrent.map(b => 1000000000 / (b.NsPerOp || b.ns_per_op || 1)); // ops/s
+            
+            const ctx = document.getElementById('concurrentChart').getContext('2d');
+            charts.concurrent = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Throughput (ops/s)',
+                        data: data,
+                        backgroundColor: '#00ff88',
+                        borderRadius: 8
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: { 
+                            ticks: { color: '#888' },
+                            grid: { color: 'rgba(255,255,255,0.1)' }
+                        },
+                        y: { 
+                            title: { display: true, text: 'Ops/s', color: '#888' },
+                            ticks: { color: '#888' },
+                            grid: { color: 'rgba(255,255,255,0.1)' }
+                        }
+                    }
+                }
+            });
+        }
+        
+        function createMemoryChart(benchmarks) {
+            const mainBenches = benchmarks.filter(b => 
+                b.Name && !b.Name.includes('Scalability') && !b.Name.includes('Concurrent')
+            ).slice(0, 5);
+            
+            const labels = mainBenches.map(b => b.Name.replace('BenchmarkHNSW', ''));
+            const data = mainBenches.map(b => (b.AllocedBytesPerOp || b.alloced_bytes_per_op || 0) / 1024);
+            
+            const ctx = document.getElementById('memoryChart').getContext('2d');
+            charts.memory = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: ['#00d4ff', '#7b2cbf', '#00ff88', '#ffc107', '#ff6b6b'],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { 
+                            position: 'right',
+                            labels: { color: '#eaeaea' }
+                        }
+                    }
+                }
+            });
+        }
+        
+        function populateTable(benchmarks) {
+            const tbody = document.getElementById('resultsBody');
+            tbody.innerHTML = '';
+            
+            benchmarks.forEach(b => {
+                const row = document.createElement('tr');
+                const nsOp = b.NsPerOp || b.ns_per_op || 0;
+                const bytesOp = b.AllocedBytesPerOp || b.alloced_bytes_per_op || 0;
+                const allocsOp = b.AllocsPerOp || b.allocs_per_op || 0;
+                
+                let status = '<span class="badge badge-success">✓ PASS</span>';
+                if (nsOp > 1000000) status = '<span class="badge badge-warning">⚠ SLOW</span>';
+                
+                row.innerHTML = `
+                    <td>${b.Name}</td>
+                    <td>${formatNumber(nsOp)}</td>
+                    <td>${formatBytes(bytesOp)}</td>
+                    <td>${allocsOp}</td>
+                    <td>${status}</td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+        
+        function formatNumber(num) {
+            if (num >= 1000000) return (num / 1000000).toFixed(2) + 'M';
+            if (num >= 1000) return (num / 1000).toFixed(2) + 'K';
+            return num.toString();
+        }
+        
+        function formatBytes(bytes) {
+            if (bytes >= 1048576) return (bytes / 1048576).toFixed(2) + ' MB';
+            if (bytes >= 1024) return (bytes / 1024).toFixed(2) + ' KB';
+            return bytes + ' B';
+        }
+    </script>
+</body>
+</html>
