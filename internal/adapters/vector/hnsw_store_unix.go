@@ -48,44 +48,15 @@ type HNSWOptions struct {
 	Ml             float64
 	EfConstruction int
 	EfSearch       int
-	// FetchMultiplier controls how many extra results to fetch for filtering
-	// Default is 1.5 (fetch 1.5x limit). Higher = more accurate but slower.
-	FetchMultiplier float64
 }
 
 // DefaultHNSWOptions returns default HNSW options
-// Balanced for speed and accuracy
 func DefaultHNSWOptions() HNSWOptions {
 	return HNSWOptions{
-		M:               16,
-		Ml:              0.25,
-		EfConstruction:  200,
-		EfSearch:        50,   // Default from hnsw library
-		FetchMultiplier: 1.5,  // Reduced from 2.0 for less overallocation
-	}
-}
-
-// FastHNSWOptions returns options optimized for maximum search speed
-// Best for read-heavy workloads where approximate results are acceptable
-func FastHNSWOptions() HNSWOptions {
-	return HNSWOptions{
-		M:               12,   // Lower M = faster, less memory
-		Ml:              0.25,
-		EfConstruction:  100,  // Lower = faster build
-		EfSearch:        20,   // Lower = faster search
-		FetchMultiplier: 1.2,  // Minimal overallocation
-	}
-}
-
-// AccurateHNSWOptions returns options optimized for accuracy over speed
-// Best when precision is critical
-func AccurateHNSWOptions() HNSWOptions {
-	return HNSWOptions{
-		M:               24,   // Higher M = better quality
-		Ml:              0.25,
-		EfConstruction:  300,  // Higher = better graph quality
-		EfSearch:        100,  // Higher = more accurate search
-		FetchMultiplier: 2.0,  // More buffer for filtering
+		M:              16,
+		Ml:             0.25,
+		EfConstruction: 200,
+		EfSearch:       50,
 	}
 }
 
@@ -118,26 +89,11 @@ func NewHNSWStore(store ports.EmbeddingSource, dimension int, indexPath string, 
 	return h, nil
 }
 
-// storeOptions holds options that aren't in hnsw.Graph
-type storeOptions struct {
-	fetchMultiplier float64
-}
-
-var globalStoreOpts = storeOptions{
-	fetchMultiplier: 1.5,
-}
-
 func (h *HNSWStore) applyOptions(opts HNSWOptions) {
 	h.graph.M = opts.M
 	h.graph.Ml = opts.Ml
-	// Use adaptive EfSearch by default, but respect user override if significantly different
-	if opts.EfSearch > 0 {
-		h.graph.EfSearch = opts.EfSearch
-	}
+	h.graph.EfSearch = opts.EfSearch
 	h.graph.Distance = hnsw.DistanceFunc(util.CosineDistance)
-	if opts.FetchMultiplier > 0 {
-		globalStoreOpts.fetchMultiplier = opts.FetchMultiplier
-	}
 }
 
 // Search implements VectorStore
@@ -149,29 +105,15 @@ func (h *HNSWStore) Search(ctx context.Context, queryVec []float32, limit int, w
 		return nil, fmt.Errorf("HNSW index not ready")
 	}
 
-	// Search in HNSW with configured EfSearch
+	// Search in HNSW
 	queryEmbedding := floatsToEmbedding(queryVec)
-	results := h.graph.Search(queryEmbedding, h.graph.EfSearch)
+	results := h.graph.Search(queryEmbedding, limit*2) // Get more results to account for filtering
 
-	// Pre-allocate slice with estimated capacity to avoid reallocations
-	// Use configurable multiplier for filtering buffer (default 1.5x)
-	fetchMultiplier := 1.5
-	if opts := h.getOptions(); opts != nil && opts.FetchMultiplier > 0 {
-		fetchMultiplier = opts.FetchMultiplier
-	}
-	expectedResults := int(float64(limit) * fetchMultiplier)
-	if expectedResults < limit+5 {
-		expectedResults = limit + 5 // Minimum buffer
-	}
-	ids := make([]uuid.UUID, 0, expectedResults)
-
-	// Collect UUIDs from results with early termination
+	// Collect UUIDs from results
+	var ids []uuid.UUID
 	for _, r := range results {
 		if id, ok := h.idToUUID[r.ID()]; ok {
 			ids = append(ids, id)
-			if len(ids) >= expectedResults {
-				break // We have enough candidates
-			}
 		}
 	}
 
@@ -186,30 +128,6 @@ func (h *HNSWStore) Search(ctx context.Context, queryVec []float32, limit int, w
 	}
 
 	return candidates, nil
-}
-
-// getOptions returns the current HNSW options
-func (h *HNSWStore) getOptions() *HNSWOptions {
-	if h.graph == nil {
-		return nil
-	}
-	return &HNSWOptions{
-		M:               h.graph.M,
-		Ml:              h.graph.Ml,
-		EfSearch:        h.graph.EfSearch,
-		FetchMultiplier: globalStoreOpts.fetchMultiplier,
-	}
-}
-
-// UpdateOptions updates HNSW options dynamically (thread-safe)
-// Note: M, Ml, and EfConstruction only affect new inserts
-// EfSearch affects subsequent searches immediately
-func (h *HNSWStore) UpdateOptions(opts HNSWOptions) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.applyOptions(opts)
-	log.Printf("[Vector] HNSW options updated: EfSearch=%d, FetchMultiplier=%.1f", 
-		h.graph.EfSearch, globalStoreOpts.fetchMultiplier)
 }
 
 // batchGetCandidates fetches multiple candidates using the EmbeddingSource interface
@@ -249,7 +167,6 @@ func (h *HNSWStore) Delete(ctx context.Context, id uuid.UUID) error {
 }
 
 // BuildFromStore builds the index from existing data in the store
-// Optimized with pre-allocated maps for reduced GC pressure
 func (h *HNSWStore) BuildFromStore(ctx context.Context) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -259,35 +176,9 @@ func (h *HNSWStore) BuildFromStore(ctx context.Context) error {
 		return fmt.Errorf("failed to query embeddings: %w", err)
 	}
 
-	count := len(embeddings)
-	if count == 0 {
-		h.ready = true
-		log.Printf("[Vector] Index ready: 0 vectors, %dd dims", h.dimension)
-		return nil
-	}
-
-	// Pre-allocate maps with known capacity to avoid reallocations
-	// This significantly reduces GC pressure for large datasets
-	if h.idToUUID == nil {
-		h.idToUUID = make(map[string]uuid.UUID, count)
-	} else {
-		// Clear and reuse existing map if possible
-		for k := range h.idToUUID {
-			delete(h.idToUUID, k)
-		}
-	}
-	if h.uuidToID == nil {
-		h.uuidToID = make(map[uuid.UUID]string, count)
-	} else {
-		for k := range h.uuidToID {
-			delete(h.uuidToID, k)
-		}
-	}
-
-	// Reuse embedding buffer to reduce allocations
-	// The hnsw library copies the embedding, so we can reuse our buffer
-	added := 0
+	count := 0
 	for _, emb := range embeddings {
+		// Add to HNSW
 		strID := h.getNextID()
 		h.idToUUID[strID] = emb.ID
 		h.uuidToID[emb.ID] = strID
@@ -297,11 +188,11 @@ func (h *HNSWStore) BuildFromStore(ctx context.Context) error {
 			embedding: floatsToEmbedding(emb.Vector),
 		}
 		h.graph.Add(n)
-		added++
+		count++
 	}
 
 	h.ready = true
-	log.Printf("[Vector] Index ready: %d vectors, %dd dims", added, h.dimension)
+	log.Printf("[Vector] Index ready: %d vectors, %dd dims", count, h.dimension)
 	return nil
 }
 
