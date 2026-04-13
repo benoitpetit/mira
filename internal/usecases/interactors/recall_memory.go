@@ -18,10 +18,11 @@ import (
 
 // RecallMemoryInput contains the input for recalling memories
 type RecallMemoryInput struct {
-	Query  string
-	Budget int
-	Wing   *string
-	Room   *string
+	Query         string
+	Budget        int
+	Wing          *string
+	Room          *string
+	FallbackWings []string
 }
 
 // RecallMemoryOutput contains the output of recalling memories
@@ -193,6 +194,32 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 	scored := uc.scoreCandidates(candidates, queryVec)
 	pruned := uc.pruneCandidates(scored)
 
+	// 3b. Fallback wings if primary wing yielded nothing useful
+	if len(pruned) == 0 && len(input.FallbackWings) > 0 {
+		seen := make(map[uuid.UUID]bool)
+		for _, c := range pruned {
+			seen[c.ID()] = true
+		}
+		for _, fw := range input.FallbackWings {
+			if len(pruned) > 0 {
+				break
+			}
+			fbWing := fw
+			fbCandidates, err := uc.vectorStore.Search(ctx, queryVec, uc.maxCandidates, &fbWing, input.Room)
+			if err != nil {
+				continue
+			}
+			fbScored := uc.scoreCandidates(fbCandidates, queryVec)
+			fbPruned := uc.pruneCandidates(fbScored)
+			for _, c := range fbPruned {
+				if !seen[c.ID()] {
+					pruned = append(pruned, c)
+					seen[c.ID()] = true
+				}
+			}
+		}
+	}
+
 	// 4. Greedy selection
 	selected := uc.selectGreedy(ctx, pruned, budget)
 
@@ -266,10 +293,20 @@ func (uc *RecallMemory) scoreCandidates(candidates []*entities.Candidate, queryV
 	return candidates
 }
 
+// adaptiveThreshold lowers the bar for small corpora so that queries on
+// databases with fewer than 10 memories still return results.
+func (uc *RecallMemory) adaptiveThreshold(candidateCount int) float64 {
+	if candidateCount < 10 {
+		return 0.3
+	}
+	return uc.earlyPruningThreshold
+}
+
 func (uc *RecallMemory) pruneCandidates(candidates []*entities.Candidate) []*entities.Candidate {
+	threshold := uc.adaptiveThreshold(len(candidates))
 	var pruned []*entities.Candidate
 	for _, c := range candidates {
-		if c.Relevance > uc.earlyPruningThreshold {
+		if c.Relevance > threshold {
 			pruned = append(pruned, c)
 		}
 	}
@@ -313,7 +350,7 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 			// Early pruning: if the initial score is too low, skip expensive overlap calculation
 			// We compute a theoretical max score (if overlap=0, causal=1, session=1+boost)
 			maxPossibleScore := initialScore * 1.0 * 1.0 * (1.0 + uc.sessionBoostBeta)
-			if maxPossibleScore < uc.earlyPruningThreshold {
+			if maxPossibleScore < uc.adaptiveThreshold(len(remainingCandidates)) {
 				c.Score = maxPossibleScore // Set a low score so it gets sorted to the end
 				c.MaxOverlap = 0
 				c.CausalPenalty = 1.0

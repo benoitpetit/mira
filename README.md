@@ -8,7 +8,7 @@
   
   [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.3.0-blue?style=flat-square)]()
+  [![Version](https://img.shields.io/badge/Version-0.3.2-blue?style=flat-square)]()
   [![Tests](https://img.shields.io/badge/Tests-77%25-brightgreen?style=flat-square)]()
   
   *100% Local • Deterministic • O(n log n) • Clean Architecture*
@@ -438,6 +438,9 @@ nano config.yaml
 
 # With custom config file
 ./mira -config ./config.yaml
+
+# Run database migrations only
+./mira -migrate
 ```
 
 ### 3. Use MCP Tools
@@ -510,7 +513,7 @@ We decided to migrate to PostgreSQL for v2...
 
 ```yaml
 system:
-  version: "0.3.1"
+  version: "0.3.2"
 
 storage:
   path: "./mira_data"
@@ -550,9 +553,18 @@ archive_thresholds:
   session_note: 30
   debug_log: 7
 
+overlap_cache:
+  ttl_days: 30
+  max_entries: 1000000
+
+extraction:
+  min_entity_length: 2
+  causal_lookback: 50
+  causal_max_days: 30
+
 mcp:
   name: "mira"
-  version: "0.3.1"
+  version: "0.3.2"
   transport: "stdio"
   timeout_seconds: 30
 
@@ -586,6 +598,24 @@ webhooks:
 | `mira_status`       | System statistics and health          |
 | `mira_timeline`     | Filtered chronological reconstruction |
 | `mira_archive`      | Archive and clean old memories        |
+
+### Fallback Wings
+
+When recalling from a specific wing yields no results, `mira_recall` supports comma-separated fallback wings:
+
+```json
+{
+  "tool": "mira_recall",
+  "arguments": {
+    "query": "database migration strategy",
+    "budget": 2000,
+    "wing": "backend-team",
+    "fallback_wings": "platform-team,dba-team"
+  }
+}
+```
+
+If the primary wing has no matching memories, MIRA will automatically search the fallback wings in order.
 
 See [API_REFERENCES.md](docs/API_REFERENCES.md) for detailed API reference and usage examples.
 
@@ -630,12 +660,14 @@ curl http://localhost:9090/metrics
 | Full Allocation   | ~5ms with cache       |
 | Cosine Similarity | 50M ops/sec           |
 
-### Optimizations in v0.3.0
+### Optimizations in v0.3.1
 
 - **Lazy Evaluation**: Overlap calculation only for promising candidates
 - **LRU Cache**: 1000 entries for query embeddings
 - **HNSW Persistence**: Fast index reload on restart
 - **SQLite WAL Mode**: Concurrent read/write performance
+- **Adaptive Threshold**: Lowered relevance threshold for small corpora (<10 memories)
+- **Default Room Mapping**: Auto-assigns standard rooms based on memory type
 
 ---
 
@@ -712,8 +744,7 @@ mira/
 │       ├── health_test.go # Health check tests
 │       └── main_test.go   # Application tests
 ├── docs/                  # Documentation
-│   ├── API_REFERENCES.md  # API reference
-│   └── adr/               # Architecture Decision Records
+│   └── API_REFERENCES.md  # API reference
 ├── config.example.yaml    # Example configuration
 └── README.md              # This file
 ```
@@ -741,12 +772,17 @@ go test -cover ./...
 ### Make Commands
 
 ```bash
-make build      # Build
-make test       # Tests
-make bench      # Benchmarks
-make clean      # Clean
-make lint       # Run linters
-make install    # Install to GOPATH/bin
+make build       # Build
+make test        # Tests (with race detector)
+make test-short  # Quick tests
+make bench       # Benchmarks
+make bench-full  # Full benchmarks
+make run         # Build and run with config.yaml
+make clean       # Clean build artifacts and data
+make lint        # Run linters
+make fmt         # Format code
+make install     # Install to GOPATH/bin
+make prepublish VERSION=x.y.z  # Prepare a release
 ```
 
 ## Changelog
@@ -765,13 +801,16 @@ make install    # Install to GOPATH/bin
 
 #### ✅ Improvements
 
-- **Configuration Completeness**: Added missing fields (model_hash, timeout_seconds, sqlite settings)
+- **Configuration Completeness**: Added missing fields (model_hash, timeout_seconds, sqlite settings, overlap_cache, extraction)
 - **Documentation Accuracy**: 100% consistency between README and source code
 - **Error Handling**: Fixed silent errors in StoreMemory with proper logging
+- **Adaptive Threshold**: Lowered relevance threshold for small corpora so queries on <10 memories still return results
+- **Default Room Mapping**: Auto-assigns standard rooms (`decisions`, `facts`, `preferences`, `session`, `debug`) based on detected memory type when no room is provided
 
 #### ✅ Removed
 
 - **Unused Parameter**: Removed `max_concurrent_queries` (documented but not implemented)
+- **Internal Dev Docs**: Removed `docs/adr/` and `docs/dev/` from public repository
 
 ### v0.3.0 (2026-04-10)
 

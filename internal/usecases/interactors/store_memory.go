@@ -57,6 +57,26 @@ func NewStoreMemory(
 	}
 }
 
+// defaultRoomForType suggests a standard room when none is provided.
+func defaultRoomForType(memType valueobjects.MemoryType) *string {
+	var room string
+	switch memType {
+	case valueobjects.TypeDecision:
+		room = "decisions"
+	case valueobjects.TypeFact:
+		room = "facts"
+	case valueobjects.TypePreference:
+		room = "preferences"
+	case valueobjects.TypeSessionNote:
+		room = "session"
+	case valueobjects.TypeDebugLog:
+		room = "debug"
+	default:
+		return nil
+	}
+	return &room
+}
+
 // Execute stores a memory with full extraction (atomic transaction)
 func (uc *StoreMemory) Execute(ctx context.Context, input StoreMemoryInput) (*StoreMemoryOutput, error) {
 	start := time.Now()
@@ -68,6 +88,14 @@ func (uc *StoreMemory) Execute(ctx context.Context, input StoreMemoryInput) (*St
 	fp, emb, err := uc.extractor.ExtractPipeline(ctx, verbatim, input.Type)
 	if err != nil {
 		return nil, fmt.Errorf("extraction failed: %w", err)
+	}
+
+	// 2b. Apply default room if none provided, based on detected type
+	if input.Room == nil {
+		if r := defaultRoomForType(fp.Type); r != nil {
+			input.Room = r
+			verbatim.Room = r
+		}
 	}
 
 	// 3. Atomic transaction for T0, T1, T2 storage

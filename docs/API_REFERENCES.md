@@ -26,7 +26,19 @@ Practical examples for using MIRA's MCP tools in real-world scenarios.
 | Tool | Description | Arguments |
 |------|-------------|-----------|
 | `mira_store` | Store a memory with T0/T1/T2 extraction | `content` (required), `wing` (required), `room` (optional), `type` (optional) |
-| `mira_recall` | Retrieve optimal context with budget | `query` (required), `budget` (optional), `wing` (optional), `room` (optional) |
+| `mira_recall` | Retrieve optimal context with budget | `query` (required), `budget` (optional), `wing` (optional), `room` (optional), `fallback_wings` (optional) |
+| `mira_load` | Load full verbatim by ID | `id` (required) |
+| `mira_causal_chain` | Trace causal chain | `id` (required), `max_depth` (optional), `include_consequences` (optional) |
+| `mira_timeline` | Chronological reconstruction | `wing` (required), `room` (optional), `since` (optional), `until` (optional), `type` (optional) |
+| `mira_status` | System statistics and health | none |
+| `mira_archive` | Archive old memories | none |
+
+**Note on `room`**: If omitted, MIRA automatically assigns a standard room based on the detected memory type:
+- `decision` → `decisions`
+- `fact` → `facts`
+- `preference` → `preferences`
+- `session_note` → `session`
+- `debug_log` → `debug`
 | `mira_load` | Load full verbatim by ID | `id` (required) |
 | `mira_causal_chain` | Trace causal chain | `id` (required), `max_depth` (optional), `include_consequences` (optional) |
 | `mira_timeline` | Chronological reconstruction | `wing` (required), `room` (optional), `since` (optional), `until` (optional), `type` (optional) |
@@ -146,6 +158,7 @@ Model: a1b2c3d4
 - `budget` (optional): Token budget, default 4000
 - `wing` (optional): Filter by wing/namespace
 - `room` (optional): Filter by room/sub-category
+- `fallback_wings` (optional): Comma-separated fallback wings to search if primary wing yields no results
 
 **Response:**
 ```
@@ -523,7 +536,7 @@ curl http://localhost:9090/health
 {
   "status": "healthy",
   "timestamp": "2026-04-10T14:30:00Z",
-  "version": "0.3.0",
+  "version": "0.3.2",
   "checks": {
     "database": {"status": "pass", "message": "connected"},
     "vector_store": {"status": "pass", "message": "HNSW ready"},
@@ -644,5 +657,5 @@ Error: wing is required
 
 ---
 
-*Last updated: 2026-04-10*
-*Version: 0.3.0*
+*Last updated: 2026-04-13*
+*Version: 0.3.2*

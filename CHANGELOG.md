@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-04-13
+
+### Added
+- **Fallback Wings for Recall**: `mira_recall` now supports `fallback_wings` parameter
+  - Comma-separated list of alternate wings to search when primary wing yields no results
+  - Enables cross-team/cross-project knowledge retrieval without changing the query
+
+- **Default Room Mapping**: Automatic room assignment based on detected memory type
+  - `decision` → `decisions`, `fact` → `facts`, `preference` → `preferences`
+  - `session_note` → `session`, `debug_log` → `debug`
+  - Reduces friction when storing memories without explicit room metadata
+
+- **Adaptive Relevance Threshold**: Recall now adapts pruning threshold for small corpora
+  - Databases with fewer than 10 memories use a lowered threshold (0.3) so queries still return useful results
+
+### Fixed
+- **Fingerprint UUID Alignment**: `GetCandidatesWithEmbeddings` now correctly returns fingerprint IDs instead of verbatim IDs
+- **Fingerprint Data Population**: JSON fingerprint data is now properly unmarshalled from SQLite (was returning empty Data fields)
+- **HNSW ID Consistency**: `AddCandidate` now maps HNSW nodes using `Verbatim.ID` instead of `Fingerprint.ID`, aligning the vector index with the embeddings table
+- **CLI Version String**: Corrected version output from `v0.3.0` to `v0.3.2`
+
 ### Changed
 - **Replaced archived prose library with native Go implementation**
   - Removed `github.com/jdkato/prose` dependency (library is archived/unmaintained)
@@ -16,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Entity extraction via capitalized word detection + known entity lists
   - Causal relation detection using regex patterns (BECAUSE, TRIGGERED, CONTRADICTS, etc.)
   - Zero breaking changes: External MCP API unchanged
+
+- **Documentation Cleanup**: Removed internal development docs (`docs/adr/`, `docs/dev/`, `docs/PLAN.md`) and temporary debug files from public repository
 
 ## [0.3.1] - 2026-04-12
 

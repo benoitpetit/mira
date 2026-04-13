@@ -8,7 +8,7 @@
   
   [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.3.0-blue?style=flat-square)]()
+  [![Version](https://img.shields.io/badge/Version-0.3.2-blue?style=flat-square)]()
   [![Tests](https://img.shields.io/badge/Tests-77%25-brightgreen?style=flat-square)]()
   
   *100% Local • Déterministe • O(n log n) • Clean Architecture*
@@ -438,6 +438,9 @@ nano config.yaml
 
 # Avec fichier de config personnalisé
 ./mira -config ./config.yaml
+
+# Exécuter uniquement les migrations
+./mira -migrate
 ```
 
 ### 3. Utiliser les Outils MCP
@@ -510,7 +513,7 @@ Nous avons décidé de migrer vers PostgreSQL pour la v2...
 
 ```yaml
 system:
-  version: "0.3.1"
+  version: "0.3.2"
 
 storage:
   path: "./mira_data"
@@ -550,9 +553,18 @@ archive_thresholds:
   session_note: 30
   debug_log: 7
 
+overlap_cache:
+  ttl_days: 30
+  max_entries: 1000000
+
+extraction:
+  min_entity_length: 2
+  causal_lookback: 50
+  causal_max_days: 30
+
 mcp:
   name: "mira"
-  version: "0.3.1"
+  version: "0.3.2"
   transport: "stdio"
   timeout_seconds: 30
 
@@ -586,6 +598,24 @@ webhooks:
 | `mira_status`       | Statistiques système et santé           |
 | `mira_timeline`     | Reconstruction chronologique filtrée    |
 | `mira_archive`      | Archive et nettoie vieilles mémoires    |
+
+### Wings de Secours (Fallback Wings)
+
+Quand un recall dans un wing principal ne retourne rien, `mira_recall` supporte des wings de secours séparés par des virgules :
+
+```json
+{
+  "tool": "mira_recall",
+  "arguments": {
+    "query": "stratégie de migration base de données",
+    "budget": 2000,
+    "wing": "backend-team",
+    "fallback_wings": "platform-team,dba-team"
+  }
+}
+```
+
+Si le wing principal n'a aucune mémoire pertinente, MIRA cherchera automatiquement dans les wings de secours dans l'ordre.
 
 Voir [API_REFERENCES.md](docs/API_REFERENCES.md) pour la référence API détaillée et des exemples d'utilisation.
 
@@ -630,12 +660,14 @@ curl http://localhost:9090/metrics
 | Allocation complète | ~5ms avec cache         |
 | Cosine similarity   | 50M ops/sec             |
 
-### Optimisations en v0.3.0
+### Optimisations en v0.3.1
 
 - **Lazy Evaluation**: Calcul d'overlap uniquement pour les candidats prometteurs
 - **Cache LRU**: 1000 entrées pour les embeddings de requête
 - **Persistance HNSW**: Rechargement rapide de l'index au redémarrage
 - **SQLite WAL Mode**: Performance lecture/écriture concurrente
+- **Seuil Adaptatif**: Baisse du seuil de pertinence pour les petits corpus (<10 mémoires)
+- **Mapping Room par Défaut**: Assignation automatique des rooms standards selon le type de mémoire
 
 ---
 
@@ -712,8 +744,7 @@ mira/
 │       ├── health_test.go # Tests health checks
 │       └── main_test.go   # Tests application
 ├── docs/                  # Documentation
-│   ├── API_REFERENCES.md  # Référence API
-│   └── adr/               # Architecture Decision Records
+│   └── API_REFERENCES.md  # Référence API
 ├── config.example.yaml    # Configuration exemple
 └── README_FR.md           # Ce fichier
 ```
@@ -741,12 +772,17 @@ go test -cover ./...
 ### Commandes Make
 
 ```bash
-make build      # Compiler
-make test       # Tests
-make bench      # Benchmarks
-make clean      # Nettoyer
-make lint       # Lancers les linters
-make install    # Installer dans GOPATH/bin
+make build       # Compiler
+make test        # Tests (avec race detector)
+make test-short  # Tests rapides
+make bench       # Benchmarks
+make bench-full  # Benchmarks complets
+make run         # Compiler et lancer avec config.yaml
+make clean       # Nettoyer les artefacts et données
+make lint        # Lancer les linters
+make fmt         # Formater le code
+make install     # Installer dans GOPATH/bin
+make prepublish VERSION=x.y.z  # Préparer une release
 ```
 
 
@@ -767,13 +803,16 @@ make install    # Installer dans GOPATH/bin
 
 #### ✅ Améliorations
 
-- **Configuration Complète**: Ajout des champs manquants (model_hash, timeout_seconds, paramètres sqlite)
+- **Configuration Complète**: Ajout des champs manquants (model_hash, timeout_seconds, paramètres sqlite, overlap_cache, extraction)
 - **Précision Documentation**: Cohérence 100% entre README et code source
 - **Gestion Erreurs**: Correction des erreurs silencieuses dans StoreMemory avec logging
+- **Seuil Adaptatif**: Baisse du seuil de pertinence pour les petits corpus afin que les requêtes sur <10 mémoires retournent toujours des résultats
+- **Mapping Room par Défaut**: Assignation automatique des rooms standards (`decisions`, `facts`, `preferences`, `session`, `debug`) selon le type détecté quand aucune room n'est fournie
 
 #### ✅ Suppressions
 
 - **Paramètre Inutilisé**: Suppression de `max_concurrent_queries` (documenté mais non implémenté)
+- **Docs Dev Internes**: Suppression de `docs/adr/` et `docs/dev/` du repo public
 
 ### v0.3.0 (2026-04-10)
 

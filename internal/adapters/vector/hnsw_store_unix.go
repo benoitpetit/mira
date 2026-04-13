@@ -141,8 +141,8 @@ func (h *HNSWStore) AddCandidate(ctx context.Context, c *entities.Candidate) err
 	defer h.mu.Unlock()
 
 	id := h.getNextID()
-	h.idToUUID[id] = c.ID()
-	h.uuidToID[c.ID()] = id
+	h.idToUUID[id] = c.Verbatim.ID
+	h.uuidToID[c.Verbatim.ID] = id
 
 	n := node{
 		id:        id,

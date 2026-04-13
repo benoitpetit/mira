@@ -99,8 +99,22 @@ func (c *Controller) RegisterTools(mcpServer server.MCPServer) {
 	mcpServer.HandleListTools(func(ctx context.Context, cursor *string) (*mcptypes.ListToolsResult, error) {
 		tools := []mcptypes.Tool{
 			{
-				Name:        "mira_store",
-				Description: "Store a memory in MIRA with deterministic extraction",
+				Name: "mira_store",
+				Description: `Store a memory in MIRA with automatic entity extraction and fingerprinting.
+
+The content is analyzed to extract entities, create a semantic fingerprint for similarity matching,
+and link to existing causal chains if applicable.
+
+Parameters:
+  - content: The text to store (required)
+  - wing: Namespace/project for organization (e.g., "auth-service", "frontend", "infra")
+  - room: Sub-category within the wing (e.g., "decisions", "bugs", "architecture")
+  - type: Memory type - auto-detected if empty. Values: decision|fact|preference|session_note|debug_log
+
+Examples:
+  Store a decision:  {"content": "Use JWT tokens with RS256 for OAuth2", "wing": "auth-service", "room": "decisions", "type": "decision"}
+  Store a debug log: {"content": "Fixed nil pointer in user.go:42", "wing": "api", "room": "debug", "type": "debug_log"}
+  Store a fact:      {"content": "Database connection pool max is 100", "wing": "infra", "type": "fact"}`,
 				InputSchema: mcptypes.ToolInputSchema{
 					Type: "object",
 					Properties: map[string]interface{}{
@@ -112,21 +126,48 @@ func (c *Controller) RegisterTools(mcpServer server.MCPServer) {
 				},
 			},
 			{
-				Name:        "mira_recall",
-				Description: "Retrieve optimal context for a query with budget",
+				Name: "mira_recall",
+				Description: `Retrieve relevant memories for a query using semantic similarity and session-aware ranking.
+
+Returns the most relevant verbatims within the specified token budget, ranked by:
+1. Semantic similarity to the query (embedding-based)
+2. Session recency boost (recent items in current session)
+3. Causal relevance (items linked in decision chains)
+
+Parameters:
+  - query: Search text or question
+  - budget: Max tokens to return (default: 4000)
+  - wing: Filter to specific namespace/project
+  - room: Filter to specific sub-category
+
+Examples:
+  General recall:    {"query": "What was decided about authentication?", "budget": 2000}
+  Filtered recall:   {"query": "database migration", "wing": "infra", "room": "decisions"}
+  Quick context:     {"query": "latest bugs", "budget": 1000, "wing": "api"}`,
 				InputSchema: mcptypes.ToolInputSchema{
 					Type: "object",
 					Properties: map[string]interface{}{
-						"query":  map[string]string{"type": "string", "description": "Query/search"},
-						"budget": map[string]string{"type": "number", "description": "Token budget (default: 4000)"},
-						"wing":   map[string]string{"type": "string", "description": "Filter by wing"},
-						"room":   map[string]string{"type": "string", "description": "Filter by room"},
+						"query":          map[string]string{"type": "string", "description": "Query/search text"},
+						"budget":         map[string]string{"type": "number", "description": "Token budget (default: 4000)"},
+						"wing":           map[string]string{"type": "string", "description": "Filter by wing/namespace"},
+						"room":           map[string]string{"type": "string", "description": "Filter by room/sub-category"},
+						"fallback_wings": map[string]string{"type": "string", "description": "Comma-separated fallback wings to search if primary wing yields no results"},
 					},
 				},
 			},
 			{
-				Name:        "mira_load",
-				Description: "Load complete verbatim by ID (T0)",
+				Name: "mira_load",
+				Description: `Load a complete memory verbatim by its ID.
+
+Retrieves the full content including metadata (creation time, type, wing, room, entities).
+Use when you have a verbatim ID from a previous recall or causal chain and need the complete details.
+
+Parameters:
+  - id: Verbatim UUID or T0 reference (e.g., "T0:auth-123" or full UUID)
+
+Examples:
+  Load by T0 ref:    {"id": "T0:auth-service-abc123"}
+  Load by UUID:      {"id": "550e8400-e29b-41d4-a716-446655440000"}`,
 				InputSchema: mcptypes.ToolInputSchema{
 					Type: "object",
 					Properties: map[string]interface{}{
@@ -135,42 +176,88 @@ func (c *Controller) RegisterTools(mcpServer server.MCPServer) {
 				},
 			},
 			{
-				Name:        "mira_causal_chain",
-				Description: "Trace back causal chain of a decision or event",
+				Name: "mira_causal_chain",
+				Description: `Trace the causal chain of a decision or event through linked memories.
+
+Shows how decisions evolved over time by following parent-child relationships between memories.
+Useful for understanding the context and reasoning behind important decisions.
+
+Parameters:
+  - id: Fingerprint ID or verbatim reference to start from
+  - max_depth: How far back to trace (default: 5)
+  - include_consequences: Also show downstream effects (children)
+
+Examples:
+  Trace decision:    {"id": "T0:auth-decision-xyz", "max_depth": 3}
+  Full chain:        {"id": "auth-service-migration", "max_depth": 10, "include_consequences": true}`,
 				InputSchema: mcptypes.ToolInputSchema{
 					Type: "object",
 					Properties: map[string]interface{}{
-						"id":                   map[string]string{"type": "string", "description": "Fingerprint ID"},
+						"id":                   map[string]string{"type": "string", "description": "Fingerprint ID or verbatim reference"},
 						"max_depth":            map[string]string{"type": "number", "description": "Max depth (default: 5)"},
-						"include_consequences": map[string]string{"type": "boolean", "description": "Include consequences (children)"},
+						"include_consequences": map[string]string{"type": "boolean", "description": "Include consequences/children"},
 					},
 				},
 			},
 			{
-				Name:        "mira_status",
-				Description: "MIRA system stats and health",
+				Name: "mira_status",
+				Description: `Get MIRA system statistics and health information.
+
+Returns:
+  - Total memories stored
+  - Vector index status (HNSW)
+  - Memory type distribution
+  - Archive status
+  - Storage usage
+
+No parameters required. Use to check system health before operations.`,
 				InputSchema: mcptypes.ToolInputSchema{
 					Type:       "object",
 					Properties: map[string]interface{}{},
 				},
 			},
 			{
-				Name:        "mira_timeline",
-				Description: "Filtered chronological reconstruction",
+				Name: "mira_timeline",
+				Description: `Reconstruct a chronological timeline of memories filtered by criteria.
+
+Returns memories in chronological order, useful for seeing how a project or topic evolved over time.
+All filters are optional - use combinations to narrow results.
+
+Parameters:
+  - wing: Filter to specific namespace/project (required for large databases)
+  - room: Filter to sub-category
+  - since: Start date (ISO 8601, e.g., "2024-01-15")
+  - until: End date (ISO 8601)
+  - type: Filter by memory type (decision|fact|preference|session_note|debug_log)
+
+Examples:
+  Project timeline:  {"wing": "auth-service", "since": "2024-01-01"}
+  Sprint decisions:  {"wing": "frontend", "room": "sprint-5", "type": "decision"}
+  Recent debug:      {"wing": "api", "type": "debug_log", "since": "2024-04-01"}`,
 				InputSchema: mcptypes.ToolInputSchema{
 					Type: "object",
 					Properties: map[string]interface{}{
-						"wing":  map[string]string{"type": "string", "description": "Required wing"},
-						"room":  map[string]string{"type": "string", "description": "Filter by room"},
-						"since": map[string]string{"type": "string", "description": "Start date ISO 8601"},
+						"wing":  map[string]string{"type": "string", "description": "Required wing/namespace"},
+						"room":  map[string]string{"type": "string", "description": "Filter by room/sub-category"},
+						"since": map[string]string{"type": "string", "description": "Start date ISO 8601 (e.g., 2024-01-15)"},
 						"until": map[string]string{"type": "string", "description": "End date ISO 8601"},
-						"type":  map[string]string{"type": "string", "description": "Filter by type"},
+						"type":  map[string]string{"type": "string", "description": "Filter by type: decision|fact|preference|session_note|debug_log"},
 					},
 				},
 			},
 			{
-				Name:        "mira_archive",
-				Description: "Archive and clean old memories according to decay rates",
+				Name: "mira_archive",
+				Description: `Archive and clean old memories according to configured decay rates.
+
+Memories are archived based on:
+  - Age (older memories decay faster)
+  - Access patterns (unused memories archive sooner)
+  - Type-specific thresholds (debug_logs archive faster than decisions)
+
+This operation is safe - archived memories can be restored if needed.
+Returns statistics about what was archived.
+
+No parameters required. Use periodically to maintain database size.`,
 				InputSchema: mcptypes.ToolInputSchema{
 					Type:       "object",
 					Properties: map[string]interface{}{},
@@ -304,11 +391,22 @@ func (c *Controller) handleRecall(ctx context.Context, args map[string]interface
 		}
 	}
 
+	var fallbackWings []string
+	if fw, ok := args["fallback_wings"]; ok {
+		if fws, ok := fw.(string); ok && fws != "" {
+			fallbackWings = strings.Split(fws, ",")
+			for i := range fallbackWings {
+				fallbackWings[i] = strings.TrimSpace(fallbackWings[i])
+			}
+		}
+	}
+
 	input := interactors.RecallMemoryInput{
-		Query:  query,
-		Budget: budget,
-		Wing:   wing,
-		Room:   room,
+		Query:         query,
+		Budget:        budget,
+		Wing:          wing,
+		Room:          room,
+		FallbackWings: fallbackWings,
 	}
 
 	output, err := c.recallMemory.Execute(ctx, input)

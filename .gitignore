@@ -52,3 +52,8 @@ config.yaml
 backup/*.zip
 backup/*.tar.gz
 docs/PLAN.md
+
+# Temporary/debug files (development only)
+debug_*.go
+test_mcp_*.go
+benchmark_results.json

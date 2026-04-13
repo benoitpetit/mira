@@ -966,15 +966,16 @@ func (r *SQLiteRepository) GetCandidatesWithEmbeddings(ctx context.Context, ids 
 			verbatim.Room = &vRoom.String
 		}
 
+		fpID, _ := uuid.FromBytes(fID)
 		fp := &entities.Fingerprint{
-			ID:            id,
+			ID:            fpID,
 			VerbatimID:    id,
 			Type:          valueobjects.MemoryType(fType),
 			FactCount:     fFactCount,
 			TokenEstimate: fTokenEstimate,
 			ModelHash:     fModelHash,
-			Data:          valueobjects.FingerprintData{},
 		}
+		_ = json.Unmarshal(fData, &fp.Data)
 
 		candidates = append(candidates, entities.NewCandidate(fp, verbatim, vec))
 	}
