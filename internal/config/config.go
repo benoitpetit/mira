@@ -214,6 +214,9 @@ type WebhooksConfig struct {
 // Validate checks if the configuration is valid and applies defaults for invalid values
 func (c *Config) Validate() error {
 	// Storage validation
+	if dataPath := os.Getenv("MIRA_DATA_PATH"); dataPath != "" {
+		c.Storage.Path = dataPath
+	}
 	if c.Storage.Path == "" {
 		c.Storage.Path = ".mira"
 	}

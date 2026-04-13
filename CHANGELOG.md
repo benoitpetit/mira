@@ -45,6 +45,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - MIRA automatically appends `.mira/` to `.gitignore` when a `.gitignore` file exists in the project root
   - Prevents accidental commits of runtime data
 
+- **Zero-Config Startup & Multi-Platform Config Resolution**
+  - MIRA can now start without any `config.yaml` file (uses built-in defaults)
+  - Added `config.ResolveConfigPath()` with cross-platform fallbacks:
+    - explicit `-config` flag → `MIRA_CONFIG` env var → `./config.yaml` → OS user config dir (`~/.config/mira/`, `~/Library/Application Support/mira/`, `%APPDATA%/mira/`)
+  - Added `MIRA_DATA_PATH` environment variable to override the storage path without editing config files
+  - Improves MCP client integration (e.g. b0p) by removing the hard dependency on a present `config.yaml`
+
 ## [0.3.1] - 2026-04-12
 
 ### Added

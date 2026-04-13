@@ -333,7 +333,7 @@ func (a *Application) Run() error {
 
 // NewApplicationFromConfig loads config and creates a new application
 func NewApplicationFromConfig(configPath string) (*Application, error) {
-	cfg, err := config.Load(configPath)
+	cfg, err := config.LoadOrDefault(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}

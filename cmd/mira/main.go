@@ -9,11 +9,12 @@ import (
 	"os"
 
 	"github.com/benoitpetit/mira/internal/app"
+	"github.com/benoitpetit/mira/internal/config"
 )
 
 func main() {
 	var (
-		configPath = flag.String("config", "config.yaml", "Path to configuration file")
+		configPath = flag.String("config", config.ResolveConfigPath(""), "Path to configuration file")
 		migrate    = flag.Bool("migrate", false, "Run database migrations and exit")
 		version    = flag.Bool("version", false, "Show version and exit")
 	)

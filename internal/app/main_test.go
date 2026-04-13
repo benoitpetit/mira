@@ -265,12 +265,16 @@ mcp:
 	}
 }
 
-// TestNewApplicationFromConfig_InvalidPath tests error handling for invalid config path
+// TestNewApplicationFromConfig_InvalidPath tests that a missing config file falls back to defaults
 func TestNewApplicationFromConfig_InvalidPath(t *testing.T) {
-	_, err := NewApplicationFromConfig("/nonexistent/path/config.yaml")
-	if err == nil {
-		t.Error("Expected error for invalid config path, got nil")
+	app, err := NewApplicationFromConfig("/nonexistent/path/config.yaml")
+	if err != nil {
+		t.Fatalf("Expected success with default config when file missing, got error: %v", err)
 	}
+	if app == nil {
+		t.Fatal("Expected application to be created with defaults")
+	}
+	app.Close()
 }
 
 // TestApplicationClose tests the cleanup of application resources
