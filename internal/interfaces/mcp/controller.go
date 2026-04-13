@@ -201,11 +201,11 @@ Examples:
 				Name: "mira_causal_chain",
 				Description: `Trace the causal chain of a decision or event through linked memories.
 
-Shows how decisions evolved over time by following parent-child relationships between memories.
-Useful for understanding the context and reasoning behind important decisions.
+IMPORTANT: You must use the exact Fingerprint ID returned by mira_recall or mira_timeline.
+Do not invent or guess IDs. If you only have a T0: reference, it must be a valid UUID (e.g., T0:550e8400-e29b-41d4-a716-446655440000).
 
 Parameters:
-  - id: Fingerprint ID (full UUID) or T0:verbatim-reference. The ID shown in recall/timeline results.
+  - id: Exact Fingerprint ID from a previous mira_recall / mira_timeline result
   - max_depth: How far back to trace (default: 5)
   - include_consequences: Also show downstream effects (children)
 
@@ -215,7 +215,7 @@ Examples:
 				InputSchema: mcptypes.ToolInputSchema{
 					Type: "object",
 					Properties: map[string]interface{}{
-						"id":                   map[string]string{"type": "string", "description": "Fingerprint ID (full UUID) or T0:verbatim-ref"},
+						"id":                   map[string]string{"type": "string", "description": "Exact Fingerprint ID from mira_recall or mira_timeline"},
 						"max_depth":            map[string]string{"type": "number", "description": "Max depth (default: 5)"},
 						"include_consequences": map[string]string{"type": "boolean", "description": "Include consequences/children"},
 					},
@@ -505,7 +505,7 @@ func (c *Controller) handleLoad(ctx context.Context, args map[string]interface{}
 	idStr = strings.TrimPrefix(idStr, "T0:")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		return nil, fmt.Errorf("invalid UUID: %w", err)
+		return nil, fmt.Errorf("invalid ID '%s': %w. Use the exact Fingerprint ID returned by mira_recall or mira_timeline", idStr, err)
 	}
 
 	input := interactors.LoadMemoryInput{ID: id}
@@ -529,9 +529,10 @@ func (c *Controller) handleCausalChain(ctx context.Context, args map[string]inte
 	}
 
 	isT0Ref := strings.HasPrefix(idStr, "T0:")
-	parsedID, err := uuid.Parse(strings.TrimPrefix(idStr, "T0:"))
+	refBody := strings.TrimPrefix(idStr, "T0:")
+	parsedID, err := uuid.Parse(refBody)
 	if err != nil {
-		return nil, fmt.Errorf("invalid ID format: %w", err)
+		return nil, fmt.Errorf("invalid ID '%s': %w. Use the exact Fingerprint ID returned by mira_recall or mira_timeline. Do not invent T0: references.", idStr, err)
 	}
 
 	id := parsedID
@@ -541,7 +542,7 @@ func (c *Controller) handleCausalChain(ctx context.Context, args map[string]inte
 		}
 		fp, err := c.fingerprintRepo.GetFingerprintByVerbatimID(ctx, parsedID)
 		if err != nil {
-			return nil, fmt.Errorf("could not resolve T0 reference to fingerprint: %w", err)
+			return nil, fmt.Errorf("could not resolve T0 reference '%s' to a fingerprint: %w. Use the exact Fingerprint ID from mira_recall or mira_timeline", idStr, err)
 		}
 		id = fp.ID
 	}
