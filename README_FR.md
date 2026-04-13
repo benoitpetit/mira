@@ -791,6 +791,27 @@ make prepublish VERSION=x.y.z  # Préparer une release
 
 ## Changelog
 
+### v0.3.2 (2026-04-13)
+
+**Release Intégration et Robustesse**
+
+#### ✅ Nouvelles Fonctionnalités
+
+- **Wings de Secours**: `mira_recall` supporte les wings de secours séparés par des virgules quand le wing principal ne retourne rien
+- **Mapping Room par Défaut**: Assignation automatique des rooms standards (`decisions`, `facts`, `preferences`, `session`, `debug`) selon le type détecté
+- **Seuil Adaptatif**: Baisse du seuil de pertinence pour les petits corpus (<10 mémoires) afin que les requêtes retournent toujours des résultats
+- **Stockage Scopé au Projet**: Déplacement du stockage par défaut de `./mira_data` vers `.mira/` avec support auto-gitignore
+- **Démarrage Zero-Config**: MIRA peut démarrer sans aucun fichier `config.yaml` en utilisant les valeurs par défaut intégrées
+- **Résolution Cross-Platform du Config**: `-config` → variable d'env `MIRA_CONFIG` → `./config.yaml` → répertoire de config utilisateur OS
+- **MIRA_DATA_PATH**: Variable d'environnement pour surcharger le chemin de stockage sans modifier les fichiers de config
+
+#### ✅ Corrections
+
+- **Alignement UUID Fingerprint**: `GetCandidatesWithEmbeddings` retourne désormais correctement les IDs fingerprint
+- **Population Données Fingerprint**: Les données JSON fingerprint sont correctement désérialisées depuis SQLite
+- **Cohérence ID HNSW**: `AddCandidate` mappe les nœuds HNSW avec `Verbatim.ID` au lieu de `Fingerprint.ID`
+- **Version CLI**: Correction de l'affichage de version en `v0.3.2`
+
 ### v0.3.1 (2026-04-12)
 
 **Améliorations d'Architecture et Cohérence Documentation**

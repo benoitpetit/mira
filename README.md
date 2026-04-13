@@ -787,6 +787,27 @@ make prepublish VERSION=x.y.z  # Prepare a release
 
 ## Changelog
 
+### v0.3.2 (2026-04-13)
+
+**Integration & Robustness Release**
+
+#### ✅ New Features
+
+- **Fallback Wings**: `mira_recall` supports comma-separated fallback wings when primary wing yields no results
+- **Default Room Mapping**: Auto-assigns standard rooms (`decisions`, `facts`, `preferences`, `session`, `debug`) based on detected memory type
+- **Adaptive Threshold**: Lowered relevance threshold for small corpora (<10 memories) so queries still return useful results
+- **Project-Scoped Data Storage**: Default storage moved from `./mira_data` to `.mira/` with auto-gitignore support
+- **Zero-Config Startup**: MIRA can start without any `config.yaml` file using built-in defaults
+- **Cross-Platform Config Resolution**: `-config` → `MIRA_CONFIG` env → `./config.yaml` → OS user config dir
+- **MIRA_DATA_PATH**: Environment variable to override storage path without editing config files
+
+#### ✅ Fixes
+
+- **Fingerprint UUID Alignment**: `GetCandidatesWithEmbeddings` now correctly returns fingerprint IDs
+- **Fingerprint Data Population**: JSON fingerprint data properly unmarshalled from SQLite
+- **HNSW ID Consistency**: `AddCandidate` maps HNSW nodes using `Verbatim.ID` instead of `Fingerprint.ID`
+- **CLI Version String**: Corrected version output to `v0.3.2`
+
 ### v0.3.1 (2026-04-12)
 
 **Architecture Improvements & Documentation Consistency**
