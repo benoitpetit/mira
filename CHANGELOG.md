@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-04-13
+
+### Added
+- **Clear Memory Tool**: New `mira_clear_memory` MCP tool for permanent memory deletion
+  - `global` mode: deletes all memories across all wings/rooms and resets the HNSW index
+  - `room` mode: deletes only memories within a specific `wing` and optional `room`
+  - Implemented `ClearAll` and `ClearByRoom` in SQLite repository and HNSW vector store
+
+- **T0 Reference Resolution for Causal Chain**: `mira_causal_chain` now correctly resolves `T0:<uuid>` verbatim references to fingerprint IDs before tracing the causal graph
+  - Added `GetFingerprintByVerbatimID` repository method
+  - Enables LLMs to chain tools using verbatim references returned by recall
+
+- **ID Exposure in Tool Outputs**: `mira_recall` and `mira_timeline` now include exact memory IDs in their text output
+  - Allows reliable downstream chaining to `mira_causal_chain` and `mira_load`
+
+### Fixed
+- **LLM Self-Correction for Invalid IDs**: `mira_causal_chain` and `mira_load` return explicit, actionable error messages when invalid or invented IDs are passed
+  - Error text instructs the caller to use exact IDs from `mira_recall` or `mira_timeline`
+  - Reduces hallucinated identifiers like `T0:b0p-session-note-1`
+
+- **Cross-Language Recall Robustness**: Adaptive relevance threshold lowered from 0.30 to 0.15 for small corpora (<100 memories)
+  - Significantly improves retrieval when querying in one language against memories stored in another (e.g., English query → French memories)
+
 ## [0.3.2] - 2026-04-13
 
 ### Added
@@ -262,6 +285,8 @@ hnsw:
 
 ---
 
+[0.3.3]: https://github.com/benoitpetit/mira/releases/tag/v0.3.3
+[0.3.2]: https://github.com/benoitpetit/mira/releases/tag/v0.3.2
 [0.3.1]: https://github.com/benoitpetit/mira/releases/tag/v0.3.1
 [0.3.0]: https://github.com/benoitpetit/mira/releases/tag/v0.3.0
 [0.2.0]: https://github.com/benoitpetit/mira/releases/tag/v0.2.0

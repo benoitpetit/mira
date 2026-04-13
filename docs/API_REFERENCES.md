@@ -32,6 +32,7 @@ Practical examples for using MIRA's MCP tools in real-world scenarios.
 | `mira_timeline` | Chronological reconstruction | `wing` (required), `room` (optional), `since` (optional), `until` (optional), `type` (optional) |
 | `mira_status` | System statistics and health | none |
 | `mira_archive` | Archive old memories | none |
+| `mira_clear_memory` | Permanently delete all or room-scoped memories | `mode` (`global` or `room`), `wing` (required for room), `room` (optional for room) |
 
 **Note on `room`**: If omitted, MIRA automatically assigns a standard room based on the detected memory type:
 - `decision` → `decisions`
@@ -39,11 +40,6 @@ Practical examples for using MIRA's MCP tools in real-world scenarios.
 - `preference` → `preferences`
 - `session_note` → `session`
 - `debug_log` → `debug`
-| `mira_load` | Load full verbatim by ID | `id` (required) |
-| `mira_causal_chain` | Trace causal chain | `id` (required), `max_depth` (optional), `include_consequences` (optional) |
-| `mira_timeline` | Chronological reconstruction | `wing` (required), `room` (optional), `since` (optional), `until` (optional), `type` (optional) |
-| `mira_status` | System statistics and health | none |
-| `mira_archive` | Archive old memories | none |
 
 ### Memory Types
 
@@ -266,6 +262,35 @@ The authentication service runs on port 8080 and uses JWT tokens with a 24-hour 
 === CONSEQUENCES (Downstream) ===
 → [decision] Implement Apollo Federation (2026-04-10)
   → [fact] Schema registry established
+```
+
+### Clear Memory
+
+Delete all memories globally or scoped to a specific wing/room.
+
+```json
+// Clear everything
+{
+  "tool": "mira_clear_memory",
+  "arguments": {
+    "mode": "global"
+  }
+}
+
+// Clear one room
+{
+  "tool": "mira_clear_memory",
+  "arguments": {
+    "mode": "room",
+    "wing": "backend-team",
+    "room": "database-migration"
+  }
+}
+```
+
+**Response:**
+```
+All memories have been permanently deleted.
 ```
 
 ### Store with Causal Relation
@@ -560,7 +585,7 @@ curl http://localhost:9090/health
 {
   "status": "healthy",
   "timestamp": "2026-04-10T14:30:00Z",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "checks": {
     "database": {"status": "pass", "message": "connected"},
     "vector_store": {"status": "pass", "message": "HNSW ready"},
@@ -682,4 +707,4 @@ Error: wing is required
 ---
 
 *Last updated: 2026-04-13*
-*Version: 0.3.2*
+*Version: 0.3.3*

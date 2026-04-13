@@ -8,7 +8,7 @@
   
   [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.3.2-blue?style=flat-square)]()
+  [![Version](https://img.shields.io/badge/Version-0.3.3-blue?style=flat-square)]()
   [![Tests](https://img.shields.io/badge/Tests-77%25-brightgreen?style=flat-square)]()
   
   *100% Local • Deterministic • O(n log n) • Clean Architecture*
@@ -513,7 +513,7 @@ We decided to migrate to PostgreSQL for v2...
 
 ```yaml
 system:
-  version: "0.3.2"
+  version: "0.3.3"
 
 storage:
   path: ".mira"
@@ -564,7 +564,7 @@ extraction:
 
 mcp:
   name: "mira"
-  version: "0.3.2"
+  version: "0.3.3"
   transport: "stdio"
   timeout_seconds: 30
 
@@ -598,6 +598,7 @@ webhooks:
 | `mira_status`       | System statistics and health          |
 | `mira_timeline`     | Filtered chronological reconstruction |
 | `mira_archive`      | Archive and clean old memories        |
+| `mira_clear_memory` | Permanently delete all or room-scoped memories |
 
 ### Fallback Wings
 
@@ -674,6 +675,13 @@ curl http://localhost:9090/metrics
 | SQLite Search     | ~50ms for 10K vectors |
 | Full Allocation   | ~5ms with cache       |
 | Cosine Similarity | 50M ops/sec           |
+
+### Optimizations in v0.3.3
+
+- **Clear Memory Tool**: New `mira_clear_memory` MCP tool for global or room-scoped memory deletion
+- **Causal Chain T0 Resolution**: `mira_causal_chain` now correctly resolves `T0:` verbatim references to fingerprint IDs
+- **ID Visibility in Outputs**: `mira_recall` and `mira_timeline` now include memory IDs for downstream tool chaining
+- **LLM-Self-Correction Errors**: Invalid ID errors are now actionable, telling LLMs exactly where to get valid IDs
 
 ### Optimizations in v0.3.1
 
@@ -802,91 +810,7 @@ make prepublish VERSION=x.y.z  # Prepare a release
 
 ## Changelog
 
-### v0.3.2 (2026-04-13)
-
-**Integration & Robustness Release**
-
-#### ✅ New Features
-
-- **Fallback Wings**: `mira_recall` supports comma-separated fallback wings when primary wing yields no results
-- **Default Room Mapping**: Auto-assigns standard rooms (`decisions`, `facts`, `preferences`, `session`, `debug`) based on detected memory type
-- **Adaptive Threshold**: Lowered relevance threshold for small corpora (<10 memories) so queries still return useful results
-- **Project-Scoped Data Storage**: Default storage moved from `./mira_data` to `.mira/` with auto-gitignore support
-- **Zero-Config Startup**: MIRA can start without any `config.yaml` file using built-in defaults
-- **Cross-Platform Config Resolution**: `-config` → `MIRA_CONFIG` env → `./config.yaml` → OS user config dir
-- **MIRA_DATA_PATH**: Environment variable to override storage path without editing config files
-
-#### ✅ Fixes
-
-- **Fingerprint UUID Alignment**: `GetCandidatesWithEmbeddings` now correctly returns fingerprint IDs
-- **Fingerprint Data Population**: JSON fingerprint data properly unmarshalled from SQLite
-- **HNSW ID Consistency**: `AddCandidate` maps HNSW nodes using `Verbatim.ID` instead of `Fingerprint.ID`
-- **CLI Version String**: Corrected version output to `v0.3.2`
-
-### v0.3.1 (2026-04-12)
-
-**Architecture Improvements & Documentation Consistency**
-
-#### ✅ New Features
-
-- **Structured Logging**: `Logger` interface with `SimpleLogger` and `NoOpLogger` implementations
-- **Complete Causal Graph BFS**: Full implementation respecting `max_depth` parameter
-- **EmbeddingSource Interface**: Dependency inversion for HNSW store (Clean Architecture)
-- **Centralized Vector Utilities**: Single source of truth for cosine similarity
-- **Comprehensive Documentation**: Complete godoc for all ports
-
-#### ✅ Improvements
-
-- **Configuration Completeness**: Added missing fields (model_hash, timeout_seconds, sqlite settings, overlap_cache, extraction)
-- **Documentation Accuracy**: 100% consistency between README and source code
-- **Error Handling**: Fixed silent errors in StoreMemory with proper logging
-- **Adaptive Threshold**: Lowered relevance threshold for small corpora so queries on <10 memories still return results
-- **Default Room Mapping**: Auto-assigns standard rooms (`decisions`, `facts`, `preferences`, `session`, `debug`) based on detected memory type when no room is provided
-
-#### ✅ Removed
-
-- **Unused Parameter**: Removed `max_concurrent_queries` (documented but not implemented)
-- **Internal Dev Docs**: Removed `docs/adr/` and `docs/dev/` from public repository
-
-### v0.3.0 (2026-04-10)
-
-**Major Release - Complete Refactoring**
-
-#### ✅ New Features
-
-- **Clean Architecture**: Complete codebase restructuring with proper layering
-- **HNSW Vector Index**: O(log n) approximate nearest neighbor search
-- **Cybertron Embeddings**: Real transformer embeddings (all-MiniLM-L6-v2)
-- **Metrics System**: Prometheus-compatible metrics with 10 metrics
-- **Webhook Notifications**: HTTP callbacks with HMAC signatures
-- **Health Checks**: Kubernetes-ready liveness/readiness probes
-- **Circuit Breaker**: Resilience pattern for webhooks
-- **Retry Logic**: Exponential backoff for resilient operations
-
-#### ✅ Improvements
-
-- **Test Coverage**: 55.9% → 77.1% (added 55+ tests)
-- **Quality Score**: 70/100 → 88/100
-- **Context Support**: Added `context.Context` throughout (40+ files)
-- **Lazy Evaluation**: Optimized CBA overlap calculation
-- **HNSW Persistence**: Complete save/load of graph structure
-
-#### ✅ Bug Fixes
-
-- HNSW BuildFromStore loading
-- Similarity sorting in SQLiteVectorStore
-- GetFingerprintByID implementation
-- Webhook event routing
-- Temporal causality checks
-
-### v0.2.0 (2026-04-09)
-
-- HNSW foundation
-- Technical whitepaper
-
-### v0.1.0 (2026-04-08)
-
-- Initial version
+See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
 ---
 

@@ -8,7 +8,7 @@
   
   [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.3.2-blue?style=flat-square)]()
+  [![Version](https://img.shields.io/badge/Version-0.3.3-blue?style=flat-square)]()
   [![Tests](https://img.shields.io/badge/Tests-77%25-brightgreen?style=flat-square)]()
   
   *100% Local • Déterministe • O(n log n) • Clean Architecture*
@@ -513,7 +513,7 @@ Nous avons décidé de migrer vers PostgreSQL pour la v2...
 
 ```yaml
 system:
-  version: "0.3.2"
+  version: "0.3.3"
 
 storage:
   path: ".mira"
@@ -564,7 +564,7 @@ extraction:
 
 mcp:
   name: "mira"
-  version: "0.3.2"
+  version: "0.3.3"
   transport: "stdio"
   timeout_seconds: 30
 
@@ -598,6 +598,7 @@ webhooks:
 | `mira_status`       | Statistiques système et santé           |
 | `mira_timeline`     | Reconstruction chronologique filtrée    |
 | `mira_archive`      | Archive et nettoie vieilles mémoires    |
+| `mira_clear_memory` | Supprime définitivement toutes les mémoires ou celles d'un room |
 
 ### Wings de Secours (Fallback Wings)
 
@@ -674,6 +675,13 @@ curl http://localhost:9090/metrics
 | Recherche SQLite    | ~50ms pour 10K vecteurs |
 | Allocation complète | ~5ms avec cache         |
 | Cosine similarity   | 50M ops/sec             |
+
+### Optimisations en v0.3.3
+
+- **Outil Clear Memory** : Nouvel outil MCP `mira_clear_memory` pour la suppression globale ou par room
+- **Résolution T0 Chaîne Causale** : `mira_causal_chain` résout désormais correctement les références `T0:` en IDs fingerprint
+- **Visibilité des IDs dans les Sorties** : `mira_recall` et `mira_timeline` incluent maintenant les IDs mémoire pour chaîner les outils
+- **Erreurs Auto-Correctrices pour LLM** : Les erreurs d'ID invalide sont actionnables et indiquent aux LLMs où obtenir des IDs valides
 
 ### Optimisations en v0.3.1
 
@@ -806,91 +814,7 @@ make prepublish VERSION=x.y.z  # Préparer une release
 
 ## Changelog
 
-### v0.3.2 (2026-04-13)
-
-**Release Intégration et Robustesse**
-
-#### ✅ Nouvelles Fonctionnalités
-
-- **Wings de Secours**: `mira_recall` supporte les wings de secours séparés par des virgules quand le wing principal ne retourne rien
-- **Mapping Room par Défaut**: Assignation automatique des rooms standards (`decisions`, `facts`, `preferences`, `session`, `debug`) selon le type détecté
-- **Seuil Adaptatif**: Baisse du seuil de pertinence pour les petits corpus (<10 mémoires) afin que les requêtes retournent toujours des résultats
-- **Stockage Scopé au Projet**: Déplacement du stockage par défaut de `./mira_data` vers `.mira/` avec support auto-gitignore
-- **Démarrage Zero-Config**: MIRA peut démarrer sans aucun fichier `config.yaml` en utilisant les valeurs par défaut intégrées
-- **Résolution Cross-Platform du Config**: `-config` → variable d'env `MIRA_CONFIG` → `./config.yaml` → répertoire de config utilisateur OS
-- **MIRA_DATA_PATH**: Variable d'environnement pour surcharger le chemin de stockage sans modifier les fichiers de config
-
-#### ✅ Corrections
-
-- **Alignement UUID Fingerprint**: `GetCandidatesWithEmbeddings` retourne désormais correctement les IDs fingerprint
-- **Population Données Fingerprint**: Les données JSON fingerprint sont correctement désérialisées depuis SQLite
-- **Cohérence ID HNSW**: `AddCandidate` mappe les nœuds HNSW avec `Verbatim.ID` au lieu de `Fingerprint.ID`
-- **Version CLI**: Correction de l'affichage de version en `v0.3.2`
-
-### v0.3.1 (2026-04-12)
-
-**Améliorations d'Architecture et Cohérence Documentation**
-
-#### ✅ Nouvelles Fonctionnalités
-
-- **Logging Structuré**: Interface `Logger` avec implémentations `SimpleLogger` et `NoOpLogger`
-- **BFS Graphe Causal Complet**: Implémentation complète respectant le paramètre `max_depth`
-- **Interface EmbeddingSource**: Inversion de dépendance pour le store HNSW (Clean Architecture)
-- **Utilitaires Vecteurs Centralisés**: Source unique pour la cosine similarity
-- **Documentation Complète**: Godoc complet pour tous les ports
-
-#### ✅ Améliorations
-
-- **Configuration Complète**: Ajout des champs manquants (model_hash, timeout_seconds, paramètres sqlite, overlap_cache, extraction)
-- **Précision Documentation**: Cohérence 100% entre README et code source
-- **Gestion Erreurs**: Correction des erreurs silencieuses dans StoreMemory avec logging
-- **Seuil Adaptatif**: Baisse du seuil de pertinence pour les petits corpus afin que les requêtes sur <10 mémoires retournent toujours des résultats
-- **Mapping Room par Défaut**: Assignation automatique des rooms standards (`decisions`, `facts`, `preferences`, `session`, `debug`) selon le type détecté quand aucune room n'est fournie
-
-#### ✅ Suppressions
-
-- **Paramètre Inutilisé**: Suppression de `max_concurrent_queries` (documenté mais non implémenté)
-- **Docs Dev Internes**: Suppression de `docs/adr/` et `docs/dev/` du repo public
-
-### v0.3.0 (2026-04-10)
-
-**Release Majeure - Refactoring Complet**
-
-#### ✅ Nouvelles Fonctionnalités
-
-- **Clean Architecture**: Restructuration complète du codebase avec couches appropriées
-- **Index Vectoriel HNSW**: Recherche approximative des plus proches voisins en O(log n)
-- **Embeddings Cybertron**: Embeddings transformers réels (all-MiniLM-L6-v2)
-- **Système de Métriques**: Métriques compatibles Prometheus avec 10 métriques
-- **Notifications Webhook**: Callbacks HTTP avec signatures HMAC
-- **Health Checks**: Sondes liveness/readiness compatibles Kubernetes
-- **Circuit Breaker**: Pattern de résilience pour les webhooks
-- **Retry Logic**: Backoff exponentiel pour opérations résilientes
-
-#### ✅ Améliorations
-
-- **Couverture de Tests**: 55.9% → 77.1% (ajout de 55+ tests)
-- **Score de Qualité**: 70/100 → 88/100
-- **Support Context**: Ajout de `context.Context` partout (40+ fichiers)
-- **Lazy Evaluation**: Optimisation du calcul d'overlap CBA
-- **Persistance HNSW**: Sauvegarde/chargement complet de la structure
-
-#### ✅ Corrections de Bugs
-
-- Chargement HNSW BuildFromStore
-- Tri par similarité dans SQLiteVectorStore
-- Implémentation GetFingerprintByID
-- Routage des événements webhook
-- Vérifications de causalité temporelle
-
-### v0.2.0 (2026-04-09)
-
-- Fondation HNSW
-- Whitepaper technique
-
-### v0.1.0 (2026-04-08)
-
-- Version initiale
+Voir [CHANGELOG.md](CHANGELOG.md) pour l'historique complet des releases.
 
 ---
 
