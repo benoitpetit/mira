@@ -54,6 +54,16 @@ func (h *HNSWStore) Delete(ctx context.Context, id uuid.UUID) error {
 	return errors.New("HNSW vector store is not supported on Windows")
 }
 
+// ClearAll removes all vectors from the index (not supported on Windows)
+func (h *HNSWStore) ClearAll(ctx context.Context) error {
+	return errors.New("HNSW vector store is not supported on Windows")
+}
+
+// ClearByRoom removes vectors by wing/room (not supported on Windows)
+func (h *HNSWStore) ClearByRoom(ctx context.Context, wing string, room *string) error {
+	return errors.New("HNSW vector store is not supported on Windows")
+}
+
 // Stats returns index statistics (not supported on Windows)
 func (h *HNSWStore) Stats() int {
 	return 0
