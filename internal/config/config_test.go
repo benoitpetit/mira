@@ -93,8 +93,8 @@ func TestValidateAppliesDefaults(t *testing.T) {
 	}
 
 	// Check defaults were applied
-	if cfg.Storage.Path != "./mira_data" {
-		t.Errorf("Storage.Path = %s, want ./mira_data", cfg.Storage.Path)
+	if cfg.Storage.Path != ".mira" {
+		t.Errorf("Storage.Path = %s, want .mira", cfg.Storage.Path)
 	}
 	if cfg.Embeddings.Dimension != 384 {
 		t.Errorf("Embeddings.Dimension = %d, want 384", cfg.Embeddings.Dimension)

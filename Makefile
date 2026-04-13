@@ -21,7 +21,7 @@ bench-full:
 	$(GO) test -bench=. -benchmem ./...
 
 clean:
-	rm -rf bin/ ./mira_data/
+	rm -rf bin/ ./.mira/
 
 run: build
 	./bin/$(BINARY) -config config.yaml

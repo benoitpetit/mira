@@ -21,7 +21,7 @@ func createTestApp(t *testing.T) (*Application, func()) {
 
 	cfg := &config.Config{
 		System: config.SystemConfig{
-			Version: "0.3.0",
+			Version: "0.3.2",
 		},
 		Storage: config.StorageConfig{
 			Path: tempDir,
@@ -54,7 +54,7 @@ func createTestApp(t *testing.T) (*Application, func()) {
 		},
 		MCP: config.MCPConfig{
 			Name:      "mira",
-			Version:   "0.3.0",
+			Version:   "0.3.2",
 			Transport: "stdio",
 		},
 		HNSW: config.HNSWConfig{
@@ -127,7 +127,7 @@ func TestHealthChecker_Check_UninitializedRepository(t *testing.T) {
 	app := &Application{
 		config: &config.Config{
 			MCP: config.MCPConfig{
-				Version: "0.3.0",
+				Version: "0.3.2",
 			},
 		},
 	}
@@ -234,7 +234,7 @@ func TestHealthChecker_ReadinessHandler_Unhealthy(t *testing.T) {
 	app := &Application{
 		config: &config.Config{
 			MCP: config.MCPConfig{
-				Version: "0.3.0",
+				Version: "0.3.2",
 			},
 		},
 	}
@@ -272,8 +272,8 @@ func TestApplication_Health(t *testing.T) {
 		t.Errorf("Expected healthy or degraded, got %s", status.Status)
 	}
 
-	if status.Version != "0.3.0" {
-		t.Errorf("Expected version 0.3.0, got %s", status.Version)
+	if status.Version != "0.3.2" {
+		t.Errorf("Expected version 0.3.2, got %s", status.Version)
 	}
 }
 

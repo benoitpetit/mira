@@ -7,6 +7,8 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -53,6 +55,9 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 	// 1. Create data directory
 	if err := os.MkdirAll(cfg.Storage.Path, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
+	}
+	if err := ensureGitignore(cfg.Storage.Path); err != nil {
+		log.Printf("[App] Note: could not ensure .gitignore: %v", err)
 	}
 
 	dbPath := cfg.Storage.Path + "/mira.db"
@@ -342,4 +347,43 @@ func RunWithConfig(configPath string) error {
 		return err
 	}
 	return app.Run()
+}
+
+// ensureGitignore adds .mira/ to .gitignore if a .gitignore exists in the project root.
+func ensureGitignore(dataPath string) error {
+	absPath, err := filepath.Abs(dataPath)
+	if err != nil {
+		return err
+	}
+	projectDir := filepath.Dir(absPath)
+	gitignorePath := filepath.Join(projectDir, ".gitignore")
+
+	if _, err := os.Stat(gitignorePath); os.IsNotExist(err) {
+		return nil // no gitignore, nothing to do
+	}
+
+	content, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		return err
+	}
+
+	s := string(content)
+	if strings.Contains(s, ".mira") {
+		return nil // already ignored
+	}
+
+	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if !strings.HasSuffix(s, "\n") {
+		if _, err := f.WriteString("\n"); err != nil {
+			return err
+		}
+	}
+
+	_, err = f.WriteString("# MIRA project data\n.mira/\n")
+	return err
 }

@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Documentation Cleanup**: Removed internal development docs (`docs/adr/`, `docs/dev/`, `docs/PLAN.md`) and temporary debug files from public repository
 
+- **Project-Scoped Data Storage**: Default storage path changed from `./mira_data` to `.mira/`
+  - Each project now gets its own isolated, hidden memory database
+  - MIRA automatically appends `.mira/` to `.gitignore` when a `.gitignore` file exists in the project root
+  - Prevents accidental commits of runtime data
+
 ## [0.3.1] - 2026-04-12
 
 ### Added

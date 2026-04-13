@@ -516,7 +516,7 @@ system:
   version: "0.3.2"
 
 storage:
-  path: "./mira_data"
+  path: ".mira"
   sqlite:
     journal_mode: WAL
     synchronous: NORMAL
@@ -666,6 +666,8 @@ curl http://localhost:9090/metrics
 - **Cache LRU**: 1000 entrées pour les embeddings de requête
 - **Persistance HNSW**: Rechargement rapide de l'index au redémarrage
 - **SQLite WAL Mode**: Performance lecture/écriture concurrente
+- **Données Scopées au Projet**: Base de données locale cachée dans `.mira/` au lieu d'un dossier global `mira_data/`
+- **Auto-Gitignore**: Ajout automatique de `.mira/` au `.gitignore` du projet s'il existe
 - **Seuil Adaptatif**: Baisse du seuil de pertinence pour les petits corpus (<10 mémoires)
 - **Mapping Room par Défaut**: Assignation automatique des rooms standards selon le type de mémoire
 

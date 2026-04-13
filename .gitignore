@@ -34,7 +34,7 @@ go.work
 Thumbs.db
 
 # Data directories (runtime)
-mira_data/
+.mira/
 *.db
 *.db-journal
 *.db-shm

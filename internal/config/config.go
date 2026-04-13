@@ -95,7 +95,7 @@ func Default() *Config {
 			Version:        "0.3.2",
 		},
 		Storage: StorageConfig{
-			Path: "./mira_data",
+			Path: ".mira",
 			SQLite: SQLiteSettingsConfig{
 				JournalMode: "WAL",
 				Synchronous: "NORMAL",
@@ -215,7 +215,7 @@ type WebhooksConfig struct {
 func (c *Config) Validate() error {
 	// Storage validation
 	if c.Storage.Path == "" {
-		c.Storage.Path = "./mira_data"
+		c.Storage.Path = ".mira"
 	}
 
 	// Embeddings validation
@@ -327,7 +327,7 @@ func (c *Config) Validate() error {
 		c.MCP.Name = "mira"
 	}
 	if c.MCP.Version == "" {
-		c.MCP.Version = "0.3.0"
+		c.MCP.Version = "0.3.2"
 	}
 	if c.MCP.Transport == "" {
 		c.MCP.Transport = "stdio"

@@ -516,7 +516,7 @@ system:
   version: "0.3.2"
 
 storage:
-  path: "./mira_data"
+  path: ".mira"
   sqlite:
     journal_mode: WAL
     synchronous: NORMAL
