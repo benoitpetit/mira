@@ -90,6 +90,14 @@ func (m *mockRecallVectorStore) Delete(ctx context.Context, id uuid.UUID) error 
 	return nil
 }
 
+func (m *mockRecallVectorStore) ClearAll(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockRecallVectorStore) ClearByRoom(ctx context.Context, wing string, room *string) error {
+	return nil
+}
+
 type mockRecallRenderer struct{}
 
 func (m *mockRecallRenderer) RenderHeader(candidate *entities.Candidate) string {

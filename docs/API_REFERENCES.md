@@ -401,6 +401,30 @@ For complex architectural decisions requiring full context:
 }
 ```
 
+### Multilingual Queries
+
+MIRA uses cross-lingual embeddings (`all-MiniLM-L6-v2`), so you can query in any language regardless of the language used when storing the memory. If the initial search is too sparse, MIRA automatically performs a broad fallback search with relaxed thresholds.
+
+```json
+// French query against English memories
+{
+  "tool": "mira_recall",
+  "arguments": {
+    "query": "règles de langue français anglais",
+    "wing": "general"
+  }
+}
+
+// Spanish query
+{
+  "tool": "mira_recall",
+  "arguments": {
+    "query": "reglas de idioma español inglés",
+    "wing": "general"
+  }
+}
+```
+
 ---
 
 ## Integration Patterns

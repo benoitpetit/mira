@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/benoitpetit/mira/internal/usecases/interactors"
 	"github.com/google/uuid"
@@ -60,6 +61,16 @@ type (
 	ArchiveMemoriesExecutor interface {
 		Execute(ctx context.Context) (*interactors.ArchiveMemoriesOutput, error)
 	}
+
+	// ClearMemoryExecutor clears memories
+	ClearMemoryExecutor interface {
+		Execute(ctx context.Context, input interactors.ClearMemoryInput) (*interactors.ClearMemoryOutput, error)
+	}
+
+	// FingerprintLookup provides read-only access to fingerprint lookups
+	FingerprintLookup interface {
+		GetFingerprintByVerbatimID(ctx context.Context, verbatimID uuid.UUID) (*entities.Fingerprint, error)
+	}
 )
 
 // Controller handles MCP tool calls
@@ -71,6 +82,8 @@ type Controller struct {
 	getStatus       GetStatusExecutor
 	getCausalChain  GetCausalChainExecutor
 	archiveMemories ArchiveMemoriesExecutor
+	clearMemory     ClearMemoryExecutor
+	fingerprintRepo FingerprintLookup
 }
 
 // NewController creates a new MCP controller
@@ -82,6 +95,8 @@ func NewController(
 	getStatus *interactors.GetStatus,
 	getCausalChain *interactors.GetCausalChain,
 	archiveMemories *interactors.ArchiveMemories,
+	clearMemory *interactors.ClearMemory,
+	fingerprintRepo FingerprintLookup,
 ) *Controller {
 	return &Controller{
 		storeMemory:     storeMemory,
@@ -91,6 +106,8 @@ func NewController(
 		getStatus:       getStatus,
 		getCausalChain:  getCausalChain,
 		archiveMemories: archiveMemories,
+		clearMemory:     clearMemory,
+		fingerprintRepo: fingerprintRepo,
 	}
 }
 
@@ -129,25 +146,30 @@ Examples:
 				Name: "mira_recall",
 				Description: `Retrieve relevant memories for a query using semantic similarity and session-aware ranking.
 
+Supports multilingual queries (English, French, Spanish, Italian, German, etc.) through cross-lingual embeddings.
+If the initial search yields sparse results, MIRA automatically broadens the search with relaxed thresholds.
+
 Returns the most relevant verbatims within the specified token budget, ranked by:
-1. Semantic similarity to the query (embedding-based)
+1. Semantic similarity to the query (embedding-based, multilingual)
 2. Session recency boost (recent items in current session)
 3. Causal relevance (items linked in decision chains)
 
 Parameters:
-  - query: Search text or question
+  - query: Search text or question (works in any language)
   - budget: Max tokens to return (default: 4000)
   - wing: Filter to specific namespace/project
   - room: Filter to specific sub-category
+  - fallback_wings: Comma-separated fallback wings to search if primary wing yields no results
 
 Examples:
-  General recall:    {"query": "What was decided about authentication?", "budget": 2000}
-  Filtered recall:   {"query": "database migration", "wing": "infra", "room": "decisions"}
-  Quick context:     {"query": "latest bugs", "budget": 1000, "wing": "api"}`,
+  General recall (EN): {"query": "What was decided about authentication?", "budget": 2000}
+  Filtered recall:     {"query": "database migration", "wing": "infra", "room": "decisions"}
+  Multilingual (FR):   {"query": "règles de langue français anglais", "wing": "general"}
+  Multilingual (ES):   {"query": "reglas de idioma español inglés", "wing": "general"}`,
 				InputSchema: mcptypes.ToolInputSchema{
 					Type: "object",
 					Properties: map[string]interface{}{
-						"query":          map[string]string{"type": "string", "description": "Query/search text"},
+						"query":          map[string]string{"type": "string", "description": "Query/search text (any language supported)"},
 						"budget":         map[string]string{"type": "number", "description": "Token budget (default: 4000)"},
 						"wing":           map[string]string{"type": "string", "description": "Filter by wing/namespace"},
 						"room":           map[string]string{"type": "string", "description": "Filter by room/sub-category"},
@@ -183,17 +205,17 @@ Shows how decisions evolved over time by following parent-child relationships be
 Useful for understanding the context and reasoning behind important decisions.
 
 Parameters:
-  - id: Fingerprint ID or verbatim reference to start from
+  - id: Fingerprint ID (full UUID) or T0:verbatim-reference. The ID shown in recall/timeline results.
   - max_depth: How far back to trace (default: 5)
   - include_consequences: Also show downstream effects (children)
 
 Examples:
-  Trace decision:    {"id": "T0:auth-decision-xyz", "max_depth": 3}
-  Full chain:        {"id": "auth-service-migration", "max_depth": 10, "include_consequences": true}`,
+  Trace decision:    {"id": "550e8400-e29b-41d4-a716-446655440000", "max_depth": 3}
+  Full chain:        {"id": "550e8400-e29b-41d4-a716-446655440000", "max_depth": 10, "include_consequences": true}`,
 				InputSchema: mcptypes.ToolInputSchema{
 					Type: "object",
 					Properties: map[string]interface{}{
-						"id":                   map[string]string{"type": "string", "description": "Fingerprint ID or verbatim reference"},
+						"id":                   map[string]string{"type": "string", "description": "Fingerprint ID (full UUID) or T0:verbatim-ref"},
 						"max_depth":            map[string]string{"type": "number", "description": "Max depth (default: 5)"},
 						"include_consequences": map[string]string{"type": "boolean", "description": "Include consequences/children"},
 					},
@@ -263,6 +285,32 @@ No parameters required. Use periodically to maintain database size.`,
 					Properties: map[string]interface{}{},
 				},
 			},
+			{
+				Name: "mira_clear_memory",
+				Description: `Permanently delete all memories. Use with caution.
+
+Supports two modes:
+  - global: Deletes every memory across all wings and rooms. Requires no additional filters.
+  - room: Deletes only memories within a specific wing and optional room.
+
+Parameters:
+  - mode: "global" or "room" (required)
+  - wing: Required when mode is "room"
+  - room: Optional sub-category when mode is "room"
+
+Examples:
+  Clear everything: {"mode": "global"}
+  Clear one room:   {"mode": "room", "wing": "auth-service", "room": "decisions"}
+  Clear whole wing: {"mode": "room", "wing": "auth-service"}`,
+				InputSchema: mcptypes.ToolInputSchema{
+					Type: "object",
+					Properties: map[string]interface{}{
+						"mode": map[string]string{"type": "string", "description": "Clear mode: 'global' or 'room'"},
+						"wing": map[string]string{"type": "string", "description": "Wing/namespace (required for room mode)"},
+						"room": map[string]string{"type": "string", "description": "Room/sub-category (optional for room mode)"},
+					},
+				},
+			},
 		}
 		return &mcptypes.ListToolsResult{Tools: tools}, nil
 	})
@@ -283,6 +331,8 @@ No parameters required. Use periodically to maintain database size.`,
 			return c.handleTimeline(ctx, arguments)
 		case "mira_archive":
 			return c.handleArchive(ctx)
+		case "mira_clear_memory":
+			return c.handleClearMemory(ctx, arguments)
 		default:
 			return nil, fmt.Errorf("unknown tool: %s", name)
 		}
@@ -425,8 +475,8 @@ func (c *Controller) handleRecall(ctx context.Context, args map[string]interface
 	parts = append(parts, "")
 
 	for i, sel := range output.Memories {
-		parts = append(parts, fmt.Sprintf("--- [%d] %s (%d tokens) ---",
-			i+1, sel.Mode.String(), sel.TokenCost))
+		parts = append(parts, fmt.Sprintf("--- [%d] %s (%d tokens) | ID: %s ---",
+			i+1, sel.Mode.String(), sel.TokenCost, sel.CandidateID.String()))
 		parts = append(parts, sel.Rendered)
 		parts = append(parts, "")
 		totalTokens += sel.TokenCost
@@ -478,9 +528,22 @@ func (c *Controller) handleCausalChain(ctx context.Context, args map[string]inte
 		return nil, fmt.Errorf("id is required")
 	}
 
-	id, err := uuid.Parse(strings.TrimPrefix(idStr, "T0:"))
+	isT0Ref := strings.HasPrefix(idStr, "T0:")
+	parsedID, err := uuid.Parse(strings.TrimPrefix(idStr, "T0:"))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("invalid ID format: %w", err)
+	}
+
+	id := parsedID
+	if isT0Ref {
+		if c.fingerprintRepo == nil {
+			return nil, fmt.Errorf("T0 references are not supported without a repository")
+		}
+		fp, err := c.fingerprintRepo.GetFingerprintByVerbatimID(ctx, parsedID)
+		if err != nil {
+			return nil, fmt.Errorf("could not resolve T0 reference to fingerprint: %w", err)
+		}
+		id = fp.ID
 	}
 
 	maxDepth := 5
@@ -637,8 +700,8 @@ func (c *Controller) handleTimeline(ctx context.Context, args map[string]interfa
 	parts = append(parts, "")
 
 	for _, item := range output.Items {
-		parts = append(parts, fmt.Sprintf("[%s] %s: %s",
-			item.Timestamp, item.Type, item.Summary))
+		parts = append(parts, fmt.Sprintf("[%s] %s: %s (ID: %s)",
+			item.Timestamp, item.Type, item.Summary, item.ID))
 	}
 
 	return &mcptypes.CallToolResult{
@@ -654,6 +717,49 @@ func (c *Controller) handleArchive(ctx context.Context) (*mcptypes.CallToolResul
 
 	result := fmt.Sprintf("Archiving complete:\n- Session notes > 30d: %d\n- Debug logs > 7d: %d\nTotal freed: %d tokens",
 		output.Result.SessionNotes, output.Result.DebugLogs, output.Result.TokensFreed)
+
+	return &mcptypes.CallToolResult{
+		Content: []mcptypes.Content{mcptypes.TextContent{Type: "text", Text: result}},
+	}, nil
+}
+
+func (c *Controller) handleClearMemory(ctx context.Context, args map[string]interface{}) (*mcptypes.CallToolResult, error) {
+	mode, ok := args["mode"].(string)
+	if !ok || (mode != "global" && mode != "room") {
+		return nil, fmt.Errorf("mode is required and must be 'global' or 'room'")
+	}
+
+	input := interactors.ClearMemoryInput{Mode: mode}
+
+	if mode == "room" {
+		wing, ok := args["wing"].(string)
+		if !ok || strings.TrimSpace(wing) == "" {
+			return nil, fmt.Errorf("wing is required when mode is 'room'")
+		}
+		input.Wing = wing
+
+		if r, ok := args["room"]; ok {
+			if rs, ok := r.(string); ok && rs != "" {
+				input.Room = &rs
+			}
+		}
+	}
+
+	output, err := c.clearMemory.Execute(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+
+	var result string
+	if output.Mode == "global" {
+		result = "All memories have been permanently deleted."
+	} else {
+		roomLabel := "(no room)"
+		if input.Room != nil {
+			roomLabel = *input.Room
+		}
+		result = fmt.Sprintf("Cleared %d memories in wing '%s' / room '%s'.", output.DeletedCount, input.Wing, roomLabel)
+	}
 
 	return &mcptypes.CallToolResult{
 		Content: []mcptypes.Content{mcptypes.TextContent{Type: "text", Text: result}},

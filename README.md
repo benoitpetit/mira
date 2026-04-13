@@ -617,6 +617,21 @@ When recalling from a specific wing yields no results, `mira_recall` supports co
 
 If the primary wing has no matching memories, MIRA will automatically search the fallback wings in order.
 
+### Multilingual & Broad Search
+
+`mira_recall` supports queries in any language (English, French, Spanish, Italian, German, etc.) thanks to cross-lingual embeddings. If the initial semantic search yields sparse results — for example, when a query in one language searches against memories stored in another — MIRA automatically broadens the search with relaxed thresholds and merges the results. You do not need to translate queries or adjust parameters.
+
+```json
+{
+  "tool": "mira_recall",
+  "arguments": {
+    "query": "règles de langue français anglais",
+    "budget": 2000,
+    "wing": "general"
+  }
+}
+```
+
 See [API_REFERENCES.md](docs/API_REFERENCES.md) for detailed API reference and usage examples.
 
 ### Health Check Endpoints

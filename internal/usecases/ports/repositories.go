@@ -45,6 +45,9 @@ type FingerprintRepository interface {
 	// GetFingerprintByID retrieves a fingerprint by its unique identifier.
 	GetFingerprintByID(ctx context.Context, id uuid.UUID) (*entities.Fingerprint, error)
 
+	// GetFingerprintByVerbatimID retrieves a fingerprint by its associated verbatim ID.
+	GetFingerprintByVerbatimID(ctx context.Context, verbatimID uuid.UUID) (*entities.Fingerprint, error)
+
 	// GetRecentFingerprintsByWing retrieves recent fingerprints from a specific wing,
 	// excluding the specified fingerprint ID.
 	GetRecentFingerprintsByWing(ctx context.Context, wing string, excludeID uuid.UUID, limit int) ([]*entities.Fingerprint, error)
@@ -119,6 +122,13 @@ type StatsRepository interface {
 	// ArchiveOldMemories archives memories that have exceeded their retention period
 	// based on their type-specific decay rates.
 	ArchiveOldMemories(ctx context.Context) (*valueobjects.ArchiveResult, error)
+
+	// ClearAll removes all memories and related data from the store.
+	ClearAll(ctx context.Context) error
+
+	// ClearByRoom removes all memories and related data for a specific wing/room.
+	// Returns the number of deleted verbatims.
+	ClearByRoom(ctx context.Context, wing string, room *string) (int, error)
 }
 
 // TransactionManager defines the interface for database transaction management.

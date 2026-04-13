@@ -145,5 +145,17 @@ func (s *SQLiteVectorStore) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// ClearAll implements VectorStore
+func (s *SQLiteVectorStore) ClearAll(ctx context.Context) error {
+	// No-op: data lives in SQLite and is cleared by the repository
+	return nil
+}
+
+// ClearByRoom implements VectorStore
+func (s *SQLiteVectorStore) ClearByRoom(ctx context.Context, wing string, room *string) error {
+	// No-op: data lives in SQLite and is cleared by the repository
+	return nil
+}
+
 // Ensure SQLiteVectorStore implements VectorStore
 var _ ports.VectorStore = (*SQLiteVectorStore)(nil)

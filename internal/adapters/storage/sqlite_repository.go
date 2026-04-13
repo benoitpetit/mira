@@ -322,6 +322,54 @@ func (r *SQLiteRepository) GetFingerprintByID(ctx context.Context, id uuid.UUID)
 	return &fp, nil
 }
 
+// GetFingerprintByVerbatimID implements FingerprintRepository
+func (r *SQLiteRepository) GetFingerprintByVerbatimID(ctx context.Context, verbatimID uuid.UUID) (*entities.Fingerprint, error) {
+	row := r.db.QueryRowContext(ctx,
+		`SELECT f.id, f.verbatim_id, f.ftype, f.extracted_at, f.entities, f.subjects, f.decision, f.data, f.fact_count, f.token_estimate, f.model_hash
+		 FROM fingerprints f
+		 WHERE f.verbatim_id = ?`,
+		verbatimID[:],
+	)
+
+	var fp entities.Fingerprint
+	var idBytes, verbatimIDBytes []byte
+	var ftype string
+	var extractedAt float64
+	var entitiesJSON, subjectsJSON, dataJSON []byte
+	var decision sql.NullString
+
+	err := row.Scan(&idBytes, &verbatimIDBytes, &ftype, &extractedAt, &entitiesJSON, &subjectsJSON, &decision, &dataJSON, &fp.FactCount, &fp.TokenEstimate, &fp.ModelHash)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("fingerprint not found")
+		}
+		return nil, err
+	}
+
+	fp.ID, err = uuid.FromBytes(idBytes)
+	if err != nil {
+		return nil, fmt.Errorf("invalid fingerprint UUID: %w", err)
+	}
+
+	fp.VerbatimID, err = uuid.FromBytes(verbatimIDBytes)
+	if err != nil {
+		return nil, fmt.Errorf("invalid verbatim UUID: %w", err)
+	}
+
+	fp.Type = valueobjects.MemoryType(ftype)
+	fp.ExtractedAt = time.Unix(int64(extractedAt), 0)
+
+	if decision.Valid {
+		fp.Decision = &decision.String
+	}
+
+	_ = json.Unmarshal(entitiesJSON, &fp.Entities)
+	_ = json.Unmarshal(subjectsJSON, &fp.Subjects)
+	_ = json.Unmarshal(dataJSON, &fp.Data)
+
+	return &fp, nil
+}
+
 // GetRecentFingerprintsByWing implements FingerprintRepository
 func (r *SQLiteRepository) GetRecentFingerprintsByWing(ctx context.Context, wing string, excludeID uuid.UUID, limit int) ([]*entities.Fingerprint, error) {
 	tx, err := r.Begin()
@@ -847,6 +895,105 @@ func (r *SQLiteRepository) ArchiveOldMemories(ctx context.Context) (*valueobject
 	}
 
 	return result, nil
+}
+
+// ClearAll removes all memories and related data from the store.
+func (r *SQLiteRepository) ClearAll(ctx context.Context) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin clear transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, _ = tx.ExecContext(ctx, `DELETE FROM causal_edges`)
+	_, _ = tx.ExecContext(ctx, `DELETE FROM causal_nodes`)
+	_, _ = tx.ExecContext(ctx, `DELETE FROM embeddings`)
+	_, _ = tx.ExecContext(ctx, `DELETE FROM fingerprints`)
+	_, _ = tx.ExecContext(ctx, `DELETE FROM verbatim`)
+	_, _ = tx.ExecContext(ctx, `DELETE FROM overlap_cache`)
+
+	return tx.Commit()
+}
+
+// ClearByRoom removes all memories and related data for a specific wing/room.
+func (r *SQLiteRepository) ClearByRoom(ctx context.Context, wing string, room *string) (int, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin clear transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var roomCondition string
+	args := []interface{}{wing}
+	if room != nil {
+		roomCondition = "AND room = ?"
+		args = append(args, *room)
+	} else {
+		roomCondition = "AND room IS NULL"
+	}
+
+	var count int
+	err = tx.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM verbatim WHERE wing = ? "+roomCondition,
+		args...,
+	).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	if count == 0 {
+		_ = tx.Commit()
+		return 0, nil
+	}
+
+	_, _ = tx.ExecContext(ctx,
+		`DELETE FROM causal_edges WHERE from_id IN (
+			SELECT id FROM fingerprints WHERE verbatim_id IN (
+				SELECT id FROM verbatim WHERE wing = ? `+roomCondition+`
+			)
+		) OR to_id IN (
+			SELECT id FROM fingerprints WHERE verbatim_id IN (
+				SELECT id FROM verbatim WHERE wing = ? `+roomCondition+`
+			)
+		)`,
+		append(append([]interface{}{}, args...), args...)...,
+	)
+
+	_, _ = tx.ExecContext(ctx,
+		`DELETE FROM causal_nodes WHERE id IN (
+			SELECT id FROM fingerprints WHERE verbatim_id IN (
+				SELECT id FROM verbatim WHERE wing = ? `+roomCondition+`
+			)
+		)`,
+		args...,
+	)
+
+	_, _ = tx.ExecContext(ctx,
+		`DELETE FROM embeddings WHERE id IN (
+			SELECT id FROM verbatim WHERE wing = ? `+roomCondition+`
+		)`,
+		args...,
+	)
+
+	_, _ = tx.ExecContext(ctx,
+		`DELETE FROM fingerprints WHERE verbatim_id IN (
+			SELECT id FROM verbatim WHERE wing = ? `+roomCondition+`
+		)`,
+		args...,
+	)
+
+	_, err = tx.ExecContext(ctx,
+		`DELETE FROM verbatim WHERE wing = ? `+roomCondition,
+		args...,
+	)
+	if err != nil {
+		return 0, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("failed to commit clear transaction: %w", err)
+	}
+
+	return count, nil
 }
 
 func (r *SQLiteRepository) collectArchiveTargets(ctx context.Context, tx *sql.Tx, ftype string, threshold float64) ([]uuid.UUID, int) {

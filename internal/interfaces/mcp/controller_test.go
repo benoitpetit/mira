@@ -169,6 +169,18 @@ func (m *mockArchiveMemories) Execute(ctx context.Context) (*interactors.Archive
 	}, nil
 }
 
+// mockClearMemory mocks the ClearMemory interactor
+type mockClearMemory struct {
+	executeFunc func(ctx context.Context, input interactors.ClearMemoryInput) (*interactors.ClearMemoryOutput, error)
+}
+
+func (m *mockClearMemory) Execute(ctx context.Context, input interactors.ClearMemoryInput) (*interactors.ClearMemoryOutput, error) {
+	if m.executeFunc != nil {
+		return m.executeFunc(ctx, input)
+	}
+	return &interactors.ClearMemoryOutput{DeletedCount: 0, Mode: input.Mode}, nil
+}
+
 // ============================================================================
 // SUCCESS TESTS
 // ============================================================================
@@ -457,6 +469,110 @@ func TestHandleArchiveSuccess(t *testing.T) {
 	}
 	if !strings.Contains(textContent.Text, "1500") {
 		t.Errorf("Expected result to contain tokens freed, got: %s", textContent.Text)
+	}
+}
+
+// TestHandleClearMemoryGlobalSuccess tests mira_clear_memory in global mode
+func TestHandleClearMemoryGlobalSuccess(t *testing.T) {
+	mock := &mockClearMemory{}
+	controller := &Controller{clearMemory: mock}
+
+	ctx := context.Background()
+	result, err := controller.handleClearMemory(ctx, map[string]interface{}{"mode": "global"})
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+
+	content := result.Content
+	if len(content) == 0 {
+		t.Fatal("Expected content in result")
+	}
+
+	textContent, ok := content[0].(mcptypes.TextContent)
+	if !ok {
+		t.Fatalf("Expected TextContent, got %T", content[0])
+	}
+
+	if !strings.Contains(textContent.Text, "All memories have been permanently deleted") {
+		t.Errorf("Expected global clear confirmation, got: %s", textContent.Text)
+	}
+}
+
+// TestHandleClearMemoryRoomSuccess tests mira_clear_memory in room mode
+func TestHandleClearMemoryRoomSuccess(t *testing.T) {
+	mock := &mockClearMemory{
+		executeFunc: func(ctx context.Context, input interactors.ClearMemoryInput) (*interactors.ClearMemoryOutput, error) {
+			return &interactors.ClearMemoryOutput{DeletedCount: 7, Mode: "room"}, nil
+		},
+	}
+	controller := &Controller{clearMemory: mock}
+
+	ctx := context.Background()
+	result, err := controller.handleClearMemory(ctx, map[string]interface{}{
+		"mode": "room",
+		"wing": "auth-service",
+		"room": "decisions",
+	})
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+
+	content := result.Content
+	if len(content) == 0 {
+		t.Fatal("Expected content in result")
+	}
+
+	textContent, ok := content[0].(mcptypes.TextContent)
+	if !ok {
+		t.Fatalf("Expected TextContent, got %T", content[0])
+	}
+
+	if !strings.Contains(textContent.Text, "Cleared 7 memories") {
+		t.Errorf("Expected room clear confirmation with count, got: %s", textContent.Text)
+	}
+}
+
+// TestHandleClearMemoryValidation tests validation errors for mira_clear_memory
+func TestHandleClearMemoryValidation(t *testing.T) {
+	tests := []struct {
+		name           string
+		args           map[string]interface{}
+		expectedErrMsg string
+	}{
+		{
+			name:           "missing mode",
+			args:           map[string]interface{}{},
+			expectedErrMsg: "mode is required",
+		},
+		{
+			name: "invalid mode",
+			args: map[string]interface{}{
+				"mode": "invalid",
+			},
+			expectedErrMsg: "mode is required",
+		},
+		{
+			name: "room mode missing wing",
+			args: map[string]interface{}{
+				"mode": "room",
+			},
+			expectedErrMsg: "wing is required",
+		},
+	}
+
+	ctx := context.Background()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			controller := &Controller{clearMemory: &mockClearMemory{}}
+			_, err := controller.handleClearMemory(ctx, tt.args)
+			if err == nil {
+				t.Errorf("Expected error containing '%s', got nil", tt.expectedErrMsg)
+				return
+			}
+			if !strings.Contains(err.Error(), tt.expectedErrMsg) {
+				t.Errorf("Expected error containing '%s', got '%s'", tt.expectedErrMsg, err.Error())
+			}
+		})
 	}
 }
 

@@ -166,6 +166,30 @@ func (h *HNSWStore) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// ClearAll implements VectorStore
+func (h *HNSWStore) ClearAll(ctx context.Context) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.graph = hnsw.NewGraph[node]()
+	h.idToUUID = make(map[string]uuid.UUID)
+	h.uuidToID = make(map[uuid.UUID]string)
+	h.nextID = 0
+	h.ready = false
+
+	if h.indexPath != "" {
+		_ = os.Remove(h.indexPath)
+	}
+
+	return nil
+}
+
+// ClearByRoom implements VectorStore
+func (h *HNSWStore) ClearByRoom(ctx context.Context, wing string, room *string) error {
+	// Rebuild the index from the database, which has already been cleared
+	return h.BuildFromStore(ctx)
+}
+
 // BuildFromStore builds the index from existing data in the store
 func (h *HNSWStore) BuildFromStore(ctx context.Context) error {
 	h.mu.Lock()

@@ -42,6 +42,7 @@ type Application struct {
 	getStatus        *interactors.GetStatus
 	getCausalChain   *interactors.GetCausalChain
 	archiveMemories  *interactors.ArchiveMemories
+	clearMemory      *interactors.ClearMemory
 	renderer         *interactors.DefaultFingerprintRenderer
 	controller       *mcpserver.Controller
 	webhookManager   ports.WebhookManager
@@ -243,6 +244,7 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 	app.getStatus = interactors.NewGetStatus(repo, repo)
 	app.getCausalChain = interactors.NewGetCausalChain(repo)
 	app.archiveMemories = interactors.NewArchiveMemories(repo)
+	app.clearMemory = interactors.NewClearMemory(repo, app.vectorStore)
 
 	// 12. Initialize controller
 	app.controller = mcpserver.NewController(
@@ -253,6 +255,8 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 		app.getStatus,
 		app.getCausalChain,
 		app.archiveMemories,
+		app.clearMemory,
+		repo,
 	)
 
 	return app, nil

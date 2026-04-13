@@ -3,6 +3,7 @@ package interactors
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 
 	"github.com/benoitpetit/mira/internal/domain/entities"
@@ -73,6 +74,15 @@ func (m *mockStoreRepository) StoreFingerprintTx(ctx context.Context, tx *sql.Tx
 
 func (m *mockStoreRepository) GetFingerprintByID(ctx context.Context, id uuid.UUID) (*entities.Fingerprint, error) {
 	return m.fingerprints[id], nil
+}
+
+func (m *mockStoreRepository) GetFingerprintByVerbatimID(ctx context.Context, verbatimID uuid.UUID) (*entities.Fingerprint, error) {
+	for _, fp := range m.fingerprints {
+		if fp.VerbatimID == verbatimID {
+			return fp, nil
+		}
+	}
+	return nil, errors.New("fingerprint not found")
 }
 
 func (m *mockStoreRepository) GetRecentFingerprintsByWing(ctx context.Context, wing string, excludeID uuid.UUID, limit int) ([]*entities.Fingerprint, error) {
@@ -159,6 +169,14 @@ func (m *mockStoreRepository) ArchiveOldMemories(ctx context.Context) (*valueobj
 	return nil, nil
 }
 
+func (m *mockStoreRepository) ClearAll(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockStoreRepository) ClearByRoom(ctx context.Context, wing string, room *string) (int, error) {
+	return 0, nil
+}
+
 // Mock Extractor
 type mockStoreExtractor struct{}
 
@@ -210,6 +228,14 @@ func (m *mockStoreVectorStore) AddCandidate(ctx context.Context, candidate *enti
 }
 
 func (m *mockStoreVectorStore) Delete(ctx context.Context, id uuid.UUID) error {
+	return nil
+}
+
+func (m *mockStoreVectorStore) ClearAll(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockStoreVectorStore) ClearByRoom(ctx context.Context, wing string, room *string) error {
 	return nil
 }
 

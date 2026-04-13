@@ -29,6 +29,14 @@ func (m *mockStatsRepositoryForArchive) ArchiveOldMemories(ctx context.Context) 
 	return nil, nil
 }
 
+func (m *mockStatsRepositoryForArchive) ClearAll(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockStatsRepositoryForArchive) ClearByRoom(ctx context.Context, wing string, room *string) (int, error) {
+	return 0, nil
+}
+
 // TestArchiveMemories_Execute test archivage avec vieilles mémoires
 func TestArchiveMemories_Execute(t *testing.T) {
 	ctx := context.Background()

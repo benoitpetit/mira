@@ -30,6 +30,14 @@ func (m *mockStatsRepositoryForTimeline) ArchiveOldMemories(ctx context.Context)
 	return nil, nil
 }
 
+func (m *mockStatsRepositoryForTimeline) ClearAll(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockStatsRepositoryForTimeline) ClearByRoom(ctx context.Context, wing string, room *string) (int, error) {
+	return 0, nil
+}
+
 // createTestTimelineItems crée des éléments de timeline pour les tests
 func createTestTimelineItems() []*valueobjects.TimelineItem {
 	now := time.Now()

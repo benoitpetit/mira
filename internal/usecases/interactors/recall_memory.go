@@ -194,7 +194,26 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 	scored := uc.scoreCandidates(candidates, queryVec)
 	pruned := uc.pruneCandidates(scored)
 
-	// 3b. Fallback wings if primary wing yielded nothing useful
+	// 3b. Broad fallback search for cross-language or sparse queries
+	if len(pruned) < 3 {
+		broadCandidates, err := uc.vectorStore.Search(ctx, queryVec, uc.maxCandidates*3, input.Wing, input.Room)
+		if err == nil {
+			broadScored := uc.scoreCandidates(broadCandidates, queryVec)
+			broadPruned := uc.pruneCandidatesWithThreshold(broadScored, 0.15)
+			seen := make(map[uuid.UUID]bool)
+			for _, c := range pruned {
+				seen[c.ID()] = true
+			}
+			for _, c := range broadPruned {
+				if !seen[c.ID()] {
+					pruned = append(pruned, c)
+					seen[c.ID()] = true
+				}
+			}
+		}
+	}
+
+	// 3c. Fallback wings if primary wing yielded nothing useful
 	if len(pruned) == 0 && len(input.FallbackWings) > 0 {
 		seen := make(map[uuid.UUID]bool)
 		for _, c := range pruned {
@@ -303,7 +322,13 @@ func (uc *RecallMemory) adaptiveThreshold(candidateCount int) float64 {
 }
 
 func (uc *RecallMemory) pruneCandidates(candidates []*entities.Candidate) []*entities.Candidate {
-	threshold := uc.adaptiveThreshold(len(candidates))
+	return uc.pruneCandidatesWithThreshold(candidates, uc.adaptiveThreshold(len(candidates)))
+}
+
+func (uc *RecallMemory) pruneCandidatesWithThreshold(candidates []*entities.Candidate, threshold float64) []*entities.Candidate {
+	if threshold < 0.15 {
+		threshold = 0.15 // hard floor for broad cross-language search
+	}
 	var pruned []*entities.Candidate
 	for _, c := range candidates {
 		if c.Relevance > threshold {

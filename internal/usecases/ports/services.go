@@ -59,6 +59,12 @@ type VectorStore interface {
 
 	// Delete removes a candidate from the vector index.
 	Delete(ctx context.Context, id uuid.UUID) error
+
+	// ClearAll removes all vectors from the index.
+	ClearAll(ctx context.Context) error
+
+	// ClearByRoom removes all vectors belonging to a specific wing/room from the index.
+	ClearByRoom(ctx context.Context, wing string, room *string) error
 }
 
 // OverlapCache defines the interface for caching pairwise overlap similarity.

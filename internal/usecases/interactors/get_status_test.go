@@ -30,6 +30,14 @@ func (m *mockStatsRepository) ArchiveOldMemories(ctx context.Context) (*valueobj
 	return nil, nil
 }
 
+func (m *mockStatsRepository) ClearAll(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockStatsRepository) ClearByRoom(ctx context.Context, wing string, room *string) (int, error) {
+	return 0, nil
+}
+
 // MockModelRepository pour les tests
 type mockModelRepository struct {
 	getAllModelsFunc func(ctx context.Context) ([]string, error)

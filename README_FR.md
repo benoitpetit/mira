@@ -617,6 +617,21 @@ Quand un recall dans un wing principal ne retourne rien, `mira_recall` supporte 
 
 Si le wing principal n'a aucune mémoire pertinente, MIRA cherchera automatiquement dans les wings de secours dans l'ordre.
 
+### Recherche Multilingue et Élargie
+
+`mira_recall` accepte les requêtes dans n'importe quelle langue (anglais, français, espagnol, italien, allemand, etc.) grâce aux embeddings cross-lingues. Si la recherche sémantique initiale retourne peu de résultats — par exemple lorsqu'une requête dans une langue cherche des mémoires stockées dans une autre — MIRA élargit automatiquement la recherche avec des seuils relaxés et fusionne les résultats. Il n'est pas nécessaire de traduire les requêtes ni d'ajuster des paramètres.
+
+```json
+{
+  "tool": "mira_recall",
+  "arguments": {
+    "query": "règles de langue français anglais",
+    "budget": 2000,
+    "wing": "general"
+  }
+}
+```
+
 Voir [API_REFERENCES.md](docs/API_REFERENCES.md) pour la référence API détaillée et des exemples d'utilisation.
 
 ### Endpoints de Health Check
