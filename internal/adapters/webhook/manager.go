@@ -1,3 +1,4 @@
+// Package webhook provides webhook notification adapters.
 // Webhook manager adapter - implements ports.WebhookManager
 package webhook
 
@@ -6,6 +7,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -32,10 +34,16 @@ type SimpleWebhookManager struct {
 	stopChan  chan struct{}
 	running   bool
 	wg        sync.WaitGroup
+	db        *sql.DB
 }
 
 // NewSimpleWebhookManager creates a new simple webhook manager
 func NewSimpleWebhookManager(workers, queueSize int, timeout time.Duration) *SimpleWebhookManager {
+	return NewSimpleWebhookManagerWithDB(workers, queueSize, timeout, nil)
+}
+
+// NewSimpleWebhookManagerWithDB creates a webhook manager with DLQ persistence
+func NewSimpleWebhookManagerWithDB(workers, queueSize int, timeout time.Duration, db *sql.DB) *SimpleWebhookManager {
 	return &SimpleWebhookManager{
 		endpoints: make(map[uuid.UUID]*ports.WebhookEndpoint),
 		client:    &http.Client{Timeout: timeout},
@@ -44,6 +52,7 @@ func NewSimpleWebhookManager(workers, queueSize int, timeout time.Duration) *Sim
 		timeout:   timeout,
 		queue:     make(chan ports.WebhookEvent, queueSize),
 		stopChan:  make(chan struct{}),
+		db:        db,
 	}
 }
 
@@ -70,6 +79,12 @@ func (m *SimpleWebhookManager) Start() {
 	for i := 0; i < m.workers; i++ {
 		m.wg.Add(1)
 		go m.worker()
+	}
+
+	// Start DLQ retry loop
+	if m.db != nil {
+		m.wg.Add(1)
+		go m.dlqRetryLoop()
 	}
 }
 
@@ -176,7 +191,10 @@ func (m *SimpleWebhookManager) Trigger(ctx context.Context, eventType string, pa
 			case m.queue <- event:
 				// Event queued successfully
 			default:
-				// Queue is full, drop the event
+				// Queue is full, persist to DLQ
+				if err := m.saveToDLQ(event); err != nil {
+					log.Printf("[Webhook] Failed to save event to DLQ: %v", err)
+				}
 			}
 		}
 	}
@@ -321,6 +339,110 @@ func (m *SimpleWebhookManager) VerifyWebhookSignature(payload []byte, signatureH
 	}
 
 	return verifyHMAC(payload, parts[1], secret)
+}
+
+// saveToDLQ persists a failed event to the dead-letter queue
+func (m *SimpleWebhookManager) saveToDLQ(event ports.WebhookEvent) error {
+	if m.db == nil {
+		return nil
+	}
+	payloadJSON, err := json.Marshal(event.Payload)
+	if err != nil {
+		return err
+	}
+	_, err = m.db.Exec(
+		`INSERT INTO webhook_dlq (id, endpoint_id, event_type, payload, attempts, failed_at)
+		 VALUES (?, ?, ?, ?, 0, ?)
+		 ON CONFLICT(id) DO UPDATE SET attempts = attempts + 1, failed_at = ?`,
+		event.ID.String(), event.EndpointID.String(), event.Type, string(payloadJSON),
+		float64(event.Timestamp.Unix()), float64(time.Now().Unix()),
+	)
+	return err
+}
+
+// dlqRetryLoop periodically retries DLQ events
+func (m *SimpleWebhookManager) dlqRetryLoop() {
+	defer m.wg.Done()
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			m.RetryDLQ(context.Background())
+		case <-m.stopChan:
+			return
+		}
+	}
+}
+
+// RetryDLQ attempts to re-send events from the dead-letter queue
+func (m *SimpleWebhookManager) RetryDLQ(ctx context.Context) {
+	if m.db == nil {
+		return
+	}
+
+	rows, err := m.db.QueryContext(ctx,
+		`SELECT id, endpoint_id, event_type, payload, attempts FROM webhook_dlq WHERE attempts < 3 ORDER BY failed_at ASC LIMIT 100`)
+	if err != nil {
+		log.Printf("[Webhook] DLQ query failed: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	type dlqEvent struct {
+		id         string
+		endpointID string
+		eventType  string
+		payload    string
+		attempts   int
+	}
+
+	var events []dlqEvent
+	for rows.Next() {
+		var e dlqEvent
+		if err := rows.Scan(&e.id, &e.endpointID, &e.eventType, &e.payload, &e.attempts); err != nil {
+			continue
+		}
+		events = append(events, e)
+	}
+
+	for _, e := range events {
+		endpointID, err := uuid.Parse(e.endpointID)
+		if err != nil {
+			continue
+		}
+
+		m.mu.RLock()
+		endpoint, ok := m.endpoints[endpointID]
+		m.mu.RUnlock()
+
+		if !ok || !endpoint.Active {
+			continue
+		}
+
+		var payload map[string]interface{}
+		_ = json.Unmarshal([]byte(e.payload), &payload)
+
+		event := ports.WebhookEvent{
+			ID:         uuid.MustParse(e.id),
+			EndpointID: endpointID,
+			Type:       e.eventType,
+			Payload:    payload,
+			Timestamp:  time.Now(),
+		}
+
+		select {
+		case m.queue <- event:
+			// Re-queued successfully, delete from DLQ
+			_, _ = m.db.ExecContext(ctx, `DELETE FROM webhook_dlq WHERE id = ?`, e.id)
+		default:
+			// Still can't queue, increment attempts
+			_, _ = m.db.ExecContext(ctx,
+				`UPDATE webhook_dlq SET attempts = attempts + 1, failed_at = ? WHERE id = ?`,
+				float64(time.Now().Unix()), e.id)
+		}
+	}
 }
 
 // Ensure interface is implemented

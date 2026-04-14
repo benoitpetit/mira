@@ -1,3 +1,4 @@
+// Package config provides application configuration loading and validation.
 package config
 
 import (
@@ -12,6 +13,7 @@ type Config struct {
 	Storage           StorageConfig      `yaml:"storage"`
 	Embeddings        EmbeddingsConfig   `yaml:"embeddings"`
 	Allocator         AllocatorConfig    `yaml:"allocator"`
+	DecayRates        map[string]float64 `yaml:"decay_rates"`
 	ArchiveThresholds map[string]float64 `yaml:"archive_thresholds"`
 	OverlapCache      OverlapCacheConfig `yaml:"overlap_cache"`
 	Extraction        ExtractionConfig   `yaml:"extraction"`
@@ -60,6 +62,7 @@ type AllocatorConfig struct {
 	EarlyPruningThreshold float64              `yaml:"early_pruning_threshold"`
 	SessionWindowSeconds  int                  `yaml:"session_window_seconds"`
 	SessionBoostBeta      float64              `yaml:"session_boost_beta"`
+	SessionBoostMax       float64              `yaml:"session_boost_max"`
 	CausalPenaltyAlpha    float64              `yaml:"causal_penalty_alpha"`
 	DensitySigmoid        DensitySigmoidConfig `yaml:"density_sigmoid"`
 }
@@ -92,7 +95,7 @@ type MCPConfig struct {
 func Default() *Config {
 	return &Config{
 		System: SystemConfig{
-			Version:        "0.3.2",
+			Version:        "0.3.3",
 		},
 		Storage: StorageConfig{
 			Path: ".mira",
@@ -117,11 +120,19 @@ func Default() *Config {
 			EarlyPruningThreshold: 0.6,
 			SessionWindowSeconds:  7200,
 			SessionBoostBeta:      0.2,
+			SessionBoostMax:       1.2,
 			CausalPenaltyAlpha:    0.15,
 			DensitySigmoid: DensitySigmoidConfig{
 				K:  2.0,
 				Mu: 0.3,
 			},
+		},
+		DecayRates: map[string]float64{
+			"decision":    0.001,
+			"fact":        0.005,
+			"preference":  0.01,
+			"session_note": 0.1,
+			"debug_log":   0.5,
 		},
 		ArchiveThresholds: map[string]float64{
 			"session_note": 30,
@@ -138,7 +149,7 @@ func Default() *Config {
 		},
 		MCP: MCPConfig{
 			Name:           "mira",
-			Version:        "0.3.2",
+			Version:        "0.3.3",
 			Transport:      "stdio",
 			TimeoutSeconds: 30,
 		},
@@ -251,8 +262,24 @@ func (c *Config) Validate() error {
 	if c.Allocator.SessionBoostBeta < 0 {
 		c.Allocator.SessionBoostBeta = 0.2
 	}
+	if c.Allocator.SessionBoostMax <= 1.0 {
+		c.Allocator.SessionBoostMax = 1.2
+	}
+	if c.Allocator.SessionBoostMax > 1.5 {
+		c.Allocator.SessionBoostMax = 1.5
+	}
 	if c.Allocator.CausalPenaltyAlpha < 0 {
 		c.Allocator.CausalPenaltyAlpha = 0.15
+	}
+	// Decay rates defaults
+	if c.DecayRates == nil {
+		c.DecayRates = map[string]float64{
+			"decision":    0.001,
+			"fact":        0.005,
+			"preference":  0.01,
+			"session_note": 0.1,
+			"debug_log":   0.5,
+		}
 	}
 	if c.Allocator.DensitySigmoid.K <= 0 {
 		c.Allocator.DensitySigmoid.K = 2.0
@@ -330,7 +357,7 @@ func (c *Config) Validate() error {
 		c.MCP.Name = "mira"
 	}
 	if c.MCP.Version == "" {
-		c.MCP.Version = "0.3.2"
+		c.MCP.Version = "0.3.3"
 	}
 	if c.MCP.Transport == "" {
 		c.MCP.Transport = "stdio"

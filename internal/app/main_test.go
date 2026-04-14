@@ -12,7 +12,7 @@ import (
 func getTestConfig() *config.Config {
 	return &config.Config{
 		System: config.SystemConfig{
-			Version: "0.3.2",
+			Version: "0.3.3",
 		},
 		Storage: config.StorageConfig{
 			Path: "",
@@ -45,7 +45,7 @@ func getTestConfig() *config.Config {
 		},
 		MCP: config.MCPConfig{
 			Name:      "mira",
-			Version:   "0.3.2",
+			Version:   "0.3.3",
 			Transport: "stdio",
 		},
 		HNSW: config.HNSWConfig{
@@ -185,7 +185,7 @@ func TestNewApplicationFromConfig(t *testing.T) {
 	configPath := filepath.Join(tempDir, "config.yaml")
 	configContent := `
 system:
-  version: "0.3.2"
+  version: "0.3.3"
 
 storage:
   path: "` + tempDir + `/data"
@@ -222,7 +222,7 @@ extraction:
 
 mcp:
   name: "mira"
-  version: "0.3.2"
+  version: "0.3.3"
   transport: "stdio"
 `
 	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
@@ -250,8 +250,8 @@ mcp:
 		t.Errorf("Expected MCP name 'mira', got '%s'", app.config.MCP.Name)
 	}
 
-	if app.config.MCP.Version != "0.3.2" {
-		t.Errorf("Expected MCP version '0.3.2', got '%s'", app.config.MCP.Version)
+	if app.config.MCP.Version != "0.3.3" {
+		t.Errorf("Expected MCP version '0.3.3', got '%s'", app.config.MCP.Version)
 	}
 
 	if app.config.Embeddings.Dimension != 384 {

@@ -1,76 +1,58 @@
-// Simple logger implementation using standard log package
+// Package logging provides structured logging adapters.
+// Simple logger implementation using standard log/slog package
 package logging
 
 import (
-	"fmt"
-	"log"
+	"log/slog"
 	"os"
 )
 
-// SimpleLogger implements ports.Logger using the standard log package
-type SimpleLogger struct {
-	logger *log.Logger
-	debug  bool
+// SlogLogger implements ports.Logger using the standard slog package (Go 1.21+)
+type SlogLogger struct {
+	logger *slog.Logger
 }
 
-// NewSimpleLogger creates a new simple logger
-func NewSimpleLogger(debug bool) *SimpleLogger {
-	return &SimpleLogger{
-		logger: log.New(os.Stdout, "", log.LstdFlags),
-		debug:  debug,
+// NewSimpleLogger creates a new slog-based logger
+func NewSimpleLogger(debug bool) *SlogLogger {
+	opts := &slog.HandlerOptions{Level: slog.LevelInfo}
+	if debug {
+		opts.Level = slog.LevelDebug
+	}
+	return &SlogLogger{
+		logger: slog.New(slog.NewJSONHandler(os.Stdout, opts)),
 	}
 }
 
-// NewSimpleLoggerWithPrefix creates a new simple logger with a prefix
-func NewSimpleLoggerWithPrefix(prefix string, debug bool) *SimpleLogger {
-	return &SimpleLogger{
-		logger: log.New(os.Stdout, prefix+" ", log.LstdFlags),
-		debug:  debug,
+// NewSimpleLoggerWithPrefix creates a new slog-based logger with a component prefix
+func NewSimpleLoggerWithPrefix(prefix string, debug bool) *SlogLogger {
+	opts := &slog.HandlerOptions{Level: slog.LevelInfo}
+	if debug {
+		opts.Level = slog.LevelDebug
+	}
+	return &SlogLogger{
+		logger: slog.New(slog.NewJSONHandler(os.Stdout, opts)).With("component", prefix),
 	}
 }
 
 // Debug logs a debug message
-func (l *SimpleLogger) Debug(msg string, keysAndValues ...interface{}) {
-	if !l.debug {
-		return
-	}
-	l.logger.Printf("[DEBUG] %s %s", msg, formatKeyValues(keysAndValues...))
+func (l *SlogLogger) Debug(msg string, keysAndValues ...interface{}) {
+	l.logger.Debug(msg, keysAndValues...)
 }
 
 // Info logs an info message
-func (l *SimpleLogger) Info(msg string, keysAndValues ...interface{}) {
-	l.logger.Printf("[INFO] %s %s", msg, formatKeyValues(keysAndValues...))
+func (l *SlogLogger) Info(msg string, keysAndValues ...interface{}) {
+	l.logger.Info(msg, keysAndValues...)
 }
 
 // Warn logs a warning message
-func (l *SimpleLogger) Warn(msg string, keysAndValues ...interface{}) {
-	l.logger.Printf("[WARN] %s %s", msg, formatKeyValues(keysAndValues...))
+func (l *SlogLogger) Warn(msg string, keysAndValues ...interface{}) {
+	l.logger.Warn(msg, keysAndValues...)
 }
 
 // Error logs an error message
-func (l *SimpleLogger) Error(msg string, err error, keysAndValues ...interface{}) {
-	errStr := ""
-	if err != nil {
-		errStr = err.Error()
-	}
-	l.logger.Printf("[ERROR] %s: %s %s", msg, errStr, formatKeyValues(keysAndValues...))
-}
-
-// formatKeyValues formats key-value pairs into a string
-func formatKeyValues(keysAndValues ...interface{}) string {
-	if len(keysAndValues) == 0 {
-		return ""
-	}
-	result := ""
-	for i := 0; i < len(keysAndValues)-1; i += 2 {
-		key := fmt.Sprintf("%v", keysAndValues[i])
-		value := fmt.Sprintf("%v", keysAndValues[i+1])
-		if result != "" {
-			result += " "
-		}
-		result += fmt.Sprintf("%s=%s", key, value)
-	}
-	return result
+func (l *SlogLogger) Error(msg string, err error, keysAndValues ...interface{}) {
+	args := append([]interface{}{"error", err}, keysAndValues...)
+	l.logger.Error(msg, args...)
 }
 
 // NoOpLogger is a logger that does nothing (for testing)

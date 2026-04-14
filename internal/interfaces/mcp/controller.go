@@ -1,3 +1,4 @@
+// Package mcp provides the Model Context Protocol interface adapter.
 // MCP controller - Interface adapter
 package mcp
 
@@ -251,6 +252,8 @@ Parameters:
   - since: Start date (ISO 8601, e.g., "2024-01-15")
   - until: End date (ISO 8601)
   - type: Filter by memory type (decision|fact|preference|session_note|debug_log)
+  - limit: Max items to return (default: 100, max: 1000)
+  - cursor: Pagination cursor from a previous mira_timeline call
 
 Examples:
   Project timeline:  {"wing": "auth-service", "since": "2024-01-01"}
@@ -259,11 +262,13 @@ Examples:
 				InputSchema: mcptypes.ToolInputSchema{
 					Type: "object",
 					Properties: map[string]interface{}{
-						"wing":  map[string]string{"type": "string", "description": "Required wing/namespace"},
-						"room":  map[string]string{"type": "string", "description": "Filter by room/sub-category"},
-						"since": map[string]string{"type": "string", "description": "Start date ISO 8601 (e.g., 2024-01-15)"},
-						"until": map[string]string{"type": "string", "description": "End date ISO 8601"},
-						"type":  map[string]string{"type": "string", "description": "Filter by type: decision|fact|preference|session_note|debug_log"},
+						"wing":   map[string]string{"type": "string", "description": "Required wing/namespace"},
+						"room":   map[string]string{"type": "string", "description": "Filter by room/sub-category"},
+						"since":  map[string]string{"type": "string", "description": "Start date ISO 8601 (e.g., 2024-01-15)"},
+						"until":  map[string]string{"type": "string", "description": "End date ISO 8601"},
+						"type":   map[string]string{"type": "string", "description": "Filter by type: decision|fact|preference|session_note|debug_log"},
+						"limit":  map[string]string{"type": "number", "description": "Max items to return (default: 100, max: 1000)"},
+						"cursor": map[string]string{"type": "string", "description": "Pagination cursor from previous call"},
 					},
 				},
 			},
@@ -357,12 +362,18 @@ func (c *Controller) handleStore(ctx context.Context, args map[string]interface{
 	if utf8.RuneCountInString(wing) > MaxWingLength {
 		return nil, fmt.Errorf("wing exceeds maximum length of %d characters", MaxWingLength)
 	}
+	if !interactors.WingRoomRe.MatchString(wing) {
+		return nil, fmt.Errorf("wing must be alphanumeric, hyphens or underscores only")
+	}
 
 	var room *string
 	if r, ok := args["room"]; ok {
 		if rs, ok := r.(string); ok && rs != "" {
 			if utf8.RuneCountInString(rs) > MaxRoomLength {
 				return nil, fmt.Errorf("room exceeds maximum length of %d characters", MaxRoomLength)
+			}
+			if !interactors.WingRoomRe.MatchString(rs) {
+				return nil, fmt.Errorf("room must be alphanumeric, hyphens or underscores only")
 			}
 			room = &rs
 		}
@@ -475,8 +486,8 @@ func (c *Controller) handleRecall(ctx context.Context, args map[string]interface
 	parts = append(parts, "")
 
 	for i, sel := range output.Memories {
-		parts = append(parts, fmt.Sprintf("--- [%d] %s (%d tokens) | ID: %s ---",
-			i+1, sel.Mode.String(), sel.TokenCost, sel.CandidateID.String()))
+		parts = append(parts, fmt.Sprintf("--- [%d] %s (%d tokens) | ID: T0:%s ---",
+			i+1, sel.Mode.String(), sel.TokenCost, sel.VerbatimID.String()))
 		parts = append(parts, sel.Rendered)
 		parts = append(parts, "")
 		totalTokens += sel.TokenCost
@@ -651,7 +662,8 @@ func (c *Controller) handleTimeline(ctx context.Context, args map[string]interfa
 	}
 
 	var room, memType *string
-	var since, until *string
+	var since, until, cursor *string
+	limit := 100
 
 	if r, ok := args["room"]; ok {
 		if rs, ok := r.(string); ok && rs != "" {
@@ -673,6 +685,19 @@ func (c *Controller) handleTimeline(ctx context.Context, args map[string]interfa
 			until = &us
 		}
 	}
+	if c, ok := args["cursor"]; ok {
+		if cs, ok := c.(string); ok && cs != "" {
+			cursor = &cs
+		}
+	}
+	if l, ok := args["limit"]; ok {
+		switch v := l.(type) {
+		case float64:
+			limit = int(v)
+		case int:
+			limit = v
+		}
+	}
 
 	var mt *valueobjects.MemoryType
 	if memType != nil {
@@ -681,11 +706,13 @@ func (c *Controller) handleTimeline(ctx context.Context, args map[string]interfa
 	}
 
 	input := interactors.GetTimelineInput{
-		Wing:  wing,
-		Room:  room,
-		Type:  mt,
-		Since: since,
-		Until: until,
+		Wing:   wing,
+		Room:   room,
+		Type:   mt,
+		Since:  since,
+		Until:  until,
+		Limit:  limit,
+		Cursor: cursor,
 	}
 
 	output, err := c.getTimeline.Execute(ctx, input)
@@ -701,8 +728,13 @@ func (c *Controller) handleTimeline(ctx context.Context, args map[string]interfa
 	parts = append(parts, "")
 
 	for _, item := range output.Items {
-		parts = append(parts, fmt.Sprintf("[%s] %s: %s (ID: %s)",
+		parts = append(parts, fmt.Sprintf("[%s] %s: %s (ID: T0:%s)",
 			item.Timestamp, item.Type, item.Summary, item.ID))
+	}
+
+	if output.NextCursor != nil {
+		parts = append(parts, "")
+		parts = append(parts, fmt.Sprintf("next_cursor: %s", *output.NextCursor))
 	}
 
 	return &mcptypes.CallToolResult{

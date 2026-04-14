@@ -117,7 +117,7 @@ type StatsRepository interface {
 	GetStats(ctx context.Context) (*valueobjects.Stats, error)
 
 	// GetTimeline retrieves a chronological timeline of memories for a specific wing.
-	GetTimeline(ctx context.Context, wing string, room *string, memType *valueobjects.MemoryType, since, until *string) ([]*valueobjects.TimelineItem, error)
+	GetTimeline(ctx context.Context, wing string, room *string, memType *valueobjects.MemoryType, since, until *string, limit int, cursor *string) ([]*valueobjects.TimelineItem, error)
 
 	// ArchiveOldMemories archives memories that have exceeded their retention period
 	// based on their type-specific decay rates.

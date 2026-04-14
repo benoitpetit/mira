@@ -13,7 +13,7 @@
   
   *100% Local • Déterministe • O(n log n) • Clean Architecture*
   
-  [📘 Référence API](docs/API_REFERENCES.md) • [📝 Changelog](CHANGELOG.md) • [🇬🇧 English](README.md)
+  [📘 Référence API](docs/API_REFERENCES.md) • [📝 Changelog](CHANGELOG.md) • [🧠 Skill](SKILL.md) • [🇬🇧 English](README.md)
   
 </div>
 
@@ -770,6 +770,7 @@ mira/
 │       └── main_test.go   # Tests application
 ├── docs/                  # Documentation
 │   └── API_REFERENCES.md  # Référence API
+├── SKILL.md               # Skill agent et guidelines memory loop
 ├── config.example.yaml    # Configuration exemple
 └── README_FR.md           # Ce fichier
 ```

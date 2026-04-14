@@ -1,3 +1,4 @@
+// Package util provides shared utility functions and resilience patterns.
 package util
 
 import (

@@ -61,7 +61,7 @@ func NewSQLiteRepository(dbPath string, opts SQLiteOptions) (*SQLiteRepository, 
 	}
 
 	repo := &SQLiteRepository{db: db, opts: opts}
-	if err := repo.migrate(); err != nil {
+	if err := runMigrations(db); err != nil {
 		return nil, fmt.Errorf("migration failed: %w", err)
 	}
 
@@ -81,95 +81,6 @@ func (r *SQLiteRepository) Begin() (*sql.Tx, error) {
 // DB returns the underlying database connection
 func (r *SQLiteRepository) DB() *sql.DB {
 	return r.db
-}
-
-func (r *SQLiteRepository) migrate() error {
-	schema := `
-CREATE TABLE IF NOT EXISTS embedding_models (
-    model_hash TEXT PRIMARY KEY,
-    model_name TEXT NOT NULL,
-    dimension INTEGER NOT NULL,
-    created_at REAL NOT NULL,
-    metadata TEXT
-) STRICT;
-
-CREATE TABLE IF NOT EXISTS verbatim (
-    id BLOB PRIMARY KEY,
-    content TEXT NOT NULL,
-    token_count INTEGER NOT NULL,
-    created_at REAL NOT NULL,
-    wing TEXT NOT NULL,
-    room TEXT,
-    metadata TEXT
-) STRICT;
-
-CREATE INDEX IF NOT EXISTS idx_verbatim_wing_room ON verbatim(wing, room);
-CREATE INDEX IF NOT EXISTS idx_verbatim_created ON verbatim(created_at);
-CREATE INDEX IF NOT EXISTS idx_verbatim_wing_time ON verbatim(wing, created_at);
-
-CREATE TABLE IF NOT EXISTS fingerprints (
-    id BLOB PRIMARY KEY,
-    verbatim_id BLOB NOT NULL REFERENCES verbatim(id),
-    ftype TEXT NOT NULL,
-    extracted_at REAL NOT NULL,
-    entities TEXT,
-    subjects TEXT,
-    decision TEXT,
-    data TEXT NOT NULL,
-    fact_count INTEGER DEFAULT 0,
-    token_estimate INTEGER DEFAULT 0,
-    model_hash TEXT REFERENCES embedding_models(model_hash)
-) STRICT;
-
-CREATE INDEX IF NOT EXISTS idx_fp_type ON fingerprints(ftype);
-CREATE INDEX IF NOT EXISTS idx_fp_entities ON fingerprints(entities);
-CREATE INDEX IF NOT EXISTS idx_fp_subjects ON fingerprints(subjects);
-CREATE INDEX IF NOT EXISTS idx_fp_decision ON fingerprints(decision);
-
-CREATE TABLE IF NOT EXISTS embeddings (
-    id BLOB PRIMARY KEY REFERENCES verbatim(id),
-    model_hash TEXT NOT NULL REFERENCES embedding_models(model_hash),
-    dim INTEGER NOT NULL,
-    vector BLOB NOT NULL,
-    normalized INTEGER DEFAULT 1,
-    created_at REAL NOT NULL
-) STRICT;
-
-CREATE TABLE IF NOT EXISTS causal_nodes (
-    id BLOB PRIMARY KEY REFERENCES fingerprints(id),
-    node_type TEXT NOT NULL,
-    summary TEXT NOT NULL,
-    timestamp REAL NOT NULL,
-    wing TEXT NOT NULL,
-    room TEXT
-) STRICT;
-
-CREATE TABLE IF NOT EXISTS causal_edges (
-    from_id BLOB NOT NULL REFERENCES causal_nodes(id),
-    to_id BLOB NOT NULL REFERENCES causal_nodes(id),
-    relation TEXT NOT NULL,
-    weight REAL DEFAULT 1.0,
-    detected_at REAL NOT NULL,
-    PRIMARY KEY (from_id, to_id, relation)
-) STRICT;
-
-CREATE INDEX IF NOT EXISTS idx_edges_from ON causal_edges(from_id);
-CREATE INDEX IF NOT EXISTS idx_edges_to ON causal_edges(to_id);
-CREATE INDEX IF NOT EXISTS idx_edges_timestamp ON causal_edges(detected_at);
-
-CREATE TABLE IF NOT EXISTS overlap_cache (
-    id_a BLOB NOT NULL,
-    id_b BLOB NOT NULL,
-    similarity REAL NOT NULL,
-    computed_at REAL NOT NULL,
-    ttl REAL NOT NULL DEFAULT (unixepoch() + 2592000),
-    PRIMARY KEY (id_a, id_b)
-) STRICT;
-
-CREATE INDEX IF NOT EXISTS idx_overlap_ttl ON overlap_cache(ttl);
-`
-	_, err := r.db.Exec(schema)
-	return err
 }
 
 // StoreVerbatim implements VerbatimRepository
@@ -788,9 +699,9 @@ func (r *SQLiteRepository) GetStats(ctx context.Context) (*valueobjects.Stats, e
 }
 
 // GetTimeline implements StatsRepository
-func (r *SQLiteRepository) GetTimeline(ctx context.Context, wing string, room *string, memType *valueobjects.MemoryType, since, until *string) ([]*valueobjects.TimelineItem, error) {
+func (r *SQLiteRepository) GetTimeline(ctx context.Context, wing string, room *string, memType *valueobjects.MemoryType, since, until *string, limit int, cursor *string) ([]*valueobjects.TimelineItem, error) {
 	query := `
-		SELECT f.id, f.ftype, f.extracted_at, f.data
+		SELECT v.id, f.ftype, f.extracted_at, f.data
 		FROM fingerprints f
 		JOIN verbatim v ON f.verbatim_id = v.id
 		WHERE v.wing = ?`
@@ -804,8 +715,30 @@ func (r *SQLiteRepository) GetTimeline(ctx context.Context, wing string, room *s
 		query += " AND f.ftype = ?"
 		args = append(args, string(*memType))
 	}
+	if since != nil {
+		query += " AND f.extracted_at >= ?"
+		args = append(args, *since)
+	}
+	if until != nil {
+		query += " AND f.extracted_at <= ?"
+		args = append(args, *until)
+	}
+	if cursor != nil && *cursor != "" {
+		// Cursor is an RFC3339 timestamp used for pagination
+		t, err := time.Parse(time.RFC3339, *cursor)
+		if err == nil {
+			query += " AND f.extracted_at < ?"
+			args = append(args, float64(t.Unix()))
+		}
+	}
 
-	query += " ORDER BY f.extracted_at DESC LIMIT 100"
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	query += fmt.Sprintf(" ORDER BY f.extracted_at DESC LIMIT %d", limit)
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {

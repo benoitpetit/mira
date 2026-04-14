@@ -1,3 +1,4 @@
+// Package ports defines the repository and service interfaces (Clean Architecture).
 // Metrics ports
 package ports
 

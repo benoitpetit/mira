@@ -1,3 +1,4 @@
+// Package app provides the application composition root and lifecycle management.
 // Health check endpoint for MIRA service
 package app
 

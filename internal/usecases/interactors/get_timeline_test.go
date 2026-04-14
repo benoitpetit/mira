@@ -19,7 +19,7 @@ func (m *mockStatsRepositoryForTimeline) GetStats(ctx context.Context) (*valueob
 	return nil, nil
 }
 
-func (m *mockStatsRepositoryForTimeline) GetTimeline(ctx context.Context, wing string, room *string, memType *valueobjects.MemoryType, since, until *string) ([]*valueobjects.TimelineItem, error) {
+func (m *mockStatsRepositoryForTimeline) GetTimeline(ctx context.Context, wing string, room *string, memType *valueobjects.MemoryType, since, until *string, limit int, cursor *string) ([]*valueobjects.TimelineItem, error) {
 	if m.getTimelineFunc != nil {
 		return m.getTimelineFunc(ctx, wing, room, memType, since, until)
 	}

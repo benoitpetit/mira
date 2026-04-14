@@ -306,13 +306,17 @@ func TestGetTimeline(t *testing.T) {
 	repo.StoreFingerprint(ctx, fp)
 
 	// Get timeline
-	timeline, err := repo.GetTimeline(ctx, "timeline-wing", nil, nil, nil, nil)
+	timeline, err := repo.GetTimeline(ctx, "timeline-wing", nil, nil, nil, nil, 100, nil)
 	if err != nil {
 		t.Fatalf("GetTimeline failed: %v", err)
 	}
 
 	if len(timeline) != 1 {
 		t.Errorf("Timeline length = %d, want 1", len(timeline))
+	}
+
+	if len(timeline) > 0 && timeline[0].ID != verbatim.ID.String() {
+		t.Errorf("Timeline ID = %s, want verbatim ID %s", timeline[0].ID, verbatim.ID.String())
 	}
 }
 

@@ -1,3 +1,4 @@
+// Package extraction provides embedding generation and NLP extraction adapters.
 // Cybertron embedder adapter using real NLP models
 package extraction
 

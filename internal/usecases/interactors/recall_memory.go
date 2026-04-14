@@ -102,9 +102,11 @@ type RecallMemory struct {
 	earlyPruningThreshold float64
 	sessionWindowSeconds  int
 	sessionBoostBeta      float64
+	sessionBoostMax       float64
 	causalPenaltyAlpha    float64
 	densitySigmoidK       float64
 	densitySigmoidMu      float64
+	decayRates            map[string]float64
 }
 
 // RecallMemoryConfig configures the recall interactor
@@ -114,10 +116,12 @@ type RecallMemoryConfig struct {
 	EarlyPruningThreshold float64
 	SessionWindowSeconds  int
 	SessionBoostBeta      float64
+	SessionBoostMax       float64
 	CausalPenaltyAlpha    float64
 	DensitySigmoidK       float64
 	DensitySigmoidMu      float64
 	EmbeddingCacheSize    int
+	DecayRates            map[string]float64
 }
 
 // DefaultRecallMemoryConfig returns default configuration
@@ -128,10 +132,18 @@ func DefaultRecallMemoryConfig() RecallMemoryConfig {
 		EarlyPruningThreshold: 0.6,
 		SessionWindowSeconds:  7200,
 		SessionBoostBeta:      0.2,
+		SessionBoostMax:       1.2,
 		CausalPenaltyAlpha:    0.15,
 		DensitySigmoidK:       2.0,
 		DensitySigmoidMu:      0.3,
 		EmbeddingCacheSize:    1000,
+		DecayRates: map[string]float64{
+			"decision":    0.001,
+			"fact":        0.005,
+			"preference":  0.01,
+			"session_note": 0.1,
+			"debug_log":   0.5,
+		},
 	}
 }
 
@@ -150,6 +162,11 @@ func NewRecallMemory(
 		cacheSize = 1000
 	}
 
+	decayRates := config.DecayRates
+	if decayRates == nil {
+		decayRates = DefaultRecallMemoryConfig().DecayRates
+	}
+
 	return &RecallMemory{
 		vectorStore:           vectorStore,
 		overlapCache:          overlapCache,
@@ -163,9 +180,11 @@ func NewRecallMemory(
 		earlyPruningThreshold: config.EarlyPruningThreshold,
 		sessionWindowSeconds:  config.SessionWindowSeconds,
 		sessionBoostBeta:      config.SessionBoostBeta,
+		sessionBoostMax:       config.SessionBoostMax,
 		causalPenaltyAlpha:    config.CausalPenaltyAlpha,
 		densitySigmoidK:       config.DensitySigmoidK,
 		densitySigmoidMu:      config.DensitySigmoidMu,
+		decayRates:            decayRates,
 	}
 }
 
@@ -302,7 +321,10 @@ func (uc *RecallMemory) scoreCandidates(candidates []*entities.Candidate, queryV
 
 		// η: recency
 		ageDays := now.Sub(c.Verbatim.CreatedAt).Hours() / 24
-		lambda := c.Memory.Type.DecayRate()
+		lambda := uc.decayRates[string(c.Memory.Type)]
+		if lambda <= 0 {
+			lambda = c.Memory.Type.DecayRate()
+		}
 		c.Recency = math.Exp(-lambda * ageDays)
 
 		// Initial score (without overlap/causal/session)
@@ -312,17 +334,43 @@ func (uc *RecallMemory) scoreCandidates(candidates []*entities.Candidate, queryV
 	return candidates
 }
 
-// adaptiveThreshold lowers the bar for small corpora so that queries on
-// databases with fewer than 10 memories still return results.
-func (uc *RecallMemory) adaptiveThreshold(candidateCount int) float64 {
-	if candidateCount < 10 {
+// adaptiveThreshold computes a dynamic threshold based on score distribution.
+// For sparse corpora (< 3 candidates) it lowers the bar. Otherwise it uses
+// mean(scores) - stddev(scores), clamped to [0.15, 0.75].
+func (uc *RecallMemory) adaptiveThreshold(scores []float64) float64 {
+	if len(scores) < 3 {
 		return 0.3
 	}
-	return uc.earlyPruningThreshold
+
+	var sum float64
+	for _, s := range scores {
+		sum += s
+	}
+	mean := sum / float64(len(scores))
+
+	var variance float64
+	for _, s := range scores {
+		diff := s - mean
+		variance += diff * diff
+	}
+	stddev := math.Sqrt(variance / float64(len(scores)))
+
+	threshold := mean - stddev
+	if threshold < 0.15 {
+		threshold = 0.15
+	}
+	if threshold > 0.75 {
+		threshold = 0.75
+	}
+	return threshold
 }
 
 func (uc *RecallMemory) pruneCandidates(candidates []*entities.Candidate) []*entities.Candidate {
-	return uc.pruneCandidatesWithThreshold(candidates, uc.adaptiveThreshold(len(candidates)))
+	scores := make([]float64, 0, len(candidates))
+	for _, c := range candidates {
+		scores = append(scores, c.Relevance)
+	}
+	return uc.pruneCandidatesWithThreshold(candidates, uc.adaptiveThreshold(scores))
 }
 
 func (uc *RecallMemory) pruneCandidatesWithThreshold(candidates []*entities.Candidate, threshold float64) []*entities.Candidate {
@@ -366,6 +414,13 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 	selectedIDs := make(map[uuid.UUID]bool)
 	selectedTimes := make([]time.Time, 0)
 
+	// Pre-compute adaptive threshold for early-pruning inside greedy loop
+	greedyThresholdScores := make([]float64, 0, len(candidates))
+	for _, c := range candidates {
+		greedyThresholdScores = append(greedyThresholdScores, c.Relevance)
+	}
+	greedyThreshold := uc.adaptiveThreshold(greedyThresholdScores)
+
 	for len(remainingCandidates) > 0 && budget-tokensUsed >= 50 {
 		// Recalculate scores for all remaining candidates
 		for _, c := range remainingCandidates {
@@ -375,7 +430,7 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 			// Early pruning: if the initial score is too low, skip expensive overlap calculation
 			// We compute a theoretical max score (if overlap=0, causal=1, session=1+boost)
 			maxPossibleScore := initialScore * 1.0 * 1.0 * (1.0 + uc.sessionBoostBeta)
-			if maxPossibleScore < uc.adaptiveThreshold(len(remainingCandidates)) {
+			if maxPossibleScore < greedyThreshold {
 				c.Score = maxPossibleScore // Set a low score so it gets sorted to the end
 				c.MaxOverlap = 0
 				c.CausalPenalty = 1.0
@@ -419,7 +474,7 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 			sessionBoost := 1.0
 			for _, t := range selectedTimes {
 				if math.Abs(c.Verbatim.CreatedAt.Sub(t).Seconds()) < sessionWindow {
-					sessionBoost = 1.0 + uc.sessionBoostBeta
+					sessionBoost = math.Min(1.0+uc.sessionBoostBeta, uc.sessionBoostMax)
 					break
 				}
 			}
@@ -469,7 +524,7 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 		// Render
 		rendered := uc.render(c, mode)
 
-		sel := valueobjects.NewSelectedMemory(c.ID(), mode, tokenCost, rendered)
+		sel := valueobjects.NewSelectedMemory(c.ID(), c.Verbatim.ID, mode, tokenCost, rendered)
 		selected = append(selected, sel)
 		selectedEmbeddings = append(selectedEmbeddings, c.Embedding)
 		selectedIDs[c.ID()] = true

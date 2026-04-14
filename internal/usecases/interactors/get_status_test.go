@@ -22,7 +22,7 @@ func (m *mockStatsRepository) GetStats(ctx context.Context) (*valueobjects.Stats
 	return nil, nil
 }
 
-func (m *mockStatsRepository) GetTimeline(ctx context.Context, wing string, room *string, memType *valueobjects.MemoryType, since, until *string) ([]*valueobjects.TimelineItem, error) {
+func (m *mockStatsRepository) GetTimeline(ctx context.Context, wing string, room *string, memType *valueobjects.MemoryType, since, until *string, limit int, cursor *string) ([]*valueobjects.TimelineItem, error) {
 	return nil, nil
 }
 

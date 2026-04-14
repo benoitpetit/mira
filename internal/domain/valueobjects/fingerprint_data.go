@@ -1,3 +1,4 @@
+// Package valueobjects provides immutable domain value objects.
 // FingerprintData value object
 package valueobjects
 

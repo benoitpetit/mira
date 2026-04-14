@@ -1,3 +1,4 @@
+// Package vector provides vector search adapters using HNSW and SQLite.
 //go:build !windows
 // +build !windows
 
@@ -5,7 +6,9 @@ package vector
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/gob"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
@@ -333,6 +336,17 @@ func (h *HNSWStore) Save() error {
 		return fmt.Errorf("failed to rename index file: %w", err)
 	}
 
+	// Calculer et écrire le checksum dans un fichier séparé
+	payload, err := os.ReadFile(h.indexPath)
+	if err != nil {
+		return fmt.Errorf("failed to read saved index for checksum: %w", err)
+	}
+	hash := sha256.Sum256(payload)
+	checksumPath := h.indexPath + ".sha256"
+	if err := os.WriteFile(checksumPath, []byte(hex.EncodeToString(hash[:])), 0644); err != nil {
+		return fmt.Errorf("failed to write checksum file: %w", err)
+	}
+
 	log.Printf("[Vector] HNSW index saved: %d vectors, %d mappings", data.NodeCount, len(data.UUIDToID))
 	return nil
 }
@@ -347,6 +361,21 @@ func (h *HNSWStore) Load() error {
 	if _, err := os.Stat(h.indexPath); os.IsNotExist(err) {
 		log.Println("[Vector] HNSW index file not found, will build from scratch")
 		return nil
+	}
+
+	// Vérifier le checksum si présent
+	checksumPath := h.indexPath + ".sha256"
+	if checksumData, err := os.ReadFile(checksumPath); err == nil {
+		payload, err := os.ReadFile(h.indexPath)
+		if err != nil {
+			return fmt.Errorf("failed to read index file for checksum verification: %w", err)
+		}
+		hash := sha256.Sum256(payload)
+		expected := hex.EncodeToString(hash[:])
+		if expected != string(checksumData) {
+			log.Printf("[Vector] HNSW index checksum mismatch. Rebuild required.")
+			return fmt.Errorf("index checksum mismatch")
+		}
 	}
 
 	// Ouvrir le fichier

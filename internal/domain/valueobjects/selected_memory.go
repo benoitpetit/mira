@@ -10,6 +10,7 @@ import (
 // SelectedMemory represents a selected memory with render mode
 type SelectedMemory struct {
 	CandidateID uuid.UUID
+	VerbatimID  uuid.UUID
 	Mode        RenderMode
 	TokenCost   int
 	Rendered    string
@@ -17,9 +18,10 @@ type SelectedMemory struct {
 }
 
 // NewSelectedMemory creates a selected memory
-func NewSelectedMemory(candidateID uuid.UUID, mode RenderMode, tokenCost int, rendered string) *SelectedMemory {
+func NewSelectedMemory(candidateID, verbatimID uuid.UUID, mode RenderMode, tokenCost int, rendered string) *SelectedMemory {
 	return &SelectedMemory{
 		CandidateID: candidateID,
+		VerbatimID:  verbatimID,
 		Mode:        mode,
 		TokenCost:   tokenCost,
 		Rendered:    rendered,

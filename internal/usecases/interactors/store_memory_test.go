@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/benoitpetit/mira/internal/domain/entities"
@@ -161,7 +162,7 @@ func (m *mockStoreRepository) GetStats(ctx context.Context) (*valueobjects.Stats
 	return nil, nil
 }
 
-func (m *mockStoreRepository) GetTimeline(ctx context.Context, wing string, room *string, memType *valueobjects.MemoryType, since, until *string) ([]*valueobjects.TimelineItem, error) {
+func (m *mockStoreRepository) GetTimeline(ctx context.Context, wing string, room *string, memType *valueobjects.MemoryType, since, until *string, limit int, cursor *string) ([]*valueobjects.TimelineItem, error) {
 	return nil, nil
 }
 
@@ -341,6 +342,54 @@ func BenchmarkStoreMemoryExecute(b *testing.B) {
 		if err != nil {
 			b.Fatalf("Execute failed: %v", err)
 		}
+	}
+}
+
+func TestStoreMemoryInputValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   StoreMemoryInput
+		wantErr bool
+	}{
+		{
+			name:    "valid",
+			input:   StoreMemoryInput{Content: "Hello", Wing: "test-wing"},
+			wantErr: false,
+		},
+		{
+			name:    "empty content",
+			input:   StoreMemoryInput{Content: "", Wing: "test-wing"},
+			wantErr: true,
+		},
+		{
+			name:    "invalid wing chars",
+			input:   StoreMemoryInput{Content: "Hello", Wing: "test wing!"},
+			wantErr: true,
+		},
+		{
+			name:    "wing too long",
+			input:   StoreMemoryInput{Content: "Hello", Wing: strings.Repeat("a", 101)},
+			wantErr: true,
+		},
+		{
+			name:    "invalid room chars",
+			input:   StoreMemoryInput{Content: "Hello", Wing: "test", Room: strPtr("room@bad")},
+			wantErr: true,
+		},
+		{
+			name:    "invalid type",
+			input:   StoreMemoryInput{Content: "Hello", Wing: "test", Type: func() *valueobjects.MemoryType { mt := valueobjects.MemoryType("unknown"); return &mt }()},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.input.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
 	}
 }
 

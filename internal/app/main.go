@@ -4,7 +4,7 @@ package app
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -58,7 +58,7 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
 	if err := ensureGitignore(cfg.Storage.Path); err != nil {
-		log.Printf("[App] Note: could not ensure .gitignore: %v", err)
+		slog.Info("could not ensure .gitignore", "error", err)
 	}
 
 	dbPath := cfg.Storage.Path + "/mira.db"
@@ -77,8 +77,7 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 	// Log database stats
 	stats, err := repo.GetStats(context.Background())
 	if err == nil {
-		log.Printf("[DB] Connected: %d verbatims, %d fingerprints, %d embeddings",
-			stats.VerbatimCount, stats.FingerprintCount, stats.EmbeddingCount)
+		slog.Info("database connected", "verbatims", stats.VerbatimCount, "fingerprints", stats.FingerprintCount, "embeddings", stats.EmbeddingCount)
 	}
 
 	// 3. Initialize metrics if enabled
@@ -87,25 +86,25 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 			// Use Prometheus collector with HTTP endpoint
 			promCollector := metrics.NewPrometheusCollector()
 			app.metricsCollector = promCollector
-			log.Println("[Metrics] Prometheus collector enabled")
+			slog.Info("prometheus collector enabled")
 
 			// Start Prometheus HTTP server in background
 			go func() {
-				log.Printf("[Metrics] Starting Prometheus server on %s/metrics", cfg.Metrics.PrometheusAddr)
+				slog.Info("starting prometheus server", "addr", cfg.Metrics.PrometheusAddr+"/metrics")
 				if err := promCollector.StartServer(cfg.Metrics.PrometheusAddr); err != nil {
-					log.Printf("[Metrics] Prometheus server error: %v", err)
+					slog.Error("prometheus server error", "error", err)
 				}
 			}()
 		} else {
 			// Use simple collector (existing)
 			app.metricsCollector = metrics.NewSimpleMetricsCollector()
-			log.Println("[Metrics] Simple collector enabled")
+			slog.Info("simple metrics collector enabled")
 		}
 	}
 
 	// 4. Initialize embedder (Cybertron or Simple)
 	if cfg.Embeddings.UseSimpleEmbedder {
-		log.Println("[Embedder] Using SimpleEmbedder (deterministic)")
+		slog.Info("using simple embedder")
 		app.embedder = extraction.NewSimpleEmbedder(cfg.Embeddings.Dimension)
 	} else {
 		cybertronEmbedder, err := extraction.NewCybertronEmbedder(extraction.CybertronEmbedderOptions{
@@ -114,8 +113,7 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 			Dimension: cfg.Embeddings.Dimension,
 		})
 		if err != nil {
-			log.Printf("[Embedder] Warning: Failed to load model: %v", err)
-			log.Println("[Embedder] Falling back to SimpleEmbedder")
+			slog.Warn("failed to load cybertron model, falling back to simple embedder", "error", err)
 			app.embedder = extraction.NewSimpleEmbedder(cfg.Embeddings.Dimension)
 		} else {
 			app.embedder = cybertronEmbedder
@@ -135,7 +133,22 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 	model := entities.NewEmbeddingModel(cfg.Embeddings.CurrentModel, cfg.Embeddings.Dimension)
 	model.WithMetadata("batch_size", cfg.Embeddings.BatchSize)
 	if err := repo.RegisterModel(context.Background(), model); err != nil {
-		log.Printf("Warning: failed to register embedding model: %v", err)
+		slog.Warn("failed to register embedding model", "error", err)
+	}
+
+	// Validate model hash consistency
+	registeredModels, _ := repo.GetAllModels(context.Background())
+	hasModelHash := false
+	for _, mh := range registeredModels {
+		if mh == cfg.Embeddings.ModelHash {
+			hasModelHash = true
+		}
+	}
+	if !hasModelHash && len(registeredModels) > 0 {
+		slog.Warn("embedding model hash mismatch detected",
+			"config_model_hash", cfg.Embeddings.ModelHash,
+			"registered_models", registeredModels,
+			"action", "run mira_reindex or clear memory to rebuild embeddings")
 	}
 
 	// 7. Initialize vector store (HNSW with SQLite fallback)
@@ -158,24 +171,22 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 	indexPath := cfg.Storage.Path + "/vectors.bin"
 	hnswIndex, err := vector.NewHNSWStore(repo, cfg.Embeddings.Dimension, indexPath, hnswOpts)
 	if err != nil {
-		log.Printf("Warning: Failed to initialize HNSW index: %v", err)
-		log.Println("Falling back to SQLite vector search")
+		slog.Warn("failed to initialize hnsw index, falling back to sqlite vector search", "error", err)
 		app.vectorStore = vector.NewSQLiteVectorStore(repo.DB())
 	} else {
 		// Essayer de charger l'index existant
 		if err := hnswIndex.Load(); err != nil {
-			log.Printf("[Vector] Failed to load HNSW index: %v", err)
-			log.Println("[Vector] Will build from scratch...")
+			slog.Warn("failed to load hnsw index, will build from scratch", "error", err)
 		} else if hnswIndex.IsReady() {
-			log.Printf("[Vector] HNSW index loaded from disk: %d vectors", hnswIndex.Stats())
+			slog.Info("hnsw index loaded from disk", "vectors", hnswIndex.Stats())
 		}
 
 		// Construire depuis la DB si l'index n'est pas prêt (pas de fichier ou erreur)
 		if !hnswIndex.IsReady() {
-			log.Println("[Vector] Building HNSW index from SQLite...")
+			slog.Info("building hnsw index from sqlite")
 			go func() {
 				if err := hnswIndex.BuildFromStore(context.Background()); err != nil {
-					log.Printf("[Vector] Warning: Failed to build HNSW index: %v", err)
+					slog.Warn("failed to build hnsw index", "error", err)
 				}
 			}()
 		}
@@ -186,13 +197,14 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 
 	// 8. Initialize webhook manager if enabled
 	if cfg.Webhooks.Enabled {
-		log.Println("[Webhook] Initializing webhook manager...")
+		slog.Info("initializing webhook manager")
 
 		timeout := time.Duration(cfg.Webhooks.Timeout) * time.Second
-		webhookMgr := webhookadapter.NewSimpleWebhookManager(
+		webhookMgr := webhookadapter.NewSimpleWebhookManagerWithDB(
 			cfg.Webhooks.Workers,
 			cfg.Webhooks.QueueSize,
 			timeout,
+			repo.DB(),
 		)
 		app.webhookManager = webhookMgr
 
@@ -200,12 +212,11 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 		for _, endpoint := range cfg.Webhooks.Endpoints {
 			if endpoint != "" {
 				app.webhookManager.Register(context.Background(), endpoint, []string{"*"}, "")
-				log.Printf("[Webhook] Registered endpoint: %s", endpoint)
+				slog.Info("registered webhook endpoint", "url", endpoint)
 			}
 		}
 
-		log.Printf("[Webhook] Enabled: %d workers, %d endpoints",
-			cfg.Webhooks.Workers, len(cfg.Webhooks.Endpoints))
+		slog.Info("webhooks enabled", "workers", cfg.Webhooks.Workers, "endpoints", len(cfg.Webhooks.Endpoints))
 	}
 
 	// 10. Initialize renderer
@@ -231,10 +242,12 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 			EarlyPruningThreshold: cfg.Allocator.EarlyPruningThreshold,
 			SessionWindowSeconds:  cfg.Allocator.SessionWindowSeconds,
 			SessionBoostBeta:      cfg.Allocator.SessionBoostBeta,
+			SessionBoostMax:       cfg.Allocator.SessionBoostMax,
 			CausalPenaltyAlpha:    cfg.Allocator.CausalPenaltyAlpha,
 			DensitySigmoidK:       cfg.Allocator.DensitySigmoid.K,
 			DensitySigmoidMu:      cfg.Allocator.DensitySigmoid.Mu,
 			EmbeddingCacheSize:    cfg.Embeddings.CacheSize,
+			DecayRates:            cfg.DecayRates,
 		},
 		app.metricsCollector,
 	)
@@ -266,11 +279,11 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 func (a *Application) Close() error {
 	// Sauvegarder l'index HNSW
 	if a.hnswIndex != nil {
-		log.Println("[Vector] Saving HNSW index to disk...")
+		slog.Info("saving hnsw index to disk")
 		if err := a.hnswIndex.Save(); err != nil {
-			log.Printf("[Vector] Warning: Failed to save HNSW index: %v", err)
+			slog.Warn("failed to save hnsw index", "error", err)
 		} else {
-			log.Printf("[Vector] HNSW index saved: %d vectors", a.hnswIndex.Stats())
+			slog.Info("hnsw index saved", "vectors", a.hnswIndex.Stats())
 		}
 	}
 
@@ -311,7 +324,7 @@ func (a *Application) Run() error {
 	// Start server in goroutine
 	errChan := make(chan error, 1)
 	go func() {
-		log.Printf("[MCP] Server '%s' v%s ready on %s (budget: %d tokens)", a.config.MCP.Name, a.config.MCP.Version, a.config.MCP.Transport, a.config.Allocator.DefaultBudget)
+		slog.Info("mcp server ready", "name", a.config.MCP.Name, "version", a.config.MCP.Version, "transport", a.config.MCP.Transport, "budget", a.config.Allocator.DefaultBudget)
 
 		if a.config.MCP.Transport == "stdio" {
 			errChan <- server.ServeStdio(s)
@@ -325,7 +338,7 @@ func (a *Application) Run() error {
 	// Wait for shutdown signal or error
 	select {
 	case sig := <-sigChan:
-		log.Printf("[Server] Received signal: %v, shutting down...", sig)
+		slog.Info("received shutdown signal", "signal", sig)
 		cancel()
 		return nil
 	case err := <-errChan:

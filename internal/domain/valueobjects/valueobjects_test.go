@@ -107,10 +107,14 @@ func TestRenderModeString(t *testing.T) {
 
 func TestNewSelectedMemory(t *testing.T) {
 	id := uuid.New()
-	sm := NewSelectedMemory(id, ModeFingerprint, 150, "rendered content")
+	vid := uuid.New()
+	sm := NewSelectedMemory(id, vid, ModeFingerprint, 150, "rendered content")
 
 	if sm.CandidateID != id {
 		t.Error("CandidateID should match")
+	}
+	if sm.VerbatimID != vid {
+		t.Error("VerbatimID should match")
 	}
 	if sm.Mode != ModeFingerprint {
 		t.Errorf("Mode = %v, want ModeFingerprint", sm.Mode)

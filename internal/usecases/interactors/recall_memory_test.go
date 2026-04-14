@@ -232,6 +232,9 @@ func TestExecute(t *testing.T) {
 					if mem.CandidateID == uuid.Nil {
 						t.Errorf("Memory %d has nil CandidateID", i)
 					}
+					if mem.VerbatimID == uuid.Nil {
+						t.Errorf("Memory %d has nil VerbatimID", i)
+					}
 					if mem.TokenCost <= 0 {
 						t.Errorf("Memory %d has invalid TokenCost: %d", i, mem.TokenCost)
 					}
@@ -444,6 +447,9 @@ func TestSelectGreedy(t *testing.T) {
 						t.Errorf("Duplicate candidate ID: %s", s.CandidateID)
 					}
 					seen[s.CandidateID] = true
+					if s.VerbatimID == uuid.Nil {
+						t.Errorf("Nil VerbatimID for candidate: %s", s.CandidateID)
+					}
 				}
 			}
 
@@ -654,6 +660,33 @@ func TestScoreCandidates(t *testing.T) {
 	}
 }
 
+// TestAdaptiveThreshold tests dynamic threshold computation
+func TestAdaptiveThreshold(t *testing.T) {
+	interactor := createTestInteractor(nil)
+
+	tests := []struct {
+		name     string
+		scores   []float64
+		wantMin  float64
+		wantMax  float64
+	}{
+		{"sparse corpus", []float64{0.9, 0.8}, 0.3, 0.3}, // < 3 scores -> fixed 0.3
+		{"tight cluster", []float64{0.6, 0.62, 0.58, 0.61}, 0.15, 0.75},
+		{"spread out", []float64{0.9, 0.8, 0.5, 0.4, 0.3}, 0.15, 0.75},
+		{"high floor", []float64{0.95, 0.94, 0.96}, 0.15, 0.75},
+		{"low ceiling", []float64{0.1, 0.12, 0.11}, 0.15, 0.15},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := interactor.adaptiveThreshold(tt.scores)
+			if got < tt.wantMin || got > tt.wantMax {
+				t.Errorf("adaptiveThreshold(%v) = %f, want between %f and %f", tt.scores, got, tt.wantMin, tt.wantMax)
+			}
+		})
+	}
+}
+
 // TestPruneCandidates tests the early pruning logic
 func TestPruneCandidates(t *testing.T) {
 	interactor := createTestInteractor(nil)
@@ -671,6 +704,38 @@ func TestPruneCandidates(t *testing.T) {
 	// Should keep candidates above threshold (0.8 and 0.6)
 	if len(pruned) != 2 {
 		t.Errorf("Expected 2 pruned candidates, got %d", len(pruned))
+	}
+}
+
+// TestExecute_ExtremeBudgets tests edge cases for budget parameter
+func TestExecute_ExtremeBudgets(t *testing.T) {
+	now := time.Now()
+	candidates := []*entities.Candidate{
+		createTestCandidateWithScoreAndTokens("high", now, 0.9, 30),
+	}
+	interactor := createTestInteractor(candidates)
+	ctx := context.Background()
+
+	tests := []struct {
+		name         string
+		budget       int
+		expectZero   bool
+	}{
+		{"budget zero uses default", 0, false},
+		{"budget one too small", 1, true},
+		{"budget below minimum loop", 40, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output, err := interactor.Execute(ctx, RecallMemoryInput{Query: "test", Budget: tt.budget})
+			if err != nil {
+				t.Fatalf("Execute failed: %v", err)
+			}
+			if tt.expectZero && len(output.Memories) != 0 {
+				t.Errorf("expected 0 memories for budget=%d, got %d", tt.budget, len(output.Memories))
+			}
+		})
 	}
 }
 

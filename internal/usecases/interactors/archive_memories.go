@@ -1,3 +1,4 @@
+// Package interactors provides the application use cases.
 // ArchiveMemories use case
 package interactors
 

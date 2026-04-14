@@ -1,3 +1,4 @@
+// Package metrics provides observability and monitoring adapters.
 // Metrics collector adapter - implements ports.MetricsCollector
 package metrics
 

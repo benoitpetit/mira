@@ -17,6 +17,7 @@ import (
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
+	"github.com/google/uuid"
 	"github.com/pkoukk/tiktoken-go"
 )
 
@@ -34,7 +35,7 @@ type NativeExtractor struct {
 	assigneePatterns   []*regexp.Regexp
 	validationPatterns []*regexp.Regexp
 	deadlinePatterns   []*regexp.Regexp
-	causalPatterns     map[valueobjects.RelationType]*regexp.Regexp
+	causalPatterns     []causalPattern
 	preferencePattern  *regexp.Regexp
 	factStatePattern   *regexp.Regexp
 	factDataPattern    *regexp.Regexp
@@ -114,12 +115,19 @@ func (e *NativeExtractor) compilePatterns() {
 		regexp.MustCompile(`(?i)(?:before|by)\s+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})`),
 	}
 
-	e.causalPatterns = map[valueobjects.RelationType]*regexp.Regexp{
-		valueobjects.RelTriggered:   regexp.MustCompile(`(?i)(?:following|after|in response to)`),
-		valueobjects.RelBecause:     regexp.MustCompile(`(?i)(?:because|since|due to|in reason of)`),
-		valueobjects.RelContradicts: regexp.MustCompile(`(?i)(?:contradicts|in contradiction|however)`),
-		valueobjects.RelUpdates:     regexp.MustCompile(`(?i)(?:updates|replaces)`),
-		valueobjects.RelResolves:    regexp.MustCompile(`(?i)(?:resolves|solves|fixes)`),
+	e.causalPatterns = []causalPattern{
+		// English patterns
+		{valueobjects.RelTriggered, regexp.MustCompile(`(?i)\b(?:following|after|in response to|triggered by)\b`)},
+		{valueobjects.RelBecause, regexp.MustCompile(`(?i)\b(?:because|since|due to|as a result of)\b`)},
+		{valueobjects.RelContradicts, regexp.MustCompile(`(?i)\b(?:contradicts|conflicts with|is inconsistent with)\b`)},
+		{valueobjects.RelUpdates, regexp.MustCompile(`(?i)\b(?:updates|replaces|supersedes)\b`)},
+		{valueobjects.RelResolves, regexp.MustCompile(`(?i)\b(?:resolves|solves|fixes|addresses)\b`)},
+		// French patterns (word boundaries \b don't work well with accented chars in RE2)
+		{valueobjects.RelTriggered, regexp.MustCompile(`(?i)(?:^|\s)(?:suite à|à la suite de|consécutivement à|après)(?:$|\s|[.,;!?])`)},
+		{valueobjects.RelBecause, regexp.MustCompile(`(?i)(?:^|\s)(?:parce que|car|en raison de|grâce à)(?:$|\s|[.,;!?])`)},
+		{valueobjects.RelContradicts, regexp.MustCompile(`(?i)(?:^|\s)(?:contredit|est incompatible avec|s'oppose à)(?:$|\s|[.,;!?])`)},
+		{valueobjects.RelUpdates, regexp.MustCompile(`(?i)(?:^|\s)(?:met à jour|remplace|actualise)(?:$|\s|[.,;!?])`)},
+		{valueobjects.RelResolves, regexp.MustCompile(`(?i)(?:^|\s)(?:résout|règle|corrige|solutionne)(?:$|\s|[.,;!?])`)},
 	}
 
 	e.preferencePattern = regexp.MustCompile(`(?i)(?:prefer|preference|like|dislike)`)
@@ -493,18 +501,25 @@ func (e *NativeExtractor) Encode(ctx context.Context, text string) ([]float32, e
 }
 
 // DetectCausalRelations implements CausalRelationDetector
+// causalPattern associates a regex with its relation type
+type causalPattern struct {
+	relType valueobjects.RelationType
+	pattern *regexp.Regexp
+}
+
 func (e *NativeExtractor) DetectCausalRelations(ctx context.Context, newFp *entities.Fingerprint, recentFps []*entities.Fingerprint, verbatimContent string) ([]*entities.CausalEdge, error) {
 	var edges []*entities.CausalEdge
 	contentLower := strings.ToLower(verbatimContent)
+	seen := make(map[uuid.UUID]bool)
 
-	for _, pattern := range e.causalPatterns {
-		if pattern.MatchString(contentLower) {
-			// Find recent fingerprint that matches the pattern context
+	for _, cp := range e.causalPatterns {
+		if cp.pattern.MatchString(contentLower) {
+			// Find first recent fingerprint not already linked
 			for _, recentFp := range recentFps {
-				if recentFp != nil {
-					// Create causal edge
-					edge := entities.NewCausalEdge(recentFp.ID, newFp.ID, valueobjects.RelTriggered)
+				if recentFp != nil && !seen[recentFp.ID] {
+					edge := entities.NewCausalEdge(recentFp.ID, newFp.ID, cp.relType)
 					edges = append(edges, edge)
+					seen[recentFp.ID] = true
 					break
 				}
 			}

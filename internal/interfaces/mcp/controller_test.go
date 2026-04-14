@@ -47,6 +47,7 @@ func (m *mockRecallMemory) Execute(ctx context.Context, input interactors.Recall
 	memories := []*valueobjects.SelectedMemory{
 		valueobjects.NewSelectedMemory(
 			uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
+			uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
 			valueobjects.ModeFingerprint,
 			50,
 			"Test memory content",

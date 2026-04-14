@@ -1,3 +1,4 @@
+// Package entities provides the core domain entities for the memory system.
 // Candidate entity for Context Budget Allocation
 package entities
 

@@ -4,7 +4,9 @@ package interactors
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"time"
+	"unicode/utf8"
 
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
@@ -17,6 +19,37 @@ type StoreMemoryInput struct {
 	Wing    string
 	Room    *string
 	Type    *valueobjects.MemoryType
+}
+
+// WingRoomRe matches valid wing and room identifiers.
+var WingRoomRe = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+// Validate checks that the input meets business constraints.
+func (in StoreMemoryInput) Validate() error {
+	if utf8.RuneCountInString(in.Content) == 0 {
+		return fmt.Errorf("content is required")
+	}
+	if utf8.RuneCountInString(in.Content) > 65536 {
+		return fmt.Errorf("content exceeds maximum length of 65536 characters")
+	}
+	if !WingRoomRe.MatchString(in.Wing) {
+		return fmt.Errorf("wing must be 1-100 alphanumeric characters, hyphens or underscores")
+	}
+	if utf8.RuneCountInString(in.Wing) > 100 {
+		return fmt.Errorf("wing exceeds maximum length of 100 characters")
+	}
+	if in.Room != nil {
+		if !WingRoomRe.MatchString(*in.Room) {
+			return fmt.Errorf("room must be 1-100 alphanumeric characters, hyphens or underscores")
+		}
+		if utf8.RuneCountInString(*in.Room) > 100 {
+			return fmt.Errorf("room exceeds maximum length of 100 characters")
+		}
+	}
+	if in.Type != nil && !in.Type.IsValid() {
+		return fmt.Errorf("invalid memory type: %s", *in.Type)
+	}
+	return nil
 }
 
 // StoreMemoryOutput contains the output of storing a memory
@@ -80,6 +113,10 @@ func defaultRoomForType(memType valueobjects.MemoryType) *string {
 // Execute stores a memory with full extraction (atomic transaction)
 func (uc *StoreMemory) Execute(ctx context.Context, input StoreMemoryInput) (*StoreMemoryOutput, error) {
 	start := time.Now()
+
+	if err := input.Validate(); err != nil {
+		return nil, fmt.Errorf("validation failed: %w", err)
+	}
 
 	// 1. Create verbatim
 	verbatim := entities.NewVerbatim(input.Content, input.Wing, input.Room)
