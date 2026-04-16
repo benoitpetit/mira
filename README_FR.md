@@ -8,7 +8,7 @@
   
   [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.3.3-blue?style=flat-square)]()
+  [![Version](https://img.shields.io/badge/Version-0.4.0-blue?style=flat-square)]()
   [![Tests](https://img.shields.io/badge/Tests-77%25-brightgreen?style=flat-square)]()
   
   *100% Local • Déterministe • O(n log n) • Clean Architecture*
@@ -560,7 +560,7 @@ Nous avons décidé de migrer vers PostgreSQL pour la v2...
 
 ```yaml
 system:
-  version: "0.3.3"
+  version: "0.4.0"
 
 storage:
   path: ".mira"
@@ -630,7 +630,7 @@ recall:
 
 mcp:
   name: "mira"
-  version: "0.3.3"
+  version: "0.4.0"
   transport: "stdio"
   timeout_seconds: 30
 
