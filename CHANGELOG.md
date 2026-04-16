@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-04-17
+
+### Performance & Scalability
+- **HNSW Tuned Defaults**: Increased `M` from 16 → 32 and `EfSearch` from 50 → 100 for better recall quality and graph connectivity at scale
+- **Concurrent Embedding Pool**: Replaced the global mutex in `CybertronEmbedder` with a model instance pool (default 2 instances)
+  - Multiple `Encode` calls now run in parallel instead of being fully serialized
+  - Significant latency reduction under concurrent load (e.g. multiple `mira_recall` or `mira_store` operations)
+
+### Changed
+- **Parallel Recall Pipeline**: Dense HNSW search and lexical FTS5 search now execute concurrently via `errgroup`
+  - Both branches run simultaneously and merge via RRF once complete
+  - Reduces end-to-end `mira_recall` latency when FTS5 is enabled
+
+### Fixed
+- **Removed Ineffective HNSW Parameter**: `EfConstruction` was configured but never applied by the underlying `coder/hnsw` library (v0.4.0)
+  - Parameter is now documented as inactive and defaults to `0` to avoid confusion
+
 ## [0.4.0] - 2026-04-17
 
 ### Added

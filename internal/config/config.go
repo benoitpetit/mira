@@ -124,7 +124,7 @@ type MCPConfig struct {
 func Default() *Config {
 	return &Config{
 		System: SystemConfig{
-			Version: "0.4.0",
+			Version: "0.4.1",
 		},
 		Storage: StorageConfig{
 			Path: ".mira",
@@ -178,16 +178,18 @@ func Default() *Config {
 		},
 		MCP: MCPConfig{
 			Name:           "mira",
-			Version:        "0.4.0",
+			Version:        "0.4.1",
 			Transport:      "stdio",
 			TimeoutSeconds: 30,
 		},
 		// HNSW configuration - vector search index
+		// Note: EfConstruction is not supported by the underlying hnsw library (coder/hnsw v0.4.0).
+		// Only M, Ml and EfSearch are effective.
 		HNSW: HNSWConfig{
-			M:              16,
+			M:              32,
 			Ml:             0.25,
-			EfConstruction: 200,
-			EfSearch:       50,
+			EfConstruction: 0,
+			EfSearch:       100,
 		},
 		// Metrics configuration - monitoring
 		Metrics: MetricsConfig{
@@ -345,8 +347,9 @@ func (c *Config) Validate() error {
 	if c.HNSW.Ml <= 0 {
 		c.HNSW.Ml = 0.25
 	}
-	if c.HNSW.EfConstruction <= 0 {
-		c.HNSW.EfConstruction = 200
+	// EfConstruction is ignored by the hnsw library, kept for backward compatibility only.
+	if c.HNSW.EfConstruction < 0 {
+		c.HNSW.EfConstruction = 0
 	}
 	if c.HNSW.EfSearch <= 0 {
 		c.HNSW.EfSearch = 50

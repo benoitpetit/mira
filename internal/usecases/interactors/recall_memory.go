@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/benoitpetit/mira/internal/domain/entities"
+	"golang.org/x/sync/errgroup"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
 	"github.com/benoitpetit/mira/internal/util"
@@ -258,19 +259,35 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 		return nil, fmt.Errorf("embedding failed: %w", err)
 	}
 
-	// 2. Vector search (dense)
-	denseCandidates, err := uc.vectorStore.Search(ctx, queryVec, uc.maxCandidates, input.Wing, input.Room)
-	if err != nil {
-		return nil, fmt.Errorf("vector search failed: %w", err)
+	// 2. Vector search (dense) and lexical search in parallel
+	var denseCandidates, lexicalCandidates []*entities.Candidate
+	g, gctx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		var err error
+		denseCandidates, err = uc.vectorStore.Search(gctx, queryVec, uc.maxCandidates, input.Wing, input.Room)
+		if err != nil {
+			return fmt.Errorf("vector search failed: %w", err)
+		}
+		return nil
+	})
+
+	if uc.enableFTS5 {
+		g.Go(func() error {
+			var err error
+			lexicalCandidates, err = uc.vectorStore.SearchLexical(gctx, input.Query, uc.fts5Limit, input.Wing, input.Room)
+			return err // lexical search failure is non-fatal
+		})
 	}
 
-	// 2b. Lexical search and RRF fusion
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	// 2b. RRF fusion
 	candidates := denseCandidates
-	if uc.enableFTS5 {
-		lexicalCandidates, lexErr := uc.vectorStore.SearchLexical(ctx, input.Query, uc.fts5Limit, input.Wing, input.Room)
-		if lexErr == nil && len(lexicalCandidates) > 0 {
-			candidates = reciprocalRankFusion(denseCandidates, lexicalCandidates, uc.rrfK)
-		}
+	if uc.enableFTS5 && len(lexicalCandidates) > 0 {
+		candidates = reciprocalRankFusion(denseCandidates, lexicalCandidates, uc.rrfK)
 	}
 
 	// 2c. Search-time clustering (deduplication)
