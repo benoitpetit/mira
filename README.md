@@ -45,7 +45,7 @@
 
 ### The Problem MIRA Solves
 
-Modern LLMs (GPT-4, Claude, Llama, etc.) suffer from a fundamental problem: **the context window is limited** (4K-128K tokens), but conversations and projects span thousands of interactions. How do we decide what to keep in context?
+Modern LLMs suffer from a fundamental problem: **the context window is limited** (4K-128K tokens), but conversations and projects span thousands of interactions. How do we decide what to keep in context?
 
 **Traditional approaches fail:**
 
