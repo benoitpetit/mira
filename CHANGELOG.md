@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-17
+
+### Added
+- **Enhanced Recall Pipeline**: Multi-stage retrieval system transforming `mira_recall` from simple vector search into a hybrid intelligence pipeline
+  - **Query Expansion**: Generates semantic variants (cleaned, stop-word-free, keyword-focused) and averages their embeddings for robust cross-lingual retrieval
+  - **FTS5 Lexical Search**: SQLite full-text search via `verbatim_fts` virtual table with auto-triggers and automatic backfill
+  - **RRF Hybrid Fusion**: Reciprocal Rank Fusion (`k=60`) merges dense HNSW and lexical FTS5 rankings into a unified candidate list
+  - **Search-Time Clustering**: Real-time deduplication by grouping candidates with cosine similarity ≥ 0.88 and selecting the best representative per cluster
+  - **Tag-Based Retrieval**: New `memory_tags` table indexing extracted entities, subjects, and keywords; matching tags receive an additive relevance boost during CBA scoring
+  - **Heuristic Reranker**: Optional lightweight pure-Go reranker using Jaccard overlap, exact-phrase bonus, and length balance; blended at `0.7*semantic + 0.3*rerank`
+  - **Adaptive Threshold Methods**: Dynamic relevance pruning with three strategies (`iqr`, `elbow`, `mean_stddev`), clamped between configurable floor (0.15) and ceiling (0.75)
+  - **Fallback Vector Store**: Transparent `FallbackVectorStore` wrapper that auto-routes HNSW searches to SQLite vector store when the index is not ready
+
+- **New `recall` Configuration Section**: Centralized configuration for all recall enhancements
+  - `adaptive_threshold_method`, `enable_fts5`, `rrf_k`, `query_expansion`, `search_time_clustering`, `reranker`
+
+- **TagRepository Port & Implementation**: `StoreTags`, `GetVerbatimsByTags`, `GetTagsForVerbatim` implemented in `SQLiteRepository`
+
+- **StoreMemory Tag Extraction**: Automatic tag extraction from entities, subjects, and content keywords on every store operation
+
+### Changed
+- **Documentation Overhaul**
+  - Added `docs/INDEX.md`: documentation entry point and capability map
+  - Added `docs/ARCHITECTURE.md`: comprehensive technical deep-dive into Clean Architecture, T0/T1/T2, CBA algorithm, recall pipeline, storage layer, and configuration model
+  - Added `docs/FEATURES.md`: complete feature catalog covering all MIRA capabilities
+  - Updated `README.md` and `README_FR.md` with the enhanced recall pipeline, updated configuration examples, and revised project structure
+  - Updated `docs/API_REFERENCES.md` with recall pipeline internals and configuration reference
+
+- **Config Example Updated**: `config.example.yaml` now includes the complete `recall` section
+
+### Fixed
+- **HNSW Reliability**: Recall no longer fails when HNSW is still building from scratch; fallback vector store ensures 100% recall availability
+
 ## [0.3.3] - 2026-04-14
 
 ### Added
@@ -285,6 +318,7 @@ hnsw:
 
 ---
 
+[0.4.0]: https://github.com/benoitpetit/mira/releases/tag/v0.4.0
 [0.3.3]: https://github.com/benoitpetit/mira/releases/tag/v0.3.3
 [0.3.2]: https://github.com/benoitpetit/mira/releases/tag/v0.3.2
 [0.3.1]: https://github.com/benoitpetit/mira/releases/tag/v0.3.1

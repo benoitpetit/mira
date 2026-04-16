@@ -46,11 +46,33 @@ overlap_cache:
   max_entries: 1000000
 
 extraction:
-  max_verbatim_size: 65536
-  max_sentence_length: 500
   min_entity_length: 2
   causal_lookback: 50
   causal_max_days: 30
+
+# =============================================================================
+# RECALL CONFIGURATION
+# =============================================================================
+# Advanced retrieval pipeline options.
+# These features expand the recall pipeline beyond pure semantic similarity.
+
+recall:
+  adaptive_threshold_method: "iqr"   # iqr | elbow | mean_stddev
+  adaptive_threshold_floor: 0.15
+  adaptive_threshold_ceiling: 0.75
+  enable_fts5: true
+  fts5_limit: 100
+  rrf_k: 60
+  query_expansion:
+    enabled: true
+    num_variants: 3
+    temperature: 0.3
+  search_time_clustering:
+    enabled: true
+    similarity_threshold: 0.88
+  reranker:
+    enabled: false
+    top_k: 30
 
 mcp:
   name: "mira"

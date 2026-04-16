@@ -22,19 +22,28 @@ type LoadMemoryOutput struct {
 
 // LoadMemory implements the load memory use case
 type LoadMemory struct {
-	verbatimRepo ports.VerbatimRepository
+	verbatimRepo   ports.VerbatimRepository
+	fingerprintRepo ports.FingerprintRepository
 }
 
 // NewLoadMemory creates a new load memory interactor
-func NewLoadMemory(verbatimRepo ports.VerbatimRepository) *LoadMemory {
+func NewLoadMemory(verbatimRepo ports.VerbatimRepository, fingerprintRepo ports.FingerprintRepository) *LoadMemory {
 	return &LoadMemory{
-		verbatimRepo: verbatimRepo,
+		verbatimRepo:    verbatimRepo,
+		fingerprintRepo: fingerprintRepo,
 	}
 }
 
-// Execute loads a verbatim by ID
+// Execute loads a verbatim by ID. It accepts either a verbatim ID or a fingerprint ID.
 func (uc *LoadMemory) Execute(ctx context.Context, input LoadMemoryInput) (*LoadMemoryOutput, error) {
 	verbatim, err := uc.verbatimRepo.GetVerbatimByID(ctx, input.ID)
+	if err != nil && uc.fingerprintRepo != nil {
+		// Try resolving as a fingerprint ID
+		fp, fpErr := uc.fingerprintRepo.GetFingerprintByID(ctx, input.ID)
+		if fpErr == nil && fp != nil {
+			verbatim, err = uc.verbatimRepo.GetVerbatimByID(ctx, fp.VerbatimID)
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to load verbatim: %w", err)
 	}

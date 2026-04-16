@@ -19,8 +19,9 @@ import (
 
 // SQLiteRepository implements all repository interfaces using SQLite
 type SQLiteRepository struct {
-	db   *sql.DB
-	opts SQLiteOptions
+	db          *sql.DB
+	opts        SQLiteOptions
+	fts5Enabled bool
 }
 
 // SQLiteOptions holds configuration for SQLite repository
@@ -64,6 +65,9 @@ func NewSQLiteRepository(dbPath string, opts SQLiteOptions) (*SQLiteRepository, 
 	if err := runMigrations(db); err != nil {
 		return nil, fmt.Errorf("migration failed: %w", err)
 	}
+
+	// Attempt to enable FTS5; if unavailable, continue without it
+	repo.fts5Enabled = repo.ensureFTS5(context.Background())
 
 	return repo, nil
 }
@@ -929,6 +933,54 @@ func (r *SQLiteRepository) ClearByRoom(ctx context.Context, wing string, room *s
 	return count, nil
 }
 
+func (r *SQLiteRepository) ensureFTS5(ctx context.Context) bool {
+	// Test if FTS5 module is available
+	_, err := r.db.ExecContext(ctx, `CREATE VIRTUAL TABLE IF NOT EXISTS _mira_fts5_test USING fts5(content)`)
+	if err != nil {
+		return false
+	}
+	_, _ = r.db.ExecContext(ctx, `DROP TABLE IF EXISTS _mira_fts5_test`)
+
+	// Create FTS5 virtual table and triggers
+	_, err = r.db.ExecContext(ctx, `CREATE VIRTUAL TABLE IF NOT EXISTS verbatim_fts USING fts5(content, content='verbatim', content_rowid='rowid')`)
+	if err != nil {
+		return false
+	}
+
+	_, _ = r.db.ExecContext(ctx, `CREATE TRIGGER IF NOT EXISTS verbatim_fts_insert AFTER INSERT ON verbatim BEGIN
+		INSERT INTO verbatim_fts(rowid, content) VALUES (new.rowid, new.content);
+	END`)
+
+	_, _ = r.db.ExecContext(ctx, `CREATE TRIGGER IF NOT EXISTS verbatim_fts_delete AFTER DELETE ON verbatim BEGIN
+		INSERT INTO verbatim_fts(verbatim_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
+	END`)
+
+	// Backfill existing data
+	var count int
+	_ = r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM verbatim_fts`).Scan(&count)
+	if count == 0 {
+		_, _ = r.db.ExecContext(ctx, `INSERT INTO verbatim_fts(rowid, content) SELECT rowid, content FROM verbatim`)
+	}
+
+	return true
+}
+
+func (r *SQLiteRepository) backfillFTS5(ctx context.Context) error {
+	var count int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM verbatim_fts`).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	_, err = r.db.ExecContext(ctx, `
+		INSERT INTO verbatim_fts(rowid, content)
+		SELECT rowid, content FROM verbatim
+	`)
+	return err
+}
+
 func (r *SQLiteRepository) collectArchiveTargets(ctx context.Context, tx *sql.Tx, ftype string, threshold float64) ([]uuid.UUID, int) {
 	rows, err := tx.QueryContext(ctx,
 		`SELECT v.id, v.token_count FROM verbatim v
@@ -958,6 +1010,190 @@ func (r *SQLiteRepository) collectArchiveTargets(ctx context.Context, tx *sql.Tx
 	}
 
 	return ids, totalTokens
+}
+
+// SearchLexical implements EmbeddingSource
+// Performs a full-text search using FTS5 and returns complete candidates
+func (r *SQLiteRepository) SearchLexical(ctx context.Context, query string, limit int, wing, room *string) ([]*entities.Candidate, error) {
+	if !r.fts5Enabled {
+		return nil, fmt.Errorf("FTS5 not available")
+	}
+
+	sqlQuery := `
+		SELECT v.id, v.content, v.wing, v.room, v.token_count, v.created_at,
+			   f.id, f.ftype, f.fact_count, f.token_estimate, f.model_hash, f.data,
+			   e.vector, e.dim
+		FROM verbatim_fts fts
+		JOIN verbatim v ON v.rowid = fts.rowid
+		JOIN fingerprints f ON v.id = f.verbatim_id
+		JOIN embeddings e ON v.id = e.id
+		WHERE fts.content MATCH ?`
+	args := []interface{}{query}
+
+	if wing != nil {
+		sqlQuery += " AND v.wing = ?"
+		args = append(args, *wing)
+	}
+	if room != nil {
+		sqlQuery += " AND v.room = ?"
+		args = append(args, *room)
+	}
+
+	sqlQuery += " ORDER BY fts.rank LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := r.db.QueryContext(ctx, sqlQuery, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var candidates []*entities.Candidate
+	for rows.Next() {
+		var vID, fID []byte
+		var vContent, vWing, fType, fModelHash string
+		var vRoom sql.NullString
+		var vTokenCount, fFactCount, fTokenEstimate, eDim int
+		var vCreatedAt float64
+		var fData []byte
+		var eVector []byte
+
+		err := rows.Scan(
+			&vID, &vContent, &vWing, &vRoom, &vTokenCount, &vCreatedAt,
+			&fID, &fType, &fFactCount, &fTokenEstimate, &fModelHash, &fData,
+			&eVector, &eDim,
+		)
+		if err != nil {
+			continue
+		}
+
+		id, err := uuid.FromBytes(vID)
+		if err != nil {
+			continue
+		}
+
+		vec := make([]float32, eDim)
+		vecLen := len(eVector) / 4
+		if vecLen > eDim {
+			vecLen = eDim
+		}
+		for i := 0; i < vecLen; i++ {
+			u := binary.LittleEndian.Uint32(eVector[i*4 : i*4+4])
+			vec[i] = math.Float32frombits(u)
+		}
+
+		verbatim := &entities.Verbatim{
+			ID:         id,
+			Content:    vContent,
+			Wing:       vWing,
+			TokenCount: vTokenCount,
+			CreatedAt:  time.Unix(int64(vCreatedAt), 0),
+		}
+		if vRoom.Valid {
+			verbatim.Room = &vRoom.String
+		}
+
+		fpID, _ := uuid.FromBytes(fID)
+		fp := &entities.Fingerprint{
+			ID:            fpID,
+			VerbatimID:    id,
+			Type:          valueobjects.MemoryType(fType),
+			FactCount:     fFactCount,
+			TokenEstimate: fTokenEstimate,
+			ModelHash:     fModelHash,
+		}
+		_ = json.Unmarshal(fData, &fp.Data)
+
+		candidates = append(candidates, entities.NewCandidate(fp, verbatim, vec))
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating fts5 rows: %w", err)
+	}
+
+	return candidates, nil
+}
+
+// StoreTags implements TagRepository
+func (r *SQLiteRepository) StoreTags(ctx context.Context, verbatimID uuid.UUID, tags []string, tagType string) error {
+	if len(tags) == 0 {
+		return nil
+	}
+	tx, err := r.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for _, tag := range tags {
+		if tag == "" {
+			continue
+		}
+		_, _ = tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO memory_tags (verbatim_id, tag, tag_type) VALUES (?, ?, ?)`,
+			verbatimID[:], tag, tagType,
+		)
+	}
+	return tx.Commit()
+}
+
+// GetVerbatimsByTags implements TagRepository
+func (r *SQLiteRepository) GetVerbatimsByTags(ctx context.Context, tags []string, limit int) ([]uuid.UUID, error) {
+	if len(tags) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(tags))
+	args := make([]interface{}, len(tags))
+	for i, tag := range tags {
+		placeholders[i] = "?"
+		args[i] = tag
+	}
+	query := fmt.Sprintf(
+		`SELECT DISTINCT verbatim_id FROM memory_tags WHERE tag IN (%s) LIMIT ?`,
+		strings.Join(placeholders, ","),
+	)
+	args = append(args, limit)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []uuid.UUID
+	for rows.Next() {
+		var idBytes []byte
+		if err := rows.Scan(&idBytes); err != nil {
+			continue
+		}
+		id, err := uuid.FromBytes(idBytes)
+		if err != nil {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+// GetTagsForVerbatim implements TagRepository
+func (r *SQLiteRepository) GetTagsForVerbatim(ctx context.Context, verbatimID uuid.UUID) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT tag FROM memory_tags WHERE verbatim_id = ?`,
+		verbatimID[:],
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tags []string
+	for rows.Next() {
+		var tag string
+		if err := rows.Scan(&tag); err == nil {
+			tags = append(tags, tag)
+		}
+	}
+	return tags, nil
 }
 
 // GetCandidatesWithEmbeddings implements EmbeddingSource

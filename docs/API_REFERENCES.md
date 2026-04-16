@@ -26,7 +26,7 @@ Practical examples for using MIRA's MCP tools in real-world scenarios.
 | Tool | Description | Arguments |
 |------|-------------|-----------|
 | `mira_store` | Store a memory with T0/T1/T2 extraction | `content` (required), `wing` (required), `room` (optional), `type` (optional) |
-| `mira_recall` | Retrieve optimal context with budget | `query` (required), `budget` (optional), `wing` (optional), `room` (optional), `fallback_wings` (optional) |
+| `mira_recall` | Retrieve optimal context with budget via multi-stage pipeline (expansion, hybrid search, clustering, reranker) | `query` (required), `budget` (optional), `wing` (optional), `room` (optional), `fallback_wings` (optional) |
 | `mira_load` | Load full verbatim by ID | `id` (required) |
 | `mira_causal_chain` | Trace causal chain | `id` (required), `max_depth` (optional), `include_consequences` (optional) |
 | `mira_timeline` | Chronological reconstruction | `wing` (required), `room` (optional), `since` (optional), `until` (optional), `type` (optional) |
@@ -155,6 +155,15 @@ Model: a1b2c3d4
 - `wing` (optional): Filter by wing/namespace
 - `room` (optional): Filter by room/sub-category
 - `fallback_wings` (optional): Comma-separated fallback wings to search if primary wing yields no results
+
+**Internal Pipeline:**
+1. **Query Expansion** — generates semantic variants and averages their embeddings
+2. **Hybrid Search** — HNSW dense search + SQLite FTS5 lexical search
+3. **RRF Fusion** — merges both result sets with Reciprocal Rank Fusion (k=60)
+4. **Search-Time Clustering** — deduplicates near-duplicate candidates
+5. **Tag Boost** — boosts candidates with matching extracted tags
+6. **Adaptive Threshold** — dynamic relevance floor (IQR/elbow/mean-stddev)
+7. **Greedy CBA Allocation** — budget-aware selection with render-mode downgrading
 
 **Response:**
 ```
@@ -706,5 +715,41 @@ Error: wing is required
 
 ---
 
-*Last updated: 2026-04-13*
+---
+
+## Configuration Reference
+
+### `recall` Section Configuration
+
+```yaml
+recall:
+  adaptive_threshold_method: "iqr"   # iqr | elbow | mean_stddev
+  adaptive_threshold_floor: 0.15
+  adaptive_threshold_ceiling: 0.75
+  enable_fts5: true
+  fts5_limit: 100
+  rrf_k: 60
+  query_expansion:
+    enabled: true
+    num_variants: 3
+    temperature: 0.3
+  search_time_clustering:
+    enabled: true
+    similarity_threshold: 0.88
+  reranker:
+    enabled: false
+    top_k: 30
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `adaptive_threshold_method` | `iqr` | Method for dynamic relevance pruning |
+| `adaptive_threshold_floor` | `0.15` | Minimum relevance threshold |
+| `enable_fts5` | `true` | Enable SQLite FTS5 lexical search |
+| `rrf_k` | `60` | RRF constant for dense+lexical fusion |
+| `query_expansion.enabled` | `true` | Expand queries into semantic variants |
+| `search_time_clustering.enabled` | `true` | Deduplicate results at search time |
+| `reranker.enabled` | `false` | Enable heuristic lexical reranking |
+
+*Last updated: 2026-04-16*
 *Version: 0.3.3*

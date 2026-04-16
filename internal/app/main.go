@@ -192,7 +192,8 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 		}
 
 		app.hnswIndex = hnswIndex
-		app.vectorStore = hnswIndex
+		// Wrap HNSW with SQLite fallback so recall works while the index is building
+		app.vectorStore = vector.NewFallbackVectorStore(hnswIndex, vector.NewSQLiteVectorStore(repo.DB()))
 	}
 
 	// 8. Initialize webhook manager if enabled
@@ -237,22 +238,35 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 		app.extractor,
 		app.renderer,
 		interactors.RecallMemoryConfig{
-			DefaultBudget:         cfg.Allocator.DefaultBudget,
-			MaxCandidates:         cfg.Allocator.MaxCandidates,
-			EarlyPruningThreshold: cfg.Allocator.EarlyPruningThreshold,
-			SessionWindowSeconds:  cfg.Allocator.SessionWindowSeconds,
-			SessionBoostBeta:      cfg.Allocator.SessionBoostBeta,
-			SessionBoostMax:       cfg.Allocator.SessionBoostMax,
-			CausalPenaltyAlpha:    cfg.Allocator.CausalPenaltyAlpha,
-			DensitySigmoidK:       cfg.Allocator.DensitySigmoid.K,
-			DensitySigmoidMu:      cfg.Allocator.DensitySigmoid.Mu,
-			EmbeddingCacheSize:    cfg.Embeddings.CacheSize,
-			DecayRates:            cfg.DecayRates,
+			DefaultBudget:                 cfg.Allocator.DefaultBudget,
+			MaxCandidates:                 cfg.Allocator.MaxCandidates,
+			EarlyPruningThreshold:         cfg.Allocator.EarlyPruningThreshold,
+			SessionWindowSeconds:          cfg.Allocator.SessionWindowSeconds,
+			SessionBoostBeta:              cfg.Allocator.SessionBoostBeta,
+			SessionBoostMax:               cfg.Allocator.SessionBoostMax,
+			CausalPenaltyAlpha:            cfg.Allocator.CausalPenaltyAlpha,
+			DensitySigmoidK:               cfg.Allocator.DensitySigmoid.K,
+			DensitySigmoidMu:              cfg.Allocator.DensitySigmoid.Mu,
+			EmbeddingCacheSize:            cfg.Embeddings.CacheSize,
+			ThresholdMethod:               cfg.Recall.AdaptiveThresholdMethod,
+			ThresholdFloor:                cfg.Recall.AdaptiveThresholdFloor,
+			ThresholdCeiling:              cfg.Recall.AdaptiveThresholdCeiling,
+			EnableFTS5:                    cfg.Recall.EnableFTS5,
+			FTS5Limit:                     cfg.Recall.FTS5Limit,
+			RRFK:                          cfg.Recall.RRFK,
+			QueryExpansionEnabled:         cfg.Recall.QueryExpansion.Enabled,
+			QueryExpansionNumVariants:     cfg.Recall.QueryExpansion.NumVariants,
+			SearchTimeClusteringEnabled:   cfg.Recall.SearchTimeClustering.Enabled,
+			SearchTimeClusteringThreshold: cfg.Recall.SearchTimeClustering.SimilarityThreshold,
+			RerankerEnabled:               cfg.Recall.Reranker.Enabled,
+			RerankerTopK:                  cfg.Recall.Reranker.TopK,
+			TagRepo:                       repo,
+			DecayRates:                    cfg.DecayRates,
 		},
 		app.metricsCollector,
 	)
 
-	app.loadMemory = interactors.NewLoadMemory(repo)
+	app.loadMemory = interactors.NewLoadMemory(repo, repo)
 	app.getTimeline = interactors.NewGetTimeline(repo)
 	app.getStatus = interactors.NewGetStatus(repo, repo)
 	app.getCausalChain = interactors.NewGetCausalChain(repo)

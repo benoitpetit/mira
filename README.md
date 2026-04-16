@@ -26,6 +26,7 @@
 - [How It Works](#how-it-works)
 - [3-Level Architecture (T0/T1/T2)](#3-level-architecture-t0t1t2)
 - [The CBA Algorithm](#the-cba-algorithm)
+- [Enhanced Recall Pipeline](#enhanced-recall-pipeline)
 - [Causal Graph](#causal-graph)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
@@ -325,6 +326,52 @@ The human brain doesn't record everything with the same fidelity. MIRA mimics th
 
 ---
 
+## Enhanced Recall Pipeline
+
+MIRA's recall uses a **multi-stage retrieval pipeline** that goes far beyond simple vector similarity:
+
+```
+Query → Expansion → Dense (HNSW) + Lexical (FTS5) → RRF Fusion → Clustering → Tag Boost → Adaptive Threshold → CBA Greedy Selection
+```
+
+### 1. Query Expansion
+Before embedding, MIRA generates semantically-close variants of the query (cleaned, without stop-words, top keywords) and **averages their embeddings**. This improves cross-lingual retrieval and robustness against vocabulary mismatch.
+
+### 2. Hybrid Search (Dense + Lexical)
+- **Dense**: HNSW O(log n) vector search
+- **Lexical**: SQLite FTS5 full-text search (auto-enabled if available)
+- **Fusion**: Reciprocal Rank Fusion (`k=60`) merges both rankings into a single candidate list
+
+### 3. Search-Time Clustering
+Candidates are grouped by cosine similarity ≥ 0.88. Near-duplicates are collapsed, and only the best representative per cluster proceeds to scoring. This prevents budget waste on redundant memories.
+
+### 4. Tag-Based Retrieval
+A new `memory_tags` table indexes extracted entities, subjects, and keywords. Candidates matching query tags receive a small additive relevance boost.
+
+### 5. Adaptive Threshold Methods
+Instead of a fixed 0.6 relevance floor, MIRA now supports three dynamic methods:
+
+| Method | Description | Default |
+|--------|-------------|---------|
+| `iqr` | First quartile of score distribution | ✅ |
+| `elbow` | Largest derivative drop (elbow method) | |
+| `mean_stddev` | mean − stddev | |
+
+The threshold is clamped between `0.15` (floor) and `0.75` (ceiling).
+
+### 6. Heuristic Reranker (Optional)
+A lightweight pure-Go reranker scores top-k candidates using:
+- Jaccard-like token overlap
+- Exact phrase presence bonus
+- Length balance preference
+
+Blended with semantic relevance: `0.7*semantic + 0.3*rerank`.
+
+### 7. Fallback Vector Store
+If HNSW is not yet ready (e.g., building from scratch), a transparent fallback wrapper automatically routes searches to the SQLite vector store. Recall never fails.
+
+---
+
 ## Causal Graph
 
 ### Supported Relations
@@ -562,6 +609,25 @@ extraction:
   causal_lookback: 50
   causal_max_days: 30
 
+# Enhanced recall configuration
+recall:
+  adaptive_threshold_method: "iqr"
+  adaptive_threshold_floor: 0.15
+  adaptive_threshold_ceiling: 0.75
+  enable_fts5: true
+  fts5_limit: 100
+  rrf_k: 60
+  query_expansion:
+    enabled: true
+    num_variants: 3
+    temperature: 0.3
+  search_time_clustering:
+    enabled: true
+    similarity_threshold: 0.88
+  reranker:
+    enabled: false
+    top_k: 30
+
 mcp:
   name: "mira"
   version: "0.3.3"
@@ -678,6 +744,14 @@ curl http://localhost:9090/metrics
 
 ### Optimizations in v0.3.3
 
+- **Query Expansion**: Multi-variant embedding averaging for robust cross-lingual retrieval
+- **FTS5 Lexical Search**: SQLite full-text search integrated with auto-triggers and backfill
+- **RRF Hybrid Fusion**: Reciprocal Rank Fusion (`k=60`) combining dense HNSW and lexical FTS5 results
+- **Search-Time Clustering**: Real-time deduplication with cosine-similarity clustering (threshold 0.88)
+- **Tag-Based Retrieval**: `memory_tags` table with automatic tag boosting in CBA scoring
+- **Heuristic Reranker**: Optional lightweight lexical reranker for precision improvement
+- **Adaptive Threshold Methods**: Dynamic relevance pruning with `iqr`, `elbow`, and `mean_stddev` strategies
+- **Fallback Vector Store**: Transparent HNSW → SQLite fallback when the index is not ready
 - **Clear Memory Tool**: New `mira_clear_memory` MCP tool for global or room-scoped memory deletion
 - **Causal Chain T0 Resolution**: `mira_causal_chain` now correctly resolves `T0:` verbatim references to fingerprint IDs
 - **ID Visibility in Outputs**: `mira_recall` and `mira_timeline` now include memory IDs for downstream tool chaining
@@ -767,6 +841,9 @@ mira/
 │       ├── health_test.go # Health check tests
 │       └── main_test.go   # Application tests
 ├── docs/                  # Documentation
+│   ├── INDEX.md           # Documentation entry point
+│   ├── ARCHITECTURE.md    # Technical deep-dive
+│   ├── FEATURES.md        # Complete feature catalog
 │   └── API_REFERENCES.md  # API reference
 ├── SKILL.md               # Agent skill and memory loop guidelines
 ├── config.example.yaml    # Example configuration

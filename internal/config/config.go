@@ -21,6 +21,35 @@ type Config struct {
 	HNSW              HNSWConfig         `yaml:"hnsw"`
 	Metrics           MetricsConfig      `yaml:"metrics"`
 	Webhooks          WebhooksConfig     `yaml:"webhooks"`
+	Recall            RecallConfig       `yaml:"recall"`
+}
+
+type QueryExpansionConfig struct {
+	Enabled     bool    `yaml:"enabled"`
+	NumVariants int     `yaml:"num_variants"`
+	Temperature float64 `yaml:"temperature"`
+}
+
+type SearchTimeClusteringConfig struct {
+	Enabled             bool    `yaml:"enabled"`
+	SimilarityThreshold float64 `yaml:"similarity_threshold"`
+}
+
+type RerankerConfig struct {
+	Enabled bool `yaml:"enabled"`
+	TopK    int  `yaml:"top_k"`
+}
+
+type RecallConfig struct {
+	AdaptiveThresholdMethod  string                     `yaml:"adaptive_threshold_method"`
+	AdaptiveThresholdFloor   float64                    `yaml:"adaptive_threshold_floor"`
+	AdaptiveThresholdCeiling float64                    `yaml:"adaptive_threshold_ceiling"`
+	EnableFTS5               bool                       `yaml:"enable_fts5"`
+	FTS5Limit                int                        `yaml:"fts5_limit"`
+	RRFK                     int                        `yaml:"rrf_k"`
+	QueryExpansion           QueryExpansionConfig       `yaml:"query_expansion"`
+	SearchTimeClustering     SearchTimeClusteringConfig `yaml:"search_time_clustering"`
+	Reranker                 RerankerConfig             `yaml:"reranker"`
 }
 
 type HNSWConfig struct {
@@ -35,11 +64,11 @@ type SystemConfig struct {
 }
 
 type SQLiteSettingsConfig struct {
-	JournalMode   string `yaml:"journal_mode"`
-	Synchronous   string `yaml:"synchronous"`
-	CacheSize     int    `yaml:"cache_size"`
-	MmapSize      int    `yaml:"mmap_size"`
-	TempStore     string `yaml:"temp_store"`
+	JournalMode string `yaml:"journal_mode"`
+	Synchronous string `yaml:"synchronous"`
+	CacheSize   int    `yaml:"cache_size"`
+	MmapSize    int    `yaml:"mmap_size"`
+	TempStore   string `yaml:"temp_store"`
 }
 
 type StorageConfig struct {
@@ -95,7 +124,7 @@ type MCPConfig struct {
 func Default() *Config {
 	return &Config{
 		System: SystemConfig{
-			Version:        "0.3.3",
+			Version: "0.3.3",
 		},
 		Storage: StorageConfig{
 			Path: ".mira",
@@ -128,11 +157,11 @@ func Default() *Config {
 			},
 		},
 		DecayRates: map[string]float64{
-			"decision":    0.001,
-			"fact":        0.005,
-			"preference":  0.01,
+			"decision":     0.001,
+			"fact":         0.005,
+			"preference":   0.01,
 			"session_note": 0.1,
-			"debug_log":   0.5,
+			"debug_log":    0.5,
 		},
 		ArchiveThresholds: map[string]float64{
 			"session_note": 30,
@@ -162,9 +191,9 @@ func Default() *Config {
 		},
 		// Metrics configuration - monitoring
 		Metrics: MetricsConfig{
-			Enabled:         true,
-			PrometheusAddr:  ":9090",
-			ReportInterval:  60,
+			Enabled:        true,
+			PrometheusAddr: ":9090",
+			ReportInterval: 60,
 		},
 		// Webhooks configuration - external notifications
 		Webhooks: WebhooksConfig{
@@ -172,6 +201,27 @@ func Default() *Config {
 			Workers:   3,
 			QueueSize: 1000,
 			Timeout:   30,
+		},
+		Recall: RecallConfig{
+			AdaptiveThresholdMethod:  "iqr",
+			AdaptiveThresholdFloor:   0.15,
+			AdaptiveThresholdCeiling: 0.75,
+			EnableFTS5:               true,
+			FTS5Limit:                100,
+			RRFK:                     60,
+			QueryExpansion: QueryExpansionConfig{
+				Enabled:     true,
+				NumVariants: 3,
+				Temperature: 0.3,
+			},
+			SearchTimeClustering: SearchTimeClusteringConfig{
+				Enabled:             true,
+				SimilarityThreshold: 0.88,
+			},
+			Reranker: RerankerConfig{
+				Enabled: false,
+				TopK:    30,
+			},
 		},
 	}
 }
@@ -274,11 +324,11 @@ func (c *Config) Validate() error {
 	// Decay rates defaults
 	if c.DecayRates == nil {
 		c.DecayRates = map[string]float64{
-			"decision":    0.001,
-			"fact":        0.005,
-			"preference":  0.01,
+			"decision":     0.001,
+			"fact":         0.005,
+			"preference":   0.01,
 			"session_note": 0.1,
-			"debug_log":   0.5,
+			"debug_log":    0.5,
 		}
 	}
 	if c.Allocator.DensitySigmoid.K <= 0 {
@@ -334,6 +384,32 @@ func (c *Config) Validate() error {
 	}
 	if c.Extraction.CausalMaxDays <= 0 {
 		c.Extraction.CausalMaxDays = 30
+	}
+
+	// Recall validation
+	if c.Recall.AdaptiveThresholdMethod == "" {
+		c.Recall.AdaptiveThresholdMethod = "iqr"
+	}
+	if c.Recall.AdaptiveThresholdFloor < 0 {
+		c.Recall.AdaptiveThresholdFloor = 0.15
+	}
+	if c.Recall.AdaptiveThresholdCeiling <= 0 {
+		c.Recall.AdaptiveThresholdCeiling = 0.75
+	}
+	if c.Recall.FTS5Limit <= 0 {
+		c.Recall.FTS5Limit = 100
+	}
+	if c.Recall.RRFK <= 0 {
+		c.Recall.RRFK = 60
+	}
+	if c.Recall.QueryExpansion.NumVariants <= 0 {
+		c.Recall.QueryExpansion.NumVariants = 3
+	}
+	if c.Recall.SearchTimeClustering.SimilarityThreshold <= 0 {
+		c.Recall.SearchTimeClustering.SimilarityThreshold = 0.88
+	}
+	if c.Recall.Reranker.TopK <= 0 {
+		c.Recall.Reranker.TopK = 30
 	}
 
 	// Overlap cache validation

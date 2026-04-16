@@ -53,6 +53,10 @@ func (m *mockVectorStoreForClear) Search(ctx context.Context, vector []float32, 
 	return nil, nil
 }
 
+func (m *mockVectorStoreForClear) SearchLexical(ctx context.Context, query string, limit int, wing, room *string) ([]*entities.Candidate, error) {
+	return nil, nil
+}
+
 func (m *mockVectorStoreForClear) AddCandidate(ctx context.Context, candidate *entities.Candidate) error {
 	return nil
 }

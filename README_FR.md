@@ -26,6 +26,7 @@
 - [Fonctionnement](#fonctionnement)
 - [Architecture à 3 Niveaux (T0/T1/T2)](#architecture-à-3-niveaux-t0t1t2)
 - [L'Algorithme CBA](#lalgorithme-cba)
+- [Pipeline de Recall Amélioré](#pipeline-de-recall-amélioré)
 - [Graphe Causal](#graphe-causal)
 - [Installation](#installation)
 - [Démarrage Rapide](#démarrage-rapide)
@@ -325,6 +326,52 @@ Le cerveau humain n'enregistre pas tout avec la même fidélité. MIRA imite cet
 
 ---
 
+## Pipeline de Recall Amélioré
+
+Le recall de MIRA utilise un **pipeline de récupération multi-étapes** qui va bien au-delà de la simple similarité vectorielle :
+
+```
+Requête → Expansion → Dense (HNSW) + Lexical (FTS5) → Fusion RRF → Clustering → Boost par Tags → Seuil Adaptatif → Sélection Gloutonne CBA
+```
+
+### 1. Expansion de Requête
+Avant l'embedding, MIRA génère des variantes sémantiquement proches de la requête (nettoyée, sans mots vides, mots-clés principaux) et **moyenne leurs embeddings**. Cela améliore la récupération cross-lingue et la robustesse aux variations de vocabulaire.
+
+### 2. Recherche Hybride (Dense + Lexicale)
+- **Dense** : recherche vectorielle HNSW en O(log n)
+- **Lexicale** : recherche full-text SQLite FTS5 (auto-activée si disponible)
+- **Fusion** : Reciprocal Rank Fusion (`k=60`) fusionne les deux classements en une seule liste de candidats
+
+### 3. Clustering à la Recherche
+Les candidats sont groupés par cosine similarity ≥ 0.88. Les quasi-duplicatas sont fusionnés, et seul le meilleur représentant par cluster passe au scoring. Cela évite de gaspiller le budget sur des mémoires redondantes.
+
+### 4. Récupération par Tags
+Une nouvelle table `memory_tags` indexe les entités, sujets et mots-clés extraits. Les candidats correspondant aux tags de la requête reçoivent un petit boost de pertinence additif.
+
+### 5. Méthodes de Seuil Adaptatif
+Au lieu d'un seuil fixe à 0.6, MIRA supporte désormais trois méthodes dynamiques :
+
+| Méthode | Description | Défaut |
+|---------|-------------|--------|
+| `iqr` | Premier quartile de la distribution des scores | ✅ |
+| `elbow` | Plus forte chute de dérivée (méthode du coude) | |
+| `mean_stddev` | moyenne − écart-type | |
+
+Le seuil est clampé entre `0.15` (plancher) et `0.75` (plafond).
+
+### 6. Reranker Heuristique (Optionnel)
+Un reranker léger 100% Go score les top-k candidats via :
+- Chevauchement lexical de type Jaccard
+- Bonus de présence de phrase exacte
+- Préférence d'équilibre de longueur
+
+Mélangé avec la pertinence sémantique : `0.7*sémantique + 0.3*rerank`.
+
+### 7. Vector Store de Fallback
+Si HNSW n'est pas encore prêt (ex. reconstruction depuis zéro), un wrapper de fallback transparent redirige automatiquement les recherches vers le vector store SQLite. Le recall ne tombe jamais en panne.
+
+---
+
 ## Graphe Causal
 
 ### Relations Supportées
@@ -562,6 +609,25 @@ extraction:
   causal_lookback: 50
   causal_max_days: 30
 
+# Configuration de recall amélioré
+recall:
+  adaptive_threshold_method: "iqr"
+  adaptive_threshold_floor: 0.15
+  adaptive_threshold_ceiling: 0.75
+  enable_fts5: true
+  fts5_limit: 100
+  rrf_k: 60
+  query_expansion:
+    enabled: true
+    num_variants: 3
+    temperature: 0.3
+  search_time_clustering:
+    enabled: true
+    similarity_threshold: 0.88
+  reranker:
+    enabled: false
+    top_k: 30
+
 mcp:
   name: "mira"
   version: "0.3.3"
@@ -678,6 +744,14 @@ curl http://localhost:9090/metrics
 
 ### Optimisations en v0.3.3
 
+- **Expansion de Requête** : Moyenne d'embeddings de variantes sémantiques pour une récupération cross-lingue robuste
+- **Recherche Lexicale FTS5** : Recherche full-text SQLite intégrée avec triggers auto et backfill
+- **Fusion Hybride RRF** : Reciprocal Rank Fusion (`k=60`) combinant résultats denses HNSW et lexicaux FTS5
+- **Clustering à la Recherche** : Déduplication en temps réel par clustering cosine-similarity (seuil 0.88)
+- **Récupération par Tags** : Table `memory_tags` avec boost automatique des tags dans le scoring CBA
+- **Reranker Heuristique** : Reranker lexical léger optionnel pour améliorer la précision
+- **Méthodes de Seuil Adaptatif** : Élagage dynamique de pertinence avec les stratégies `iqr`, `elbow` et `mean_stddev`
+- **Vector Store de Fallback** : Fallback transparent HNSW → SQLite quand l'index n'est pas prêt
 - **Outil Clear Memory** : Nouvel outil MCP `mira_clear_memory` pour la suppression globale ou par room
 - **Résolution T0 Chaîne Causale** : `mira_causal_chain` résout désormais correctement les références `T0:` en IDs fingerprint
 - **Visibilité des IDs dans les Sorties** : `mira_recall` et `mira_timeline` incluent maintenant les IDs mémoire pour chaîner les outils
@@ -769,6 +843,9 @@ mira/
 │       ├── health_test.go # Tests health checks
 │       └── main_test.go   # Tests application
 ├── docs/                  # Documentation
+│   ├── INDEX.md           # Point d'entrée documentation
+│   ├── ARCHITECTURE.md    # Deep-dive technique
+│   ├── FEATURES.md        # Catalogue complet des fonctionnalités
 │   └── API_REFERENCES.md  # Référence API
 ├── SKILL.md               # Skill agent et guidelines memory loop
 ├── config.example.yaml    # Configuration exemple

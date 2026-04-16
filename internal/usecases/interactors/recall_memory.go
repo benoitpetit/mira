@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -93,56 +94,96 @@ type RecallMemory struct {
 	causalGraph      ports.CausalGraph
 	embedder         ports.Embedder
 	renderer         ports.FingerprintRenderer
+	tagRepo          ports.TagRepository
+	reranker         ports.Reranker
 	cache            *embeddingCache
 	metricsCollector ports.MetricsCollector
 
 	// Configuration
-	defaultBudget         int
-	maxCandidates         int
-	earlyPruningThreshold float64
-	sessionWindowSeconds  int
-	sessionBoostBeta      float64
-	sessionBoostMax       float64
-	causalPenaltyAlpha    float64
-	densitySigmoidK       float64
-	densitySigmoidMu      float64
-	decayRates            map[string]float64
+	defaultBudget                 int
+	maxCandidates                 int
+	earlyPruningThreshold         float64
+	sessionWindowSeconds          int
+	sessionBoostBeta              float64
+	sessionBoostMax               float64
+	causalPenaltyAlpha            float64
+	densitySigmoidK               float64
+	densitySigmoidMu              float64
+	thresholdMethod               string
+	thresholdFloor                float64
+	thresholdCeiling              float64
+	enableFTS5                    bool
+	fts5Limit                     int
+	rrfK                          int
+	queryExpansionEnabled         bool
+	queryExpansionNumVariants     int
+	searchTimeClusteringEnabled   bool
+	searchTimeClusteringThreshold float64
+	rerankerEnabled               bool
+	rerankerTopK                  int
+	decayRates                    map[string]float64
 }
 
 // RecallMemoryConfig configures the recall interactor
 type RecallMemoryConfig struct {
-	DefaultBudget         int
-	MaxCandidates         int
-	EarlyPruningThreshold float64
-	SessionWindowSeconds  int
-	SessionBoostBeta      float64
-	SessionBoostMax       float64
-	CausalPenaltyAlpha    float64
-	DensitySigmoidK       float64
-	DensitySigmoidMu      float64
-	EmbeddingCacheSize    int
-	DecayRates            map[string]float64
+	DefaultBudget                 int
+	MaxCandidates                 int
+	EarlyPruningThreshold         float64
+	SessionWindowSeconds          int
+	SessionBoostBeta              float64
+	SessionBoostMax               float64
+	CausalPenaltyAlpha            float64
+	DensitySigmoidK               float64
+	DensitySigmoidMu              float64
+	EmbeddingCacheSize            int
+	ThresholdMethod               string
+	ThresholdFloor                float64
+	ThresholdCeiling              float64
+	EnableFTS5                    bool
+	FTS5Limit                     int
+	RRFK                          int
+	QueryExpansionEnabled         bool
+	QueryExpansionNumVariants     int
+	SearchTimeClusteringEnabled   bool
+	SearchTimeClusteringThreshold float64
+	RerankerEnabled               bool
+	RerankerTopK                  int
+	TagRepo                       ports.TagRepository
+	Reranker                      ports.Reranker
+	DecayRates                    map[string]float64
 }
 
 // DefaultRecallMemoryConfig returns default configuration
 func DefaultRecallMemoryConfig() RecallMemoryConfig {
 	return RecallMemoryConfig{
-		DefaultBudget:         4000,
-		MaxCandidates:         100,
-		EarlyPruningThreshold: 0.6,
-		SessionWindowSeconds:  7200,
-		SessionBoostBeta:      0.2,
-		SessionBoostMax:       1.2,
-		CausalPenaltyAlpha:    0.15,
-		DensitySigmoidK:       2.0,
-		DensitySigmoidMu:      0.3,
-		EmbeddingCacheSize:    1000,
+		DefaultBudget:                 4000,
+		MaxCandidates:                 100,
+		EarlyPruningThreshold:         0.6,
+		SessionWindowSeconds:          7200,
+		SessionBoostBeta:              0.2,
+		SessionBoostMax:               1.2,
+		CausalPenaltyAlpha:            0.15,
+		DensitySigmoidK:               2.0,
+		DensitySigmoidMu:              0.3,
+		EmbeddingCacheSize:            1000,
+		ThresholdMethod:               "iqr",
+		ThresholdFloor:                0.15,
+		ThresholdCeiling:              0.75,
+		EnableFTS5:                    true,
+		FTS5Limit:                     100,
+		RRFK:                          60,
+		QueryExpansionEnabled:         true,
+		QueryExpansionNumVariants:     3,
+		SearchTimeClusteringEnabled:   true,
+		SearchTimeClusteringThreshold: 0.88,
+		RerankerEnabled:               false,
+		RerankerTopK:                  30,
 		DecayRates: map[string]float64{
-			"decision":    0.001,
-			"fact":        0.005,
-			"preference":  0.01,
+			"decision":     0.001,
+			"fact":         0.005,
+			"preference":   0.01,
 			"session_note": 0.1,
-			"debug_log":   0.5,
+			"debug_log":    0.5,
 		},
 	}
 }
@@ -168,23 +209,37 @@ func NewRecallMemory(
 	}
 
 	return &RecallMemory{
-		vectorStore:           vectorStore,
-		overlapCache:          overlapCache,
-		causalGraph:           causalGraph,
-		embedder:              embedder,
-		renderer:              renderer,
-		cache:                 newEmbeddingCache(cacheSize),
-		metricsCollector:      metricsCollector,
-		defaultBudget:         config.DefaultBudget,
-		maxCandidates:         config.MaxCandidates,
-		earlyPruningThreshold: config.EarlyPruningThreshold,
-		sessionWindowSeconds:  config.SessionWindowSeconds,
-		sessionBoostBeta:      config.SessionBoostBeta,
-		sessionBoostMax:       config.SessionBoostMax,
-		causalPenaltyAlpha:    config.CausalPenaltyAlpha,
-		densitySigmoidK:       config.DensitySigmoidK,
-		densitySigmoidMu:      config.DensitySigmoidMu,
-		decayRates:            decayRates,
+		vectorStore:                   vectorStore,
+		overlapCache:                  overlapCache,
+		causalGraph:                   causalGraph,
+		embedder:                      embedder,
+		renderer:                      renderer,
+		cache:                         newEmbeddingCache(cacheSize),
+		metricsCollector:              metricsCollector,
+		defaultBudget:                 config.DefaultBudget,
+		maxCandidates:                 config.MaxCandidates,
+		earlyPruningThreshold:         config.EarlyPruningThreshold,
+		sessionWindowSeconds:          config.SessionWindowSeconds,
+		sessionBoostBeta:              config.SessionBoostBeta,
+		sessionBoostMax:               config.SessionBoostMax,
+		causalPenaltyAlpha:            config.CausalPenaltyAlpha,
+		densitySigmoidK:               config.DensitySigmoidK,
+		densitySigmoidMu:              config.DensitySigmoidMu,
+		thresholdMethod:               config.ThresholdMethod,
+		thresholdFloor:                config.ThresholdFloor,
+		thresholdCeiling:              config.ThresholdCeiling,
+		enableFTS5:                    config.EnableFTS5,
+		fts5Limit:                     config.FTS5Limit,
+		rrfK:                          config.RRFK,
+		queryExpansionEnabled:         config.QueryExpansionEnabled,
+		queryExpansionNumVariants:     config.QueryExpansionNumVariants,
+		searchTimeClusteringEnabled:   config.SearchTimeClusteringEnabled,
+		searchTimeClusteringThreshold: config.SearchTimeClusteringThreshold,
+		rerankerEnabled:               config.RerankerEnabled,
+		rerankerTopK:                  config.RerankerTopK,
+		tagRepo:                       config.TagRepo,
+		reranker:                      config.Reranker,
+		decayRates:                    decayRates,
 	}
 }
 
@@ -203,21 +258,39 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 		return nil, fmt.Errorf("embedding failed: %w", err)
 	}
 
-	// 2. Vector search
-	candidates, err := uc.vectorStore.Search(ctx, queryVec, uc.maxCandidates, input.Wing, input.Room)
+	// 2. Vector search (dense)
+	denseCandidates, err := uc.vectorStore.Search(ctx, queryVec, uc.maxCandidates, input.Wing, input.Room)
 	if err != nil {
 		return nil, fmt.Errorf("vector search failed: %w", err)
 	}
 
-	// 3. Score and prune candidates
-	scored := uc.scoreCandidates(candidates, queryVec)
+	// 2b. Lexical search and RRF fusion
+	candidates := denseCandidates
+	if uc.enableFTS5 {
+		lexicalCandidates, lexErr := uc.vectorStore.SearchLexical(ctx, input.Query, uc.fts5Limit, input.Wing, input.Room)
+		if lexErr == nil && len(lexicalCandidates) > 0 {
+			candidates = reciprocalRankFusion(denseCandidates, lexicalCandidates, uc.rrfK)
+		}
+	}
+
+	// 2c. Search-time clustering (deduplication)
+	if uc.searchTimeClusteringEnabled {
+		clusters := clusterCandidates(candidates, uc.searchTimeClusteringThreshold)
+		candidates = selectClusterRepresentatives(clusters)
+	}
+
+	// 3. Tag boost lookup
+	tagBoostIDs := uc.getTagBoostIDs(ctx, input.Query)
+
+	// 4. Score and prune candidates
+	scored := uc.scoreCandidates(candidates, queryVec, tagBoostIDs)
 	pruned := uc.pruneCandidates(scored)
 
-	// 3b. Broad fallback search for cross-language or sparse queries
+	// 4b. Broad fallback search for cross-language or sparse queries
 	if len(pruned) < 3 {
 		broadCandidates, err := uc.vectorStore.Search(ctx, queryVec, uc.maxCandidates*3, input.Wing, input.Room)
 		if err == nil {
-			broadScored := uc.scoreCandidates(broadCandidates, queryVec)
+			broadScored := uc.scoreCandidates(broadCandidates, queryVec, tagBoostIDs)
 			broadPruned := uc.pruneCandidatesWithThreshold(broadScored, 0.15)
 			seen := make(map[uuid.UUID]bool)
 			for _, c := range pruned {
@@ -232,7 +305,7 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 		}
 	}
 
-	// 3c. Fallback wings if primary wing yielded nothing useful
+	// 4c. Fallback wings if primary wing yielded nothing useful
 	if len(pruned) == 0 && len(input.FallbackWings) > 0 {
 		seen := make(map[uuid.UUID]bool)
 		for _, c := range pruned {
@@ -247,7 +320,7 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 			if err != nil {
 				continue
 			}
-			fbScored := uc.scoreCandidates(fbCandidates, queryVec)
+			fbScored := uc.scoreCandidates(fbCandidates, queryVec, tagBoostIDs)
 			fbPruned := uc.pruneCandidates(fbScored)
 			for _, c := range fbPruned {
 				if !seen[c.ID()] {
@@ -258,7 +331,15 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 		}
 	}
 
-	// 4. Greedy selection
+	// 5. Heuristic reranking on top-k candidates
+	if uc.rerankerEnabled && len(pruned) > 0 {
+		if uc.reranker == nil {
+			uc.reranker = NewHeuristicReranker()
+		}
+		pruned = uc.applyReranker(ctx, input.Query, pruned)
+	}
+
+	// 6. Greedy selection
 	selected := uc.selectGreedy(ctx, pruned, budget)
 
 	totalTokens := 0
@@ -289,16 +370,84 @@ func (uc *RecallMemory) getQueryEmbedding(ctx context.Context, query string) ([]
 		return vec, nil
 	}
 
-	vec, err := uc.embedder.Encode(ctx, query)
+	var vec []float32
+	var err error
+
+	if uc.queryExpansionEnabled && uc.queryExpansionNumVariants > 0 {
+		variants := expandQuery(query, uc.queryExpansionNumVariants)
+		if len(variants) == 1 {
+			vec, err = uc.embedder.Encode(ctx, variants[0])
+		} else {
+			// Average embeddings of all variants
+			dim := -1
+			var sum []float64
+			for _, v := range variants {
+				ev, eErr := uc.embedder.Encode(ctx, v)
+				if eErr != nil {
+					continue
+				}
+				if dim == -1 {
+					dim = len(ev)
+					sum = make([]float64, dim)
+				}
+				if len(ev) != dim {
+					continue
+				}
+				for i := range ev {
+					sum[i] += float64(ev[i])
+				}
+			}
+			if sum != nil {
+				vec = make([]float32, dim)
+				count := float64(len(variants))
+				for i := range sum {
+					vec[i] = float32(sum[i] / count)
+				}
+			}
+		}
+	} else {
+		vec, err = uc.embedder.Encode(ctx, query)
+	}
+
 	if err != nil {
 		return nil, err
+	}
+	if vec == nil {
+		return nil, fmt.Errorf("failed to generate query embedding")
 	}
 
 	uc.cache.set(query, vec)
 	return vec, nil
 }
 
-func (uc *RecallMemory) scoreCandidates(candidates []*entities.Candidate, queryVec []float32) []*entities.Candidate {
+func (uc *RecallMemory) getTagBoostIDs(ctx context.Context, query string) map[uuid.UUID]bool {
+	if uc.tagRepo == nil {
+		return nil
+	}
+	clean := punctuationRe.ReplaceAllString(query, " ")
+	words := strings.Fields(clean)
+	var tags []string
+	for _, w := range words {
+		lw := strings.ToLower(w)
+		if len(lw) >= 4 && !stopWords[lw] {
+			tags = append(tags, lw)
+		}
+	}
+	if len(tags) == 0 {
+		return nil
+	}
+	ids, err := uc.tagRepo.GetVerbatimsByTags(ctx, tags, uc.maxCandidates*2)
+	if err != nil {
+		return nil
+	}
+	set := make(map[uuid.UUID]bool, len(ids))
+	for _, id := range ids {
+		set[id] = true
+	}
+	return set
+}
+
+func (uc *RecallMemory) scoreCandidates(candidates []*entities.Candidate, queryVec []float32, tagBoostIDs map[uuid.UUID]bool) []*entities.Candidate {
 	now := time.Now()
 
 	for _, c := range candidates {
@@ -308,6 +457,14 @@ func (uc *RecallMemory) scoreCandidates(candidates []*entities.Candidate, queryV
 		// If vectors are pre-normalized (L2), similarity is already in [0,1]
 		if c.Relevance < 0 {
 			c.Relevance = (1 + c.Relevance) / 2 // [-1,0) → [0,0.5)
+		}
+
+		// Tag boost (small additive boost for lexical alignment)
+		if tagBoostIDs != nil && tagBoostIDs[c.ID()] {
+			c.Relevance += 0.05
+			if c.Relevance > 1.0 {
+				c.Relevance = 1.0
+			}
 		}
 
 		// δ_sig: density with sigmoid
@@ -334,14 +491,27 @@ func (uc *RecallMemory) scoreCandidates(candidates []*entities.Candidate, queryV
 	return candidates
 }
 
-// adaptiveThreshold computes a dynamic threshold based on score distribution.
-// For sparse corpora (< 3 candidates) it lowers the bar. Otherwise it uses
-// mean(scores) - stddev(scores), clamped to [0.15, 0.75].
-func (uc *RecallMemory) adaptiveThreshold(scores []float64) float64 {
+func percentile(sorted []float64, p float64) float64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	if len(sorted) == 1 {
+		return sorted[0]
+	}
+	idx := p / 100.0 * float64(len(sorted)-1)
+	lower := int(math.Floor(idx))
+	upper := int(math.Ceil(idx))
+	if lower == upper {
+		return sorted[lower]
+	}
+	weight := idx - float64(lower)
+	return sorted[lower]*(1-weight) + sorted[upper]*weight
+}
+
+func adaptiveThresholdMeanStddev(scores []float64) float64 {
 	if len(scores) < 3 {
 		return 0.3
 	}
-
 	var sum float64
 	for _, s := range scores {
 		sum += s
@@ -355,12 +525,77 @@ func (uc *RecallMemory) adaptiveThreshold(scores []float64) float64 {
 	}
 	stddev := math.Sqrt(variance / float64(len(scores)))
 
-	threshold := mean - stddev
-	if threshold < 0.15 {
-		threshold = 0.15
+	return mean - stddev
+}
+
+func adaptiveThresholdIQR(scores []float64) float64 {
+	if len(scores) < 3 {
+		return 0.3
 	}
-	if threshold > 0.75 {
-		threshold = 0.75
+	sorted := make([]float64, len(scores))
+	copy(sorted, scores)
+	sort.Float64s(sorted)
+
+	// Use the first quartile as the threshold.
+	// This is more aggressive than q1 - 1.5*iqr and better handles small datasets.
+	q1 := percentile(sorted, 25)
+	return q1
+}
+
+func adaptiveThresholdElbow(scores []float64) float64 {
+	if len(scores) < 3 {
+		return 0.3
+	}
+	sorted := make([]float64, len(scores))
+	copy(sorted, scores)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i] > sorted[j]
+	})
+
+	// Compute discrete derivatives
+	derivatives := make([]float64, len(sorted)-1)
+	for i := 0; i < len(sorted)-1; i++ {
+		derivatives[i] = sorted[i] - sorted[i+1]
+	}
+
+	var dSum float64
+	for _, d := range derivatives {
+		dSum += d
+	}
+	dMean := dSum / float64(len(derivatives))
+
+	var dVar float64
+	for _, d := range derivatives {
+		dVar += (d - dMean) * (d - dMean)
+	}
+	dStd := math.Sqrt(dVar / float64(len(derivatives)))
+
+	cutoff := dMean + dStd
+	for i, d := range derivatives {
+		if d > cutoff {
+			return sorted[i+1]
+		}
+	}
+	return sorted[len(sorted)-1]
+}
+
+// adaptiveThreshold computes a dynamic threshold based on score distribution.
+func (uc *RecallMemory) adaptiveThreshold(scores []float64) float64 {
+	var threshold float64
+	switch uc.thresholdMethod {
+	case "iqr":
+		threshold = adaptiveThresholdIQR(scores)
+	case "elbow":
+		threshold = adaptiveThresholdElbow(scores)
+	default:
+		threshold = adaptiveThresholdMeanStddev(scores)
+	}
+
+	if threshold < uc.thresholdFloor {
+		threshold = uc.thresholdFloor
+	}
+	if threshold > uc.thresholdCeiling {
+		threshold = uc.thresholdCeiling
 	}
 	return threshold
 }
@@ -397,6 +632,46 @@ func (uc *RecallMemory) pruneCandidatesWithThreshold(candidates []*entities.Cand
 	}
 
 	return pruned
+}
+
+func (uc *RecallMemory) applyReranker(ctx context.Context, query string, candidates []*entities.Candidate) []*entities.Candidate {
+	// Sort by current relevance to pick top-k
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].Relevance > candidates[j].Relevance
+	})
+
+	topK := uc.rerankerTopK
+	if topK > len(candidates) {
+		topK = len(candidates)
+	}
+	topCandidates := candidates[:topK]
+
+	contents := make([]string, len(topCandidates))
+	for i, c := range topCandidates {
+		contents[i] = c.Verbatim.Content
+	}
+
+	scores, err := uc.reranker.Rerank(ctx, query, contents)
+	if err != nil {
+		return candidates
+	}
+
+	// Blend rerank score with semantic relevance
+	for i, c := range topCandidates {
+		if i < len(scores) {
+			c.Relevance = 0.7*c.Relevance + 0.3*scores[i]
+			if c.Relevance > 1.0 {
+				c.Relevance = 1.0
+			}
+		}
+	}
+
+	// Re-sort by blended relevance
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].Relevance > candidates[j].Relevance
+	})
+
+	return candidates
 }
 
 func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities.Candidate, budget int) []*valueobjects.SelectedMemory {
@@ -571,5 +846,3 @@ func (uc *RecallMemory) render(c *entities.Candidate, mode valueobjects.RenderMo
 		return ""
 	}
 }
-
-

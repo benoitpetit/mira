@@ -151,6 +151,7 @@ type Repository interface {
 	CausalGraphRepository
 	ModelRepository
 	StatsRepository
+	TagRepository
 }
 
 // EmbeddingSource provides access to embeddings for vector stores.
@@ -163,6 +164,20 @@ type EmbeddingSource interface {
 
 	// GetAllEmbeddings retrieves all embeddings from the store for index building.
 	GetAllEmbeddings(ctx context.Context) ([]*entities.Embedding, error)
+
+	// SearchLexical performs a full-text search using FTS5 or equivalent.
+	// Returns candidates ranked by lexical relevance.
+	SearchLexical(ctx context.Context, query string, limit int, wing, room *string) ([]*entities.Candidate, error)
 }
 
+// TagRepository defines the interface for tag-based memory indexing and retrieval.
+type TagRepository interface {
+	// StoreTags stores tags for a specific verbatim.
+	StoreTags(ctx context.Context, verbatimID uuid.UUID, tags []string, tagType string) error
 
+	// GetVerbatimsByTags retrieves verbatim IDs that match any of the given tags.
+	GetVerbatimsByTags(ctx context.Context, tags []string, limit int) ([]uuid.UUID, error)
+
+	// GetTagsForVerbatim retrieves all tags associated with a verbatim.
+	GetTagsForVerbatim(ctx context.Context, verbatimID uuid.UUID) ([]string, error)
+}

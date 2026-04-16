@@ -82,6 +82,10 @@ func (m *mockRecallVectorStore) Search(ctx context.Context, vector []float32, li
 	return m.candidates, nil
 }
 
+func (m *mockRecallVectorStore) SearchLexical(ctx context.Context, query string, limit int, wing, room *string) ([]*entities.Candidate, error) {
+	return nil, nil
+}
+
 func (m *mockRecallVectorStore) AddCandidate(ctx context.Context, candidate *entities.Candidate) error {
 	return nil
 }
@@ -296,7 +300,7 @@ func TestScoreCandidatesDetailed(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			candidates := []*entities.Candidate{tt.candidate}
-			scored := interactor.scoreCandidates(candidates, tt.queryVec)
+			scored := interactor.scoreCandidates(candidates, tt.queryVec, nil)
 
 			if len(scored) != 1 {
 				t.Fatalf("Expected 1 scored candidate, got %d", len(scored))
@@ -420,7 +424,7 @@ func TestSelectGreedy(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Pre-score candidates
 			queryVec := createQueryVector(1.0)
-			scored := interactor.scoreCandidates(tt.candidates, queryVec)
+			scored := interactor.scoreCandidates(tt.candidates, queryVec, nil)
 			pruned := interactor.pruneCandidates(scored)
 
 			selected := interactor.selectGreedy(ctx, pruned, tt.budget)
@@ -641,7 +645,7 @@ func TestScoreCandidates(t *testing.T) {
 	queryVec := make([]float32, 384)
 	queryVec[0] = 1.0
 
-	scored := interactor.scoreCandidates(candidates, queryVec)
+	scored := interactor.scoreCandidates(candidates, queryVec, nil)
 
 	// Verify all candidates have scores
 	for _, c := range scored {
@@ -911,7 +915,7 @@ func BenchmarkSelectGreedy(b *testing.B) {
 	}
 
 	queryVec := createQueryVector(1.0)
-	scored := uc.scoreCandidates(candidates, queryVec)
+	scored := uc.scoreCandidates(candidates, queryVec, nil)
 	pruned := uc.pruneCandidates(scored)
 
 	ctx := context.Background()

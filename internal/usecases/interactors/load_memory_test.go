@@ -32,6 +32,38 @@ func (m *mockVerbatimRepository) GetVerbatimByID(ctx context.Context, id uuid.UU
 	return nil, nil
 }
 
+// MockFingerprintRepository pour les tests
+type mockLoadFingerprintRepository struct {
+	getFingerprintByIDFunc func(ctx context.Context, id uuid.UUID) (*entities.Fingerprint, error)
+}
+
+func (m *mockLoadFingerprintRepository) StoreFingerprint(ctx context.Context, fp *entities.Fingerprint) error {
+	return nil
+}
+
+func (m *mockLoadFingerprintRepository) StoreFingerprintTx(ctx context.Context, tx *sql.Tx, fp *entities.Fingerprint) error {
+	return nil
+}
+
+func (m *mockLoadFingerprintRepository) GetFingerprintByID(ctx context.Context, id uuid.UUID) (*entities.Fingerprint, error) {
+	if m.getFingerprintByIDFunc != nil {
+		return m.getFingerprintByIDFunc(ctx, id)
+	}
+	return nil, errors.New("not found")
+}
+
+func (m *mockLoadFingerprintRepository) GetFingerprintByVerbatimID(ctx context.Context, verbatimID uuid.UUID) (*entities.Fingerprint, error) {
+	return nil, nil
+}
+
+func (m *mockLoadFingerprintRepository) GetRecentFingerprintsByWing(ctx context.Context, wing string, excludeID uuid.UUID, limit int) ([]*entities.Fingerprint, error) {
+	return nil, nil
+}
+
+func (m *mockLoadFingerprintRepository) GetRecentFingerprintsByWingTx(ctx context.Context, tx *sql.Tx, wing string, excludeID uuid.UUID, limit int) ([]*entities.Fingerprint, error) {
+	return nil, nil
+}
+
 // createTestVerbatim crée un verbatim de test
 func createTestVerbatim(id uuid.UUID, content string) *entities.Verbatim {
 	room := "test-room"
@@ -62,7 +94,7 @@ func TestLoadMemory_Execute(t *testing.T) {
 		},
 	}
 
-	interactor := NewLoadMemory(mockRepo)
+	interactor := NewLoadMemory(mockRepo, nil)
 	input := LoadMemoryInput{
 		ID: testID,
 	}
@@ -123,7 +155,7 @@ func TestLoadMemory_NotFound(t *testing.T) {
 		},
 	}
 
-	interactor := NewLoadMemory(mockRepo)
+	interactor := NewLoadMemory(mockRepo, nil)
 	input := LoadMemoryInput{
 		ID: testID,
 	}
@@ -153,7 +185,7 @@ func TestLoadMemory_InvalidID(t *testing.T) {
 		},
 	}
 
-	interactor := NewLoadMemory(mockRepo)
+	interactor := NewLoadMemory(mockRepo, nil)
 	// Utiliser un UUID zéro qui pourrait être considéré comme invalide par certains systèmes
 	input := LoadMemoryInput{
 		ID: uuid.Nil,
@@ -180,7 +212,7 @@ func TestLoadMemory_RepositoryError(t *testing.T) {
 		},
 	}
 
-	interactor := NewLoadMemory(mockRepo)
+	interactor := NewLoadMemory(mockRepo, nil)
 	input := LoadMemoryInput{
 		ID: testID,
 	}
@@ -215,7 +247,7 @@ func TestLoadMemory_MultipleCalls(t *testing.T) {
 		},
 	}
 
-	interactor := NewLoadMemory(mockRepo)
+	interactor := NewLoadMemory(mockRepo, nil)
 
 	// Premier appel
 	output1, err := interactor.Execute(ctx, LoadMemoryInput{ID: id1})
@@ -257,7 +289,7 @@ func BenchmarkLoadMemory_Execute(b *testing.B) {
 		},
 	}
 
-	interactor := NewLoadMemory(mockRepo)
+	interactor := NewLoadMemory(mockRepo, nil)
 	input := LoadMemoryInput{ID: testID}
 
 	b.ResetTimer()
@@ -266,6 +298,56 @@ func BenchmarkLoadMemory_Execute(b *testing.B) {
 		if err != nil {
 			b.Fatalf("Execute failed: %v", err)
 		}
+	}
+}
+
+// TestLoadMemory_ByFingerprintID test le chargement par FingerprintID
+func TestLoadMemory_ByFingerprintID(t *testing.T) {
+	ctx := context.Background()
+	verbatimID := uuid.New()
+	fingerprintID := uuid.New()
+	testContent := "Test content loaded by fingerprint ID"
+	testVerbatim := createTestVerbatim(verbatimID, testContent)
+
+	mockVerbatimRepo := &mockVerbatimRepository{
+		getVerbatimByIDFunc: func(ctx context.Context, id uuid.UUID) (*entities.Verbatim, error) {
+			if id == verbatimID {
+				return testVerbatim, nil
+			}
+			return nil, errors.New("verbatim not found")
+		},
+	}
+
+	mockFpRepo := &mockLoadFingerprintRepository{
+		getFingerprintByIDFunc: func(ctx context.Context, id uuid.UUID) (*entities.Fingerprint, error) {
+			if id == fingerprintID {
+				return &entities.Fingerprint{
+					ID:         fingerprintID,
+					VerbatimID: verbatimID,
+				}, nil
+			}
+			return nil, errors.New("fingerprint not found")
+		},
+	}
+
+	interactor := NewLoadMemory(mockVerbatimRepo, mockFpRepo)
+	input := LoadMemoryInput{ID: fingerprintID}
+
+	output, err := interactor.Execute(ctx, input)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	if output.Verbatim == nil {
+		t.Fatal("Expected verbatim, got nil")
+	}
+
+	if output.Verbatim.ID != verbatimID {
+		t.Errorf("Expected verbatim ID %s, got %s", verbatimID, output.Verbatim.ID)
+	}
+
+	if output.Verbatim.Content != testContent {
+		t.Errorf("Expected content '%s', got '%s'", testContent, output.Verbatim.Content)
 	}
 }
 

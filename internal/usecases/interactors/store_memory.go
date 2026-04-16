@@ -5,12 +5,14 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
+	"github.com/google/uuid"
 )
 
 // StoreMemoryInput contains the input for storing a memory
@@ -189,6 +191,9 @@ func (uc *StoreMemory) Execute(ctx context.Context, input StoreMemoryInput) (*St
 		}
 	}
 
+	// 4b. Store tags for semantic filtering (non-fatal)
+	uc.storeTags(ctx, verbatim.ID, fp, input.Content)
+
 	// 5. Create causal node (non-fatal)
 	node := entities.NewCausalNode(fp.ID, string(fp.Type), fp.Data.Subject[0], input.Wing, input.Room)
 	if err := uc.repository.AddNode(ctx, node); err != nil {
@@ -247,4 +252,51 @@ func (uc *StoreMemory) Execute(ctx context.Context, input StoreMemoryInput) (*St
 		TokenCount:    verbatim.TokenCount,
 		ModelHash:     fp.ModelHash,
 	}, nil
+}
+
+// storeTags extracts and stores tags for a memory. Non-fatal.
+func (uc *StoreMemory) storeTags(ctx context.Context, verbatimID uuid.UUID, fp *entities.Fingerprint, content string) {
+	tagSet := make(map[string]bool)
+
+	// Entities
+	for _, e := range fp.Entities {
+		if len(e) >= 2 {
+			tagSet[e] = true
+		}
+	}
+
+	// Subjects from fp.Data
+	for _, s := range fp.Data.Subject {
+		if len(s) >= 2 {
+			tagSet[s] = true
+		}
+	}
+
+	// Simple keyword extraction (words > 5 chars)
+	clean := punctuationRe.ReplaceAllString(content, " ")
+	words := strings.Fields(clean)
+	for _, w := range words {
+		lw := strings.ToLower(w)
+		if len(lw) >= 5 && !stopWords[lw] {
+			tagSet[lw] = true
+		}
+	}
+
+	if len(tagSet) == 0 {
+		return
+	}
+
+	var tags []string
+	for t := range tagSet {
+		tags = append(tags, t)
+	}
+
+	if err := uc.repository.StoreTags(ctx, verbatimID, tags, "keyword"); err != nil {
+		if uc.logger != nil {
+			uc.logger.Warn("Failed to store tags",
+				"error", err,
+				"verbatim_id", verbatimID.String(),
+			)
+		}
+	}
 }

@@ -178,6 +178,18 @@ func (m *mockStoreRepository) ClearByRoom(ctx context.Context, wing string, room
 	return 0, nil
 }
 
+func (m *mockStoreRepository) StoreTags(ctx context.Context, verbatimID uuid.UUID, tags []string, tagType string) error {
+	return nil
+}
+
+func (m *mockStoreRepository) GetVerbatimsByTags(ctx context.Context, tags []string, limit int) ([]uuid.UUID, error) {
+	return nil, nil
+}
+
+func (m *mockStoreRepository) GetTagsForVerbatim(ctx context.Context, verbatimID uuid.UUID) ([]string, error) {
+	return nil, nil
+}
+
 // Mock Extractor
 type mockStoreExtractor struct{}
 
@@ -221,6 +233,10 @@ func (m *mockLogger) Error(_ string, _ error, _ ...interface{}) {}
 
 func (m *mockStoreVectorStore) Search(ctx context.Context, vector []float32, limit int, wing, room *string) ([]*entities.Candidate, error) {
 	return m.candidates, nil
+}
+
+func (m *mockStoreVectorStore) SearchLexical(ctx context.Context, query string, limit int, wing, room *string) ([]*entities.Candidate, error) {
+	return nil, nil
 }
 
 func (m *mockStoreVectorStore) AddCandidate(ctx context.Context, candidate *entities.Candidate) error {

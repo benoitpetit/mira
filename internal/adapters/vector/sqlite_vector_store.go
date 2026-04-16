@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"math"
 	"sort"
 	"time"
@@ -131,8 +132,6 @@ func (s *SQLiteVectorStore) Search(ctx context.Context, vector []float32, limit 
 	return candidates, nil
 }
 
-
-
 // AddCandidate implements VectorStore
 func (s *SQLiteVectorStore) AddCandidate(ctx context.Context, candidate *entities.Candidate) error {
 	// No-op for SQLite - data is already stored via EmbeddingRepository
@@ -155,6 +154,98 @@ func (s *SQLiteVectorStore) ClearAll(ctx context.Context) error {
 func (s *SQLiteVectorStore) ClearByRoom(ctx context.Context, wing string, room *string) error {
 	// No-op: data lives in SQLite and is cleared by the repository
 	return nil
+}
+
+// SearchLexical performs a full-text search using FTS5
+func (s *SQLiteVectorStore) SearchLexical(ctx context.Context, query string, limit int, wing, room *string) ([]*entities.Candidate, error) {
+	var tableName string
+	err := s.db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name='verbatim_fts'`).Scan(&tableName)
+	if err != nil {
+		return nil, fmt.Errorf("FTS5 not available")
+	}
+
+	sqlQuery := `
+		SELECT v.id, v.content, v.token_count, v.created_at, v.wing, v.room,
+		       f.id, f.ftype, f.extracted_at, f.entities, f.subjects, f.decision, f.data, f.fact_count, f.token_estimate, f.model_hash,
+		       e.dim, e.vector
+		FROM verbatim_fts fts
+		JOIN verbatim v ON v.rowid = fts.rowid
+		JOIN fingerprints f ON v.id = f.verbatim_id
+		JOIN embeddings e ON v.id = e.id
+		WHERE fts.content MATCH ?`
+	args := []interface{}{query}
+
+	if wing != nil {
+		sqlQuery += " AND v.wing = ?"
+		args = append(args, *wing)
+	}
+	if room != nil {
+		sqlQuery += " AND v.room = ?"
+		args = append(args, *room)
+	}
+
+	sqlQuery += " ORDER BY fts.rank LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, sqlQuery, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var candidates []*entities.Candidate
+
+	for rows.Next() {
+		var v entities.Verbatim
+		var fp entities.Fingerprint
+
+		var vID, fpID []byte
+		var room sql.NullString
+		var createdAt float64
+		var extractedAt float64
+		var entitiesJSON, subjectsJSON []byte
+		var decision sql.NullString
+		var dataJSON []byte
+		var vectorBytes []byte
+		var dim int
+
+		err := rows.Scan(
+			&vID, &v.Content, &v.TokenCount, &createdAt, &v.Wing, &room,
+			&fpID, &fp.Type, &extractedAt, &entitiesJSON, &subjectsJSON, &decision, &dataJSON, &fp.FactCount, &fp.TokenEstimate, &fp.ModelHash,
+			&dim, &vectorBytes,
+		)
+		if err != nil {
+			continue
+		}
+
+		v.ID, _ = uuid.FromBytes(vID)
+		v.CreatedAt = time.Unix(int64(createdAt), 0)
+		if room.Valid {
+			v.Room = &room.String
+		}
+
+		fp.ID, _ = uuid.FromBytes(fpID)
+		fp.VerbatimID = v.ID
+		fp.ExtractedAt = time.Unix(int64(extractedAt), 0)
+		if decision.Valid {
+			fp.Decision = &decision.String
+		}
+		_ = json.Unmarshal(entitiesJSON, &fp.Entities)
+		_ = json.Unmarshal(subjectsJSON, &fp.Subjects)
+		_ = json.Unmarshal(dataJSON, &fp.Data)
+
+		// Decode vector
+		vecLen := len(vectorBytes) / 4
+		embVec := make([]float32, vecLen)
+		for i := 0; i < vecLen && i*4+3 < len(vectorBytes); i++ {
+			u := binary.LittleEndian.Uint32(vectorBytes[i*4 : i*4+4])
+			embVec[i] = math.Float32frombits(u)
+		}
+
+		candidates = append(candidates, entities.NewCandidate(&fp, &v, embVec))
+	}
+
+	return candidates, nil
 }
 
 // Ensure SQLiteVectorStore implements VectorStore

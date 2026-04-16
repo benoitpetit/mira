@@ -42,7 +42,7 @@ type node struct {
 	embedding hnsw.Embedding
 }
 
-func (n node) ID() string               { return n.id }
+func (n node) ID() string                { return n.id }
 func (n node) Embedding() hnsw.Embedding { return n.embedding }
 
 // HNSWOptions holds configuration for HNSW
@@ -97,6 +97,11 @@ func (h *HNSWStore) applyOptions(opts HNSWOptions) {
 	h.graph.Ml = opts.Ml
 	h.graph.EfSearch = opts.EfSearch
 	h.graph.Distance = hnsw.DistanceFunc(util.CosineDistance)
+}
+
+// SearchLexical implements VectorStore by delegating to the underlying EmbeddingSource.
+func (h *HNSWStore) SearchLexical(ctx context.Context, query string, limit int, wing, room *string) ([]*entities.Candidate, error) {
+	return h.store.SearchLexical(ctx, query, limit, wing, room)
 }
 
 // Search implements VectorStore
@@ -464,8 +469,6 @@ func (h *HNSWStore) Load() error {
 		len(h.uuidToID), h.nextID)
 	return nil
 }
-
-
 
 // timeUnix converts Unix timestamp (float64) to time.Time
 func timeUnix(sec float64) time.Time {

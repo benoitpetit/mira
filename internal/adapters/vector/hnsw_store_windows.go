@@ -44,6 +44,11 @@ func (h *HNSWStore) Search(ctx context.Context, vector []float32, limit int, win
 	return nil, errors.New("HNSW vector store is not supported on Windows")
 }
 
+// SearchLexical performs full-text search (not supported on Windows)
+func (h *HNSWStore) SearchLexical(ctx context.Context, query string, limit int, wing, room *string) ([]*entities.Candidate, error) {
+	return nil, errors.New("HNSW vector store is not supported on Windows")
+}
+
 // AddCandidate adds a candidate to the index (not supported on Windows)
 func (h *HNSWStore) AddCandidate(ctx context.Context, c *entities.Candidate) error {
 	return errors.New("HNSW vector store is not supported on Windows")

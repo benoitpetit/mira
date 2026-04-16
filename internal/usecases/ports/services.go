@@ -53,6 +53,10 @@ type VectorStore interface {
 	// Returns up to 'limit' candidates, optionally filtered by wing and room.
 	Search(ctx context.Context, vector []float32, limit int, wing, room *string) ([]*entities.Candidate, error)
 
+	// SearchLexical performs a full-text search using FTS5 or equivalent.
+	// Returns candidates ranked by lexical relevance.
+	SearchLexical(ctx context.Context, query string, limit int, wing, room *string) ([]*entities.Candidate, error)
+
 	// AddCandidate adds a candidate to the vector index for future searches.
 	// This is typically called after storing a memory in the database.
 	AddCandidate(ctx context.Context, candidate *entities.Candidate) error
@@ -119,6 +123,13 @@ type Tokenizer interface {
 	// The exact definition of a "token" depends on the implementation
 	// (e.g., words, BPE tokens, etc.).
 	CountTokens(text string) int
+}
+
+// Reranker defines the interface for reranking candidate texts against a query.
+type Reranker interface {
+	// Rerank scores a list of candidate texts against a query.
+	// Returns scores in the same order as candidates.
+	Rerank(ctx context.Context, query string, candidates []string) ([]float64, error)
 }
 
 // Logger defines the interface for structured logging.
