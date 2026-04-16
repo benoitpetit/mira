@@ -2,15 +2,30 @@
 name: mira
 description: Long-term memory guidance for MIRA MCP integration
 author: benoitpetit
-version: "1.0"
+version: "2.0"
 tags: [memory, mcp, mira]
 ---
 
 # MIRA Memory Loop Guidelines
 
-You are augmented with **MIRA** (Memory with Information-theoretic Relevance Allocation), an external MCP server providing long-term, cross-session memory. The detailed tool schemas for `mira_store`, `mira_recall`, `mira_load`, `mira_timeline`, `mira_causal_chain`, `mira_status`, `mira_archive`, and `mira_clear_memory` are already documented in the *External Tools Reference (MCP Servers)* section of your system prompt.
+You are augmented with **MIRA** (Memory with Information-theoretic Relevance Allocation), an external MCP server providing long-term, cross-session memory for LLMs. MIRA uses a **multi-stage retrieval pipeline** (Query Expansion → Dense HNSW Search → Lexical FTS5 Search → RRF Fusion → Search-Time Clustering → Tag Boost → Adaptive Threshold → CBA Greedy Allocation) to retrieve the most relevant context within a token budget.
 
-Use the workflow below to decide **when** and **how** to call these tools.
+The detailed tool schemas for `mira_store`, `mira_recall`, `mira_load`, `mira_timeline`, `mira_causal_chain`, `mira_status`, `mira_archive`, and `mira_clear_memory` are documented in the *External Tools Reference (MCP Servers)* section of your system prompt.
+
+**Rule #1**: Always recall before answering. **Rule #2**: Store progressively as you work.
+
+---
+
+## The MIRA Memory Loop
+
+Every interaction with the user should follow this loop:
+
+```
+1. RECALL  → Retrieve relevant context from the project wing (and general if needed)
+2. REASON  → Use retrieved context + current user message to formulate response
+3. ACT     → Answer, code, or ask clarifying questions
+4. STORE   → Persist new decisions, facts, preferences, debug insights, session notes
+```
 
 ---
 
@@ -18,14 +33,15 @@ Use the workflow below to decide **when** and **how** to call these tools.
 
 | Situation | Action |
 |-----------|--------|
-| **Start of a task/session** | `mira_recall` to retrieve relevant context before answering or coding. |
-| **Architectural/design decision** | `mira_store(type="decision")` immediately after the choice is made. |
-| **Important fact discovered** | `mira_store(type="fact")` for configs, constraints, credentials, docs. |
-| **User preference expressed** | `mira_store(type="preference")` for style, conventions, subjective choices. |
-| **Bug resolved or debug insight** | `mira_store(type="debug_log")` for errors, stack traces, root causes. |
+| **Start of any task/session** | `mira_recall` to retrieve relevant context before answering or coding. |
+| **Before making architectural/design decisions** | `mira_recall` to check for existing decisions, then `mira_store(type="decision")` to record the new choice. |
+| **Important fact discovered** | `mira_store(type="fact")` for configs, constraints, credentials, docs, API contracts. |
+| **User preference expressed** | `mira_store(type="preference")` for style, conventions, formatting, subjective choices. |
+| **Bug resolved or debug insight gained** | `mira_store(type="debug_log")` for errors, stack traces, root causes, fixes. |
 | **End of significant work** | `mira_store(type="session_note")` summarizing what was done, files touched, and pending items. |
-| **Need historical timeline** | `mira_timeline` to see how a topic evolved. |
-| **Need decision lineage** | `mira_causal_chain` to trace causes and consequences. |
+| **Need historical timeline** | `mira_timeline` to see how a project or topic evolved over time. |
+| **Need decision lineage** | `mira_causal_chain` to trace causes and consequences of a decision. |
+| **Context seems incomplete** | `mira_load(id)` using the exact `T0:<uuid>` from a recall/timeline result to fetch full verbatim. |
 
 ---
 
@@ -41,6 +57,8 @@ Use the workflow below to decide **when** and **how** to call these tools.
   - `context` — high-level project context and onboarding info.
   - `session` — per-conversation summaries and checkpoints.
   - `learnings` — insights from errors, optimizations, or repeated tasks.
+  - `onboarding` — setup instructions, environment config.
+  - `api` — API documentation, contracts, endpoints.
 
 If you do not specify `room`, MIRA auto-assigns one based on `type`:
 - `decision` → `decisions`
@@ -53,56 +71,94 @@ If you do not specify `room`, MIRA auto-assigns one based on `type`:
 
 ## Recall Workflow
 
-1. **First**, query the project wing:
-   ```json
-   { "tool": "mira_recall", "arguments": { "query": "<topic>", "wing": "<project>", "budget": 4000 } }
-   ```
-2. **If results are sparse**, run a **second** query against `wing: "general"` for global context.
-3. **Do NOT mix wings** in a single query; run two separate recalls and merge the results mentally.
-4. **Use `fallback_wings`** when querying a narrow wing that might not have results yet:
-   ```json
-   { "tool": "mira_recall", "arguments": { "query": "auth strategy", "wing": "<project>", "fallback_wings": "general", "budget": 4000 } }
-   ```
-5. Before editing a file, recall related memories (e.g., `"similar bug in parser.go"`) to avoid repetition.
+### Step 1: Query the project wing
+Always start with a project-specific recall:
+```json
+{ "tool": "mira_recall", "arguments": { "query": "authentication strategy JWT", "wing": "<project>", "budget": 4000 } }
+```
+
+### Step 2: Query general wing if sparse
+If the project wing returns little or no relevant context, run a second recall against `wing: "general"`:
+```json
+{ "tool": "mira_recall", "arguments": { "query": "table-driven tests Go", "wing": "general", "budget": 2000 } }
+```
+
+### Step 3: Use fallback wings for cross-team knowledge
+If a narrow wing might not have results yet, use `fallback_wings`:
+```json
+{ "tool": "mira_recall", "arguments": { "query": "auth strategy", "wing": "<project>", "fallback_wings": "general", "budget": 4000 } }
+```
+
+### Cross-Language Queries
+MIRA supports queries in **any language** (English, French, Spanish, Italian, German, etc.) thanks to cross-lingual embeddings and automatic query expansion. **Do not translate queries yourself.** Query in the same language as the user's message.
+
+### Good vs Bad Queries
+- ❌ `"auth"` — too vague, will retrieve generic results
+- ✅ `"JWT RS256 auth-service token expiration config"` — specific, entity-rich, yields precise results
+- ❌ `"bug"` — ambiguous
+- ✅ `"nil pointer dereference in parser.go line 42 fix"` — actionable and detailed
+
+### Important Recall Rules
+1. **Do NOT mix wings** in reasoning; run separate recalls and merge the results mentally.
+2. **Before editing a file**, recall related memories (e.g., `"similar bug in parser.go"`) to avoid repetition or regression.
+3. **Before answering a technical question**, recall the relevant domain to provide accurate, project-aware responses.
+4. **If you need full text** of a recalled memory, use `mira_load` with the exact `T0:<uuid>` reference.
 
 ---
 
 ## Store Workflow
 
-Store memories **progressively** as you work:
+Store memories **progressively** as you work. Do not wait until the end of a long session.
 
+### Decision
 ```json
-{ "tool": "mira_store", "arguments": { "content": "Decision: use gin for REST API routing", "wing": "<project>", "room": "decisions", "type": "decision" } }
+{ "tool": "mira_store", "arguments": { "content": "Decision: use PostgreSQL for v2 database. Rejected MySQL (not ACID enough) and MongoDB (not relational). Assigned to Jean.", "wing": "<project>", "room": "decisions", "type": "decision" } }
 ```
 
+### Fact
 ```json
-{ "tool": "mira_store", "arguments": { "content": "User prefers table-driven tests for all Go packages", "wing": "general", "room": "preferences", "type": "preference" } }
+{ "tool": "mira_store", "arguments": { "content": "API rate limit is 1000 requests/minute per API key. Exceeding returns 429 with Retry-After header.", "wing": "<project>", "room": "api", "type": "fact" } }
+```
+
+### Preference
+```json
+{ "tool": "mira_store", "arguments": { "content": "User prefers table-driven tests for all Go packages and wants exhaustive error handling tests.", "wing": "general", "room": "preferences", "type": "preference" } }
+```
+
+### Debug Log
+```json
+{ "tool": "mira_store", "arguments": { "content": "Fixed race condition in webhook manager: event routing was comparing webhook ID instead of endpoint ID. Added mutex around endpoint map.", "wing": "<project>", "room": "bugs", "type": "debug_log" } }
+```
+
+### Session Note
+```json
+{ "tool": "mira_store", "arguments": { "content": "Refactored auth middleware to use context.WithTimeout. Modified internal/app/main.go and internal/interfaces/mcp/controller.go. Still need to update tests.", "wing": "<project>", "room": "session", "type": "session_note" } }
 ```
 
 ---
 
 ## Budget Guidelines for `mira_recall`
 
-| Scenario | Suggested budget |
-|----------|------------------|
-| Quick lookup | 500 – 1000 tokens |
-| Standard context | 2000 – 4000 tokens (default) |
-| Deep architectural analysis | 6000 – 8000 tokens |
-| Massive recall | 10000+ tokens |
+| Scenario | Suggested budget | When to use |
+|----------|------------------|-------------|
+| Quick lookup | 500 – 1000 tokens | Specific fact retrieval |
+| Standard context | 2000 – 4000 tokens (default) | General task assistance |
+| Deep architectural analysis | 6000 – 8000 tokens | Complex refactors, design reviews |
+| Massive recall | 10000+ tokens | Full project context reconstruction |
 
 ---
 
 ## Memory Types and Lifespan
 
-| Type | Use for | Auto-archive |
-|------|---------|--------------|
-| `decision` | Structuring choices | Never |
-| `fact` | Objective info, configs, docs | Never |
-| `preference` | Subjective choices, conventions | Never |
-| `session_note` | Temporary context, TODOs, summaries | 30 days |
-| `debug_log` | Errors, stack traces, fixes | 7 days |
+| Type | Use for | Auto-archive | Retention |
+|------|---------|--------------|-----------|
+| `decision` | Structuring choices | Never | Permanent |
+| `fact` | Objective info, configs, docs | Never | Permanent |
+| `preference` | Subjective choices, conventions | Never | Permanent |
+| `session_note` | Temporary context, TODOs, summaries | 30 days | Short-term |
+| `debug_log` | Errors, stack traces, fixes | 7 days | Very short-term |
 
-> **Tip**: omit `type` if unsure — MIRA auto-detects it.
+> **Tip**: omit `type` if unsure — MIRA auto-detects it from content.
 
 ---
 
@@ -110,17 +166,19 @@ Store memories **progressively** as you work:
 
 `mira_recall` and `mira_timeline` expose memory IDs as **`T0:<uuid>`** (verbatim references).
 
-- **`mira_load(id)`** — Accepts the exact `T0:<uuid>` from a recall/timeline result to fetch the full original text.
+- **`mira_load(id)`** — Accepts the exact `T0:<uuid>` from a recall or timeline result to fetch the full original text.
 - **`mira_causal_chain(id, include_consequences=true)`** — Accepts either a `T0:<uuid>` reference or a Fingerprint ID. Prefer passing the exact `T0:<uuid>` returned by `mira_recall` / `mira_timeline`.
+
+**Never invent IDs.** Only use IDs explicitly returned by MIRA tools.
 
 ---
 
 ## Additional Tools
 
-- **`mira_timeline(wing="<project>")`** — Review project evolution before major refactors.
+- **`mira_timeline(wing="<project>")`** — Review project evolution before major refactors. Filter by `room`, `type`, `since`, `until`.
 - **`mira_archive`** — Call occasionally to archive stale session notes and debug logs.
-- **`mira_status`** — Check index health before heavy usage.
-- **`mira_clear_memory`** — Permanently delete memories (global or room-scoped). **Use only with explicit user request.**
+- **`mira_status`** — Check system health, memory counts, and index status before heavy usage.
+- **`mira_clear_memory`** — Permanently delete memories (global or room-scoped). **Use ONLY with explicit user request.**
 
 ---
 
@@ -131,3 +189,29 @@ Store memories **progressively** as you work:
 3. **Avoid vague recall queries** — `"auth"` is bad; `"JWT RS256 auth-service token config"` is good.
 4. **Do not call `mira_clear_memory`** without explicit user request.
 5. **Keep wing names consistent** — reuse the same canonical wing name across a project.
+6. **Do not translate queries** — MIRA handles cross-lingual retrieval automatically.
+7. **Do not store raw code without context** — store the *decision* or *fact* behind the code, not the code itself.
+
+---
+
+## Quick Decision Tree
+
+```
+User asks a question or gives a task
+    │
+    ▼
+┌─────────────────────────────────────┐
+│ Call mira_recall(wing=<project>)    │
+│ If sparse → mira_recall(wing=general)│
+└─────────────────────────────────────┘
+    │
+    ▼
+Answer / code / reason using context
+    │
+    ▼
+Did you make a decision? ──Yes──► mira_store(type="decision")
+Did you learn a fact? ─────Yes──► mira_store(type="fact")
+Did you fix a bug? ────────Yes──► mira_store(type="debug_log")
+Did the user state a preference? ──Yes──► mira_store(type="preference")
+Significant work done? ────Yes──► mira_store(type="session_note")
+```
