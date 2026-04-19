@@ -26,6 +26,27 @@ const (
 	MaxQueryLength   = 10000
 )
 
+// sanitizeStoredMemoryContent neutralizes instruction-like lines when replaying
+// stored memories back into model context to reduce memory-prompt-injection risk.
+func sanitizeStoredMemoryContent(content string) string {
+	if content == "" {
+		return content
+	}
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		l := strings.ToLower(strings.TrimSpace(line))
+		if strings.HasPrefix(l, "system:") ||
+			strings.HasPrefix(l, "assistant:") ||
+			strings.Contains(l, "ignore previous") ||
+			strings.Contains(l, "ignore all") ||
+			strings.Contains(l, "override instructions") ||
+			strings.Contains(l, "you are now") {
+			lines[i] = "[filtered potential instruction from memory]"
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
 // Interfaces for dependency injection and testing
 type (
 	// StoreMemoryExecutor stores memories
@@ -114,8 +135,19 @@ func NewController(
 
 // RegisterTools registers all MCP tools
 func (c *Controller) RegisterTools(mcpServer server.MCPServer) {
+	tools := c.ToolDefinitions()
 	mcpServer.HandleListTools(func(ctx context.Context, cursor *string) (*mcptypes.ListToolsResult, error) {
-		tools := []mcptypes.Tool{
+		return &mcptypes.ListToolsResult{Tools: tools}, nil
+	})
+	mcpServer.HandleCallTool(func(ctx context.Context, name string, arguments map[string]interface{}) (*mcptypes.CallToolResult, error) {
+		return c.Call(ctx, name, arguments)
+	})
+}
+
+// ToolDefinitions returns the 8 MIRA tool definitions.
+// Used for combined registration when SOUL is embedded.
+func (c *Controller) ToolDefinitions() []mcptypes.Tool {
+	return []mcptypes.Tool{
 			{
 				Name: "mira_store",
 				Description: `Store a memory in MIRA with automatic entity extraction and fingerprinting.
@@ -316,32 +348,32 @@ Examples:
 					},
 				},
 			},
-		}
-		return &mcptypes.ListToolsResult{Tools: tools}, nil
-	})
+	}
+}
 
-	mcpServer.HandleCallTool(func(ctx context.Context, name string, arguments map[string]interface{}) (*mcptypes.CallToolResult, error) {
-		switch name {
-		case "mira_store":
-			return c.handleStore(ctx, arguments)
-		case "mira_recall":
-			return c.handleRecall(ctx, arguments)
-		case "mira_load":
-			return c.handleLoad(ctx, arguments)
-		case "mira_causal_chain":
-			return c.handleCausalChain(ctx, arguments)
-		case "mira_status":
-			return c.handleStatus(ctx)
-		case "mira_timeline":
-			return c.handleTimeline(ctx, arguments)
-		case "mira_archive":
-			return c.handleArchive(ctx)
-		case "mira_clear_memory":
-			return c.handleClearMemory(ctx, arguments)
-		default:
-			return nil, fmt.Errorf("unknown tool: %s", name)
-		}
-	})
+// Call dispatches a mira_* tool call. Returns an error for unknown tool names.
+// Used for combined registration when SOUL is embedded.
+func (c *Controller) Call(ctx context.Context, name string, arguments map[string]interface{}) (*mcptypes.CallToolResult, error) {
+	switch name {
+	case "mira_store":
+		return c.handleStore(ctx, arguments)
+	case "mira_recall":
+		return c.handleRecall(ctx, arguments)
+	case "mira_load":
+		return c.handleLoad(ctx, arguments)
+	case "mira_causal_chain":
+		return c.handleCausalChain(ctx, arguments)
+	case "mira_status":
+		return c.handleStatus(ctx)
+	case "mira_timeline":
+		return c.handleTimeline(ctx, arguments)
+	case "mira_archive":
+		return c.handleArchive(ctx)
+	case "mira_clear_memory":
+		return c.handleClearMemory(ctx, arguments)
+	default:
+		return nil, fmt.Errorf("unknown tool: %s", name)
+	}
 }
 
 func (c *Controller) handleStore(ctx context.Context, args map[string]interface{}) (*mcptypes.CallToolResult, error) {
@@ -486,9 +518,10 @@ func (c *Controller) handleRecall(ctx context.Context, args map[string]interface
 	parts = append(parts, "")
 
 	for i, sel := range output.Memories {
+		safeContent := sanitizeStoredMemoryContent(sel.Rendered)
 		parts = append(parts, fmt.Sprintf("--- [%d] %s (%d tokens) | ID: T0:%s ---",
 			i+1, sel.Mode.String(), sel.TokenCost, sel.VerbatimID.String()))
-		parts = append(parts, sel.Rendered)
+		parts = append(parts, safeContent)
 		parts = append(parts, "")
 		totalTokens += sel.TokenCost
 	}
@@ -513,16 +546,19 @@ func (c *Controller) handleLoad(ctx context.Context, args map[string]interface{}
 		return nil, fmt.Errorf("id is required")
 	}
 
-	idStr = strings.TrimPrefix(idStr, "T0:")
-	id, err := uuid.Parse(idStr)
+	normalizedID := normalizeLoadID(idStr)
+	id, err := uuid.Parse(normalizedID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid ID '%s': %w. Use the exact Fingerprint ID returned by mira_recall or mira_timeline", idStr, err)
+		return nil, fmt.Errorf("invalid ID '%s': %w. Use the exact ID returned by mira_recall or mira_timeline (plain UUID, T0:UUID, or F0:UUID)", idStr, err)
 	}
 
 	input := interactors.LoadMemoryInput{ID: id}
 	output, err := c.loadMemory.Execute(ctx, input)
 	if err != nil {
 		return nil, fmt.Errorf("not found: %w", err)
+	}
+	if output == nil || output.Verbatim == nil {
+		return nil, fmt.Errorf("not found: no verbatim resolved for ID '%s'", idStr)
 	}
 
 	meta := fmt.Sprintf("[ID: %s | Wing: %s | Date: %s]\n\n",
@@ -531,6 +567,20 @@ func (c *Controller) handleLoad(ctx context.Context, args map[string]interface{}
 	return &mcptypes.CallToolResult{
 		Content: []mcptypes.Content{mcptypes.TextContent{Type: "text", Text: meta + output.Verbatim.Content}},
 	}, nil
+}
+
+func normalizeLoadID(raw string) string {
+	s := strings.TrimSpace(raw)
+	s = strings.TrimSpace(strings.TrimPrefix(s, "ID:"))
+
+	upper := strings.ToUpper(s)
+	for _, prefix := range []string{"T0:", "F0:", "V0:", "FP:"} {
+		if strings.HasPrefix(upper, prefix) {
+			return strings.TrimSpace(s[len(prefix):])
+		}
+	}
+
+	return s
 }
 
 func (c *Controller) handleCausalChain(ctx context.Context, args map[string]interface{}) (*mcptypes.CallToolResult, error) {
