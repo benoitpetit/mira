@@ -594,7 +594,7 @@ curl http://localhost:9090/health
 {
   "status": "healthy",
   "timestamp": "2026-04-10T14:30:00Z",
-  "version": "0.4.2",
+  "version": "0.4.4",
   "checks": {
     "database": {"status": "pass", "message": "connected"},
     "vector_store": {"status": "pass", "message": "HNSW ready"},
@@ -751,5 +751,5 @@ recall:
 | `search_time_clustering.enabled` | `true` | Deduplicate results at search time |
 | `reranker.enabled` | `false` | Enable heuristic lexical reranking |
 
-*Last updated: 2026-04-16*
-*Version: 0.4.2*
+*Last updated: 2026-04-23*
+*Version: 0.4.4*

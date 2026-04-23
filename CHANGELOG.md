@@ -5,6 +5,26 @@ All notable changes to MIRA will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.4] - 2026-04-23
+
+### Added
+- **SOUL Identity Extension (opt-in)**: MIRA can now embed the SOUL identity subsystem for agent personality persistence across sessions and model changes
+  - SOUL is **disabled by default** — MIRA runs standalone with 8 tools unless explicitly activated
+  - Activate via CLI flag `--with-soul` or config `soul.enabled: true`
+  - When enabled, SOUL shares MIRA's SQLite database and adds 8 `soul_*` tools (16 total)
+  - SOUL init failures are non-fatal — MIRA gracefully falls back to 8-tool mode
+
+### Changed
+- **Default mode is now MIRA-only**: Previous versions auto-initialized SOUL; now it must be explicitly enabled
+- **CLI flag renamed**: `--no-soul` removed, replaced by `--with-soul` (opt-in instead of opt-out)
+
+## [0.4.3] - 2026-04-23
+
+### Fixed
+- **SOUL MCP Parameter Names**: Corrected SOUL tool parameter names to match actual implementation
+  - `agent` → `agent_id`, `model` → `model_id`
+  - `from` → `from_model`, `to` → `to_model`
+
 ## [0.4.2] - 2026-04-17
 
 ### Performance & Scalability

@@ -17,11 +17,12 @@ func main() {
 		configPath = flag.String("config", config.ResolveConfigPath(""), "Path to configuration file")
 		migrate    = flag.Bool("migrate", false, "Run database migrations and exit")
 		version    = flag.Bool("version", false, "Show version and exit")
+		withSoul   = flag.Bool("with-soul", false, "Enable SOUL identity subsystem (MIRA+SOUL mode, 16 tools)")
 	)
 	flag.Parse()
 
 	if *version {
-		fmt.Println("MIRA v0.4.3")
+		fmt.Println("MIRA v0.4.4")
 		fmt.Println("Features: Dependency Inversion, Domain-Driven Design, Testable Architecture")
 		fmt.Println("          HNSW Vector Index, Cybertron Embeddings")
 		fmt.Println("          Webhook Notifications, Prometheus Metrics")
@@ -36,9 +37,20 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Load configuration
+	cfg, err := config.LoadOrDefault(*configPath)
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	// CLI overrides
+	if *withSoul {
+		cfg.Soul.Enabled = true
+	}
+
 	if *migrate {
 		// Just initialize the app to trigger migrations, then exit
-		application, err := app.NewApplicationFromConfig(*configPath)
+		application, err := app.NewApplication(cfg)
 		if err != nil {
 			log.Fatalf("Migration failed: %v", err)
 		}
@@ -48,7 +60,11 @@ func main() {
 	}
 
 	// Run the application
-	if err := app.RunWithConfig(*configPath); err != nil {
+	application, err := app.NewApplication(cfg)
+	if err != nil {
+		log.Fatalf("Application error: %v", err)
+	}
+	if err := application.Run(); err != nil {
 		log.Fatalf("Application error: %v", err)
 	}
 }

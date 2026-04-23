@@ -1,5 +1,5 @@
 system:
-  version: "0.4.3"
+  version: "0.4.4"
 
 storage:
   path: ".mira"
@@ -21,10 +21,10 @@ embeddings:
 # Provides O(log n) approximate nearest neighbor search
 # Falls back to SQLite exact search during index building
 hnsw:
-  M: 16                    # Max neighbors per node (higher = more accurate, more memory)
+  M: 32                    # Max neighbors per node (tuned for better recall, see v0.4.2)
   Ml: 0.25                 # Level generation factor (0.25 = 1/ln(M))
-  ef_construction: 200     # Size of dynamic candidate list for construction
-  ef_search: 50            # Size of dynamic candidate list for search
+  ef_construction: 0       # INACTIVE — not supported by underlying hnsw library (coder/hnsw v0.4.0)
+  ef_search: 100           # Size of dynamic candidate list for search (tuned, see v0.4.2)
 
 allocator:
   default_budget: 4000
@@ -32,10 +32,20 @@ allocator:
   early_pruning_threshold: 0.6
   session_window_seconds: 7200
   session_boost_beta: 0.2
+  session_boost_max: 1.2
   causal_penalty_alpha: 0.15
   density_sigmoid:
     k: 2.0
     mu: 0.3
+
+# Decay rates control how quickly different memory types lose relevance over time.
+# Lower = slower decay (decisions last months), higher = faster decay (debug logs last days).
+decay_rates:
+  decision: 0.001
+  fact: 0.005
+  preference: 0.01
+  session_note: 0.1
+  debug_log: 0.5
 
 archive_thresholds:
   session_note: 30
@@ -76,7 +86,7 @@ recall:
 
 mcp:
   name: "mira"
-  version: "0.4.3"
+  version: "0.4.4"
   transport: "stdio"
   timeout_seconds: 30
 
@@ -129,3 +139,19 @@ webhooks:
 #   X-MIRA-Webhook-ID: <webhook-uuid>
 #   X-MIRA-Signature: sha256=...            (if secret configured)
 #   X-MIRA-Signature-Version: v1            (if secret configured)
+
+# =============================================================================
+# SOUL IDENTITY EXTENSION (Optional)
+# =============================================================================
+# SOUL is an opt-in identity preservation layer for LLM agents.
+# By default, MIRA runs without SOUL (8 tools). To enable SOUL (16 tools):
+#
+#   1. Set soul.enabled: true below, OR
+#   2. Launch with: ./mira --config config.yaml --with-soul
+#
+# When enabled, SOUL shares MIRA's SQLite database and adds identity
+# capture, drift detection, and model-swap preservation tools.
+# See: https://github.com/benoitpetit/soul
+
+soul:
+  enabled: false          # Set to true to activate SOUL identity features

@@ -79,12 +79,17 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 	app.repository = repo
 
 	// 2.5. Initialize SOUL identity sub-system (shares MIRA's SQLite connection)
-	if soulApp, err := soul.NewApplicationWithDB(repo.DB()); err != nil {
-		slog.Warn("SOUL init failed, continuing without identity features", "error", err)
+	// SOUL is opt-in: must be explicitly enabled via config (soul.enabled: true) or --with-soul flag.
+	if cfg.Soul.Enabled {
+		if soulApp, err := soul.NewApplicationWithDB(repo.DB()); err != nil {
+			slog.Warn("SOUL init failed, continuing without identity features", "error", err)
+		} else {
+			app.soulApp = soulApp
+			app.soulCtrl = soul.NewController(soulApp)
+			slog.Info("SOUL identity sub-system initialized", "tools", len(app.soulCtrl.ToolDefinitions()))
+		}
 	} else {
-		app.soulApp = soulApp
-		app.soulCtrl = soul.NewController(soulApp)
-		slog.Info("SOUL identity sub-system initialized", "tools", len(app.soulCtrl.ToolDefinitions()))
+		slog.Info("SOUL is not enabled — running MIRA-only mode. Use --with-soul or set soul.enabled: true to activate identity features.")
 	}
 
 	// Log database stats

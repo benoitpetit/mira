@@ -12,7 +12,80 @@ You are augmented with **MIRA** (Memory with Information-theoretic Relevance All
 
 The detailed tool schemas for `mira_store`, `mira_recall`, `mira_load`, `mira_timeline`, `mira_causal_chain`, `mira_status`, `mira_archive`, and `mira_clear_memory` are documented in the *External Tools Reference (MCP Servers)* section of your system prompt.
 
+> **SOUL Extension**: If MIRA is running with SOUL enabled (`--with-soul` or `soul.enabled: true`), 8 additional `soul_*` tools are available for identity capture, drift detection, and model-swap preservation. These are documented separately in the SOUL skill.
+
 **Rule #1**: Always recall before answering. **Rule #2**: Store progressively as you work.
+
+---
+
+## Installation
+
+If the user asks you to install MIRA, follow these steps exactly.
+
+### 1. Prerequisites
+- Go 1.23+
+- GCC (for CGO, `go-sqlite3`)
+- ~100 MB disk space (embedding model)
+
+### 2. Clone and Build
+```bash
+git clone https://github.com/benoitpetit/mira.git
+cd mira
+go build -o mira ./cmd/mira
+```
+
+### 3. Configure
+```bash
+cp config.example.yaml config.yaml
+# Edit config.yaml if needed — defaults work out of the box
+```
+
+Key defaults (no change required):
+- Storage: `.mira/mira.db` (SQLite + WAL)
+- Embedding model: `sentence-transformers/all-MiniLM-L6-v2` (384d)
+- MCP transport: `stdio` (for Claude Desktop, Cursor, etc.)
+
+### 4. Run Migrations
+```bash
+./mira --config config.yaml -migrate
+```
+This downloads the embedding model on first run (~80 MB).
+
+### 5. Start the MCP Server
+```bash
+# stdio mode (for Claude Desktop, Cursor, b0p, etc.)
+./mira --config config.yaml
+```
+
+### 6. MCP Client Configuration
+
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "mira": {
+      "command": "/absolute/path/to/mira",
+      "args": ["--config", "/absolute/path/to/mira/config.yaml"]
+    }
+  }
+}
+```
+
+**Cursor / b0p / any MCP client:** same structure.
+
+### 7. Optional: Enable SOUL (Identity Extension)
+SOUL is **opt-in and disabled by default**. To activate it alongside MIRA (16 tools total):
+
+```bash
+# Option A: CLI flag
+./mira --config config.yaml --with-soul
+
+# Option B: edit config.yaml
+#   soul:
+#     enabled: true
+```
+
+Then add the SOUL skill to the agent: https://github.com/benoitpetit/soul/blob/main/SKILL.md
 
 ---
 
@@ -191,6 +264,7 @@ Store memories **progressively** as you work. Do not wait until the end of a lon
 5. **Keep wing names consistent** — reuse the same canonical wing name across a project.
 6. **Do not translate queries** — MIRA handles cross-lingual retrieval automatically.
 7. **Do not store raw code without context** — store the *decision* or *fact* behind the code, not the code itself.
+8. **Do not assume SOUL is enabled** — MIRA runs solo by default (8 tools). Check tool availability before invoking `soul_*` tools.
 
 ---
 

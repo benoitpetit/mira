@@ -8,7 +8,7 @@
   
   [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.4.2-blue?style=flat-square)]()
+  [![Version](https://img.shields.io/badge/Version-0.4.4-blue?style=flat-square)]()
   [![Tests](https://img.shields.io/badge/Tests-77%25-brightgreen?style=flat-square)]()
   
   *100% Local • Déterministe • O(n log n) • Clean Architecture*
@@ -22,6 +22,7 @@
 ## Table des Matieres
 
 - [Qu'est-ce que MIRA ?](#quest-ce-que-mira-)
+- [Extension SOUL : Préservation de l'Identité](#extension-soul--préservation-de-lidentité)
 - [La Révolution de la Mémoire pour LLMs](#la-révolution-de-la-mémoire-pour-llms)
 - [Fonctionnement](#fonctionnement)
 - [Architecture à 3 Niveaux (T0/T1/T2)](#architecture-à-3-niveaux-t0t1t2)
@@ -62,6 +63,27 @@ Les LLMs modernes souffrent d'un problème fondamental : **la fenêtre de contex
 - [+] **Graphe Causal** : Comprend les relations cause-effet
 - [+] **Recherche O(log n)** : HNSW pour des millions de memoires
 - [+] **Clean Architecture** : Maintenable, testable, extensible
+
+---
+
+## Extension SOUL : Préservation de l'Identite
+
+MIRA repond *"Que sait l'agent ?"*. Mais un agent complet a besoin de plus : il doit savoir *"Qui est-il ?"*
+
+[**SOUL**](https://github.com/benoitpetit/soul) (System for Observed Unique Legacy) est une **extension d'identite optionnelle** pour MIRA qui capture, stocke et rappelle la personnalite, la voix et les valeurs des agents IA au travers des sessions et des changements de modele.
+
+Pour integrer SOUL dans MIRA, demarrez avec `--with-soul` ou definissez `soul.enabled: true` dans la configuration. Quand il est active, SOUL fournit **8 outils MCP supplementaires** (16 au total) pour :
+- Capturer l'identite a partir des conversations
+- Rappeler les prompts d'identite pour l'injection dans le contexte LLM
+- Detecter la derive d'identite apres un changement de modele
+- Generer des prompts de renforcement apres un changement de modele
+
+SOUL est **opt-in et desactive par defaut**. MIRA fonctionne parfaitement seul (8 outils). Pour activer SOUL, utilisez le flag `--with-soul` ou definissez `soul.enabled: true` dans `config.yaml`. Quand il est active, ils partagent la meme base de donnees SQLite.
+
+| Configuration | Outils | Ce que ca repond |
+|---------------|--------|-----------------|
+| MIRA seul | 8 `mira_*` | "Que sait l'agent ?" |
+| MIRA + SOUL | 16 `mira_*` + `soul_*` | "Que sait l'agent ?" + "Qui est l'agent ?" |
 
 ---
 
@@ -560,7 +582,7 @@ Nous avons décidé de migrer vers PostgreSQL pour la v2...
 
 ```yaml
 system:
-  version: "0.4.3"
+  version: "0.4.4"
 
 storage:
   path: ".mira"
@@ -580,10 +602,10 @@ embeddings:
 
 # Configuration HNSW
 hnsw:
-  M: 16 # Voisins max par nœud
+  M: 32 # Voisins max par nœud (optimise pour le recall, voir v0.4.2)
   Ml: 0.25 # Facteur de génération de niveau
-  ef_construction: 200 # Taille liste construction
-  ef_search: 50 # Taille liste recherche
+  ef_construction: 0 # Inactif — non supporte par la librairie hnsw sous-jacente
+  ef_search: 100 # Taille liste recherche (optimise, voir v0.4.2)
 
 allocator:
   default_budget: 4000
@@ -591,10 +613,18 @@ allocator:
   early_pruning_threshold: 0.6
   session_window_seconds: 7200
   session_boost_beta: 0.2
+  session_boost_max: 1.2
   causal_penalty_alpha: 0.15
   density_sigmoid:
     k: 2.0
     mu: 0.3
+
+decay_rates:
+  decision: 0.001
+  fact: 0.005
+  preference: 0.01
+  session_note: 0.1
+  debug_log: 0.5
 
 archive_thresholds:
   session_note: 30
@@ -628,9 +658,13 @@ recall:
     enabled: false
     top_k: 30
 
+# Extension d'identite SOUL (desactivee par defaut)
+soul:
+  enabled: false
+
 mcp:
   name: "mira"
-  version: "0.4.3"
+  version: "0.4.4"
   transport: "stdio"
   timeout_seconds: 30
 
@@ -892,13 +926,21 @@ make prepublish VERSION=x.y.z  # Préparer une release
 
 ## Changelog
 
+### v0.4.4 (2026-04-23)
+
+- **Integration SOUL opt-in** : MIRA fonctionne maintenant seul (8 outils) par defaut. L'extension d'identite SOUL doit etre explicitement activee via le flag `--with-soul` ou `soul.enabled: true` dans la configuration.
+- Les echecs d'initialisation de SOUL sont non fatals — MIRA retombe graceieusement en mode 8 outils.
+
 ### v0.4.3 (2026-04-23)
 
-- 🚀 Nouvelle version 0.4.3
+- **Correction des noms de parametres MCP SOUL** : `agent` → `agent_id`, `model` → `model_id`, `from` → `from_model`, `to` → `to_model`.
 
-### v0.4.2 (2026-04-23)
+### v0.4.2 (2026-04-17)
 
-- 🚀 Nouvelle version 0.4.2
+- **Defaults HNSW optimises** : `M` 16 → 32, `ef_search` 50 → 100 pour un meilleur recall.
+- **Pool d'embeddings concurrent** : Remplacement du mutex global par un pool d'instances.
+- **Pipeline de recall parallele** : Recherche HNSW dense + FTS5 lexicale executees en parallele.
+- `ef_construction` documente comme inactif (non supporte par la librairie sous-jacente).
 
 Voir [CHANGELOG.md](CHANGELOG.md) pour l'historique complet des releases.
 

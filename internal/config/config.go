@@ -22,6 +22,13 @@ type Config struct {
 	Metrics           MetricsConfig      `yaml:"metrics"`
 	Webhooks          WebhooksConfig     `yaml:"webhooks"`
 	Recall            RecallConfig       `yaml:"recall"`
+	Soul              SoulConfig         `yaml:"soul"`
+}
+
+// SoulConfig configures the optional SOUL identity subsystem.
+// When Enabled is false, MIRA runs without identity features (8 tools only).
+type SoulConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 type QueryExpansionConfig struct {
@@ -124,7 +131,7 @@ type MCPConfig struct {
 func Default() *Config {
 	return &Config{
 		System: SystemConfig{
-			Version:        "0.4.3",
+			Version:        "0.4.4",
 		},
 		Storage: StorageConfig{
 			Path: ".mira",
@@ -178,7 +185,7 @@ func Default() *Config {
 		},
 		MCP: MCPConfig{
 			Name:           "mira",
-			Version:        "0.4.3",
+			Version:        "0.4.4",
 			Transport:      "stdio",
 			TimeoutSeconds: 30,
 		},
@@ -224,6 +231,9 @@ func Default() *Config {
 				Enabled: false,
 				TopK:    30,
 			},
+		},
+		Soul: SoulConfig{
+			Enabled: false,
 		},
 	}
 }
@@ -436,7 +446,7 @@ func (c *Config) Validate() error {
 		c.MCP.Name = "mira"
 	}
 	if c.MCP.Version == "" {
-		c.MCP.Version = "0.4.0"
+		c.MCP.Version = "0.4.4"
 	}
 	if c.MCP.Transport == "" {
 		c.MCP.Transport = "stdio"

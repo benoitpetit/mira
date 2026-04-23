@@ -8,7 +8,7 @@
 
   [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.4.2-blue?style=flat-square)]()
+  [![Version](https://img.shields.io/badge/Version-0.4.4-blue?style=flat-square)]()
   [![Tests](https://img.shields.io/badge/Tests-77%25-brightgreen?style=flat-square)]()
 
   *100% Local • Deterministic • O(n log n) • Clean Architecture*
@@ -49,13 +49,13 @@ MIRA answers *"What does the agent know?"* But a complete agent needs more: it n
 
 [**SOUL**](https://github.com/benoitpetit/soul) (System for Observed Unique Legacy) is an **optional identity extension** for MIRA that captures, stores, and recalls the personality, voice, and values of AI agents across sessions and model changes.
 
-When embedded in MIRA, SOUL provides **8 additional MCP tools** (16 total) for:
+To embed SOUL in MIRA, start with `--with-soul` or set `soul.enabled: true` in config. When enabled, SOUL provides **8 additional MCP tools** (16 total) for:
 - Capturing identity from conversations
 - Recalling identity prompts for LLM context injection
 - Detecting identity drift after model changes
 - Generating reinforcement prompts after model swaps
 
-SOUL is **opt-in**. MIRA works perfectly without it. When both are present, they share the same SQLite database.
+SOUL is **opt-in and disabled by default**. MIRA works perfectly alone (8 tools). To activate SOUL, use `--with-soul` flag or set `soul.enabled: true` in `config.yaml`. When enabled, they share the same SQLite database.
 
 | Configuration | Tools | What it answers |
 |---------------|-------|-----------------|
@@ -579,7 +579,7 @@ We decided to migrate to PostgreSQL for v2...
 
 ```yaml
 system:
-  version: "0.4.3"
+  version: "0.4.4"
 
 storage:
   path: ".mira"
@@ -599,10 +599,10 @@ embeddings:
 
 # HNSW Vector Index Configuration
 hnsw:
-  M: 16 # Max neighbors per node
+  M: 32 # Max neighbors per node (tuned for better recall, see v0.4.2)
   Ml: 0.25 # Level generation factor
-  ef_construction: 200 # Dynamic candidate list for construction
-  ef_search: 50 # Dynamic candidate list for search
+  ef_construction: 0 # Inactive — not supported by underlying hnsw library
+  ef_search: 100 # Dynamic candidate list for search (tuned, see v0.4.2)
 
 allocator:
   default_budget: 4000
@@ -610,10 +610,18 @@ allocator:
   early_pruning_threshold: 0.6
   session_window_seconds: 7200
   session_boost_beta: 0.2
+  session_boost_max: 1.2
   causal_penalty_alpha: 0.15
   density_sigmoid:
     k: 2.0
     mu: 0.3
+
+decay_rates:
+  decision: 0.001
+  fact: 0.005
+  preference: 0.01
+  session_note: 0.1
+  debug_log: 0.5
 
 archive_thresholds:
   session_note: 30
@@ -647,9 +655,13 @@ recall:
     enabled: false
     top_k: 30
 
+# SOUL identity extension (disabled by default)
+soul:
+  enabled: false
+
 mcp:
   name: "mira"
-  version: "0.4.3"
+  version: "0.4.4"
   transport: "stdio"
   timeout_seconds: 30
 
@@ -907,13 +919,21 @@ make prepublish VERSION=x.y.z  # Prepare a release
 
 ## Changelog
 
+### v0.4.4 (2026-04-23)
+
+- **SOUL opt-in integration**: MIRA now runs standalone (8 tools) by default. SOUL identity extension must be explicitly enabled via `--with-soul` CLI flag or `soul.enabled: true` in config.
+- SOUL init failures are non-fatal — MIRA gracefully falls back to 8-tool mode.
+
 ### v0.4.3 (2026-04-23)
 
-- 🚀 New version 0.4.3
+- **Fixed SOUL MCP parameter names**: `agent` → `agent_id`, `model` → `model_id`, `from` → `from_model`, `to` → `to_model`.
 
-### v0.4.2 (2026-04-23)
+### v0.4.2 (2026-04-17)
 
-- 🚀 New version 0.4.2
+- **HNSW tuned defaults**: `M` 16 → 32, `ef_search` 50 → 100 for better recall.
+- **Concurrent embedding pool**: Replaced global mutex with model instance pool.
+- **Parallel recall pipeline**: Dense HNSW + lexical FTS5 now execute concurrently.
+- `ef_construction` documented as inactive (not supported by underlying library).
 
 See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
