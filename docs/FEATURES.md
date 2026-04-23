@@ -147,5 +147,5 @@ Complete inventory of MIRA capabilities.
 
 ---
 
-*Version: 0.4.0*  
+*Version: 0.4.2*  
 *Last updated: 2026-04-16*

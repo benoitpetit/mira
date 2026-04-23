@@ -312,21 +312,21 @@ func (m *SimpleWebhookManager) doSendWebhook(endpoint *ports.WebhookEndpoint, ev
 	return nil
 }
 
-// computeHMAC calcule la signature HMAC-SHA256
+// computeHMAC computes the HMAC-SHA256 signature
 func computeHMAC(payload []byte, secret string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(payload)
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// verifyHMAC vérifie une signature HMAC
+// verifyHMAC verifies an HMAC signature
 func verifyHMAC(payload []byte, signature string, secret string) bool {
 	expectedMAC := computeHMAC(payload, secret)
 	return hmac.Equal([]byte(signature), []byte(expectedMAC))
 }
 
-// VerifyWebhookSignature vérifie la signature d'un webhook reçu
-// Utile pour les tests ou si MIRA reçoit des webhooks
+// VerifyWebhookSignature verifies a webhook signature
+// Useful for tests or if MIRA receives webhooks
 func (m *SimpleWebhookManager) VerifyWebhookSignature(payload []byte, signatureHeader string, secret string) bool {
 	if signatureHeader == "" || secret == "" {
 		return false

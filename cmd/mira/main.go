@@ -21,7 +21,7 @@ func main() {
 	flag.Parse()
 
 	if *version {
-		fmt.Println("MIRA v0.4.0")
+		fmt.Println("MIRA v0.4.2")
 		fmt.Println("Features: Dependency Inversion, Domain-Driven Design, Testable Architecture")
 		fmt.Println("          HNSW Vector Index, Cybertron Embeddings")
 		fmt.Println("          Webhook Notifications, Prometheus Metrics")

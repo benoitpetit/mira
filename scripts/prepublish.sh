@@ -44,7 +44,7 @@ sed -i "s/Version:.*\"[0-9.]*\"/Version:              \"${VERSION}\"/g" internal
 sed -i "s/Version:.*\"[0-9.]*\"/Version:        \"${VERSION}\"/g" internal/config/config.go
 
 # Update version in cmd/mira/main.go
-sed -i "s/MIRA v[0-9.]* /MIRA v${VERSION} /g" cmd/mira/main.go
+sed -i "s/MIRA v[0-9.]*/MIRA v${VERSION}/g" cmd/mira/main.go
 
 # Update version in config files (example + local if exists)
 sed -i "s/version: \"[0-9.]*\"/version: \"${VERSION}\"/g" config.example.yaml

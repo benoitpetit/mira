@@ -92,9 +92,6 @@ if [ -f "$JSON_FILE" ] && [ -s "$JSON_FILE" ]; then
     echo "✓ Results exported:    $JSON_FILE"
     echo "  Benchmarks captured: $BENCH_COUNT"
     echo ""
-    echo "View dashboard:"
-    echo "  1. Open scripts/benchmark.html in your browser"
-    echo "  2. Load $JSON_FILE or drag-and-drop it"
 else
     echo ""
     echo "To export results for visualization:"

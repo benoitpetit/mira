@@ -8,18 +8,18 @@
   
   [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.4.0-blue?style=flat-square)]()
+  [![Version](https://img.shields.io/badge/Version-0.4.2-blue?style=flat-square)]()
   [![Tests](https://img.shields.io/badge/Tests-77%25-brightgreen?style=flat-square)]()
   
   *100% Local • Déterministe • O(n log n) • Clean Architecture*
   
-  [📘 Référence API](docs/API_REFERENCES.md) • [📝 Changelog](CHANGELOG.md) • [🧠 Skill](SKILL.md) • [🇬🇧 English](README.md)
+  [Reference API](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [English](README.md)
   
 </div>
 
 ---
 
-## 📋 Table des Matières
+## Table des Matieres
 
 - [Qu'est-ce que MIRA ?](#quest-ce-que-mira-)
 - [La Révolution de la Mémoire pour LLMs](#la-révolution-de-la-mémoire-pour-llms)
@@ -47,21 +47,21 @@
 
 Les LLMs modernes souffrent d'un problème fondamental : **la fenêtre de contexte est limitée** (4K-128K tokens), mais les conversations et projets s'étendent sur des milliers d'interactions. Comment décider quoi garder dans le contexte ?
 
-**Les approches traditionnelles échouent :**
+**Les approches traditionnelles echouent :**
 
-- ❌ RAG simple : Récupération basée uniquement sur la similarité, ignore la densité d'information
-- ❌ Fenêtre glissante : Perd les informations critiques du début
-- ❌ Résumé statique : Ne s'adapte pas à la requête actuelle
-- ❌ Vector DB basique : Complexité O(n), pas de gestion de budget
+- [x] RAG simple : Recuperation basee uniquement sur la similarite, ignore la densite d'information
+- [x] Fenetre glissante : Perd les informations critiques du debut
+- [x] Resume statique : Ne s'adapte pas a la requete actuelle
+- [x] Vector DB basique : Complexite O(n), pas de gestion de budget
 
 **MIRA apporte la solution :**
 
-- ✅ **Allocation de Budget Contextuel** : Optimise chaque token sur 6 dimensions
-- ✅ **Densité Informationnelle** : Privilégie les mémoires riches en faits
-- ✅ **Cohérence Temporelle** : Maintient la continuité narrative
-- ✅ **Graphe Causal** : Comprend les relations cause-effet
-- ✅ **Recherche O(log n)** : HNSW pour des millions de mémoires
-- ✅ **Clean Architecture** : Maintenable, testable, extensible
+- [+] **Allocation de Budget Contextuel** : Optimise chaque token sur 6 dimensions
+- [+] **Densite Informationnelle** : Privilegie les memoires riches en faits
+- [+] **Coherence Temporelle** : Maintient la continuite narrative
+- [+] **Graphe Causal** : Comprend les relations cause-effet
+- [+] **Recherche O(log n)** : HNSW pour des millions de memoires
+- [+] **Clean Architecture** : Maintenable, testable, extensible
 
 ---
 
@@ -242,9 +242,9 @@ Le cerveau humain n'enregistre pas tout avec la même fidélité. MIRA imite cet
 
 | Type           | λ (jour⁻¹) | Demi-vie   | Auto-Archive | Usage                     |
 | -------------- | ---------- | ---------- | ------------ | ------------------------- |
-| `decision`     | 0.001      | ~693 jours | ❌           | Décisions architecturales  |
-| `fact`         | 0.005      | ~139 jours | ❌           | Connaissances, faits       |
-| `preference`   | 0.01       | ~69 jours  | ❌           | Préférences utilisateur    |
+| `decision`     | 0.001      | ~693 jours | No           | Decisions architecturales  |
+| `fact`         | 0.005      | ~139 jours | No           | Connaissances, faits       |
+| `preference`   | 0.01       | ~69 jours  | No           | Preferences utilisateur    |
 | `session_note` | 0.1        | ~7 jours   | 30 jours     | Notes de session          |
 | `debug_log`    | 0.5        | ~1.4 jours | 7 jours      | Logs de debug             |
 
@@ -351,11 +351,11 @@ Une nouvelle table `memory_tags` indexe les entités, sujets et mots-clés extra
 ### 5. Méthodes de Seuil Adaptatif
 Au lieu d'un seuil fixe à 0.6, MIRA supporte désormais trois méthodes dynamiques :
 
-| Méthode | Description | Défaut |
+| Methode | Description | Defaut |
 |---------|-------------|--------|
-| `iqr` | Premier quartile de la distribution des scores | ✅ |
-| `elbow` | Plus forte chute de dérivée (méthode du coude) | |
-| `mean_stddev` | moyenne − écart-type | |
+| `iqr` | Premier quartile de la distribution des scores | Oui |
+| `elbow` | Plus forte chute de derivee (methode du coude) | |
+| `mean_stddev` | moyenne - ecart-type | |
 
 Le seuil est clampé entre `0.15` (plancher) et `0.75` (plafond).
 
@@ -560,7 +560,7 @@ Nous avons décidé de migrer vers PostgreSQL pour la v2...
 
 ```yaml
 system:
-  version: "0.4.0"
+  version: "0.4.2"
 
 storage:
   path: ".mira"
@@ -630,7 +630,7 @@ recall:
 
 mcp:
   name: "mira"
-  version: "0.4.0"
+  version: "0.4.2"
   transport: "stdio"
   timeout_seconds: 30
 
@@ -892,6 +892,10 @@ make prepublish VERSION=x.y.z  # Préparer une release
 
 ## Changelog
 
+### v0.4.2 (2026-04-23)
+
+- 🚀 Nouvelle version 0.4.2
+
 Voir [CHANGELOG.md](CHANGELOG.md) pour l'historique complet des releases.
 
 ---
@@ -921,6 +925,6 @@ Voir [CHANGELOG.md](CHANGELOG.md) pour l'historique complet des releases.
 
 _"La mémoire est la sève de l'intelligence artificielle."_
 
-[📘 Référence API](docs/API_REFERENCES.md) • [📝 Changelog](CHANGELOG.md)
+[Reference API](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md)
 
 </div>

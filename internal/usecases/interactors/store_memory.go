@@ -3,6 +3,7 @@ package interactors
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -21,6 +22,7 @@ type StoreMemoryInput struct {
 	Wing    string
 	Room    *string
 	Type    *valueobjects.MemoryType
+	Metrics map[string]any
 }
 
 // WingRoomRe matches valid wing and room identifiers.
@@ -50,6 +52,13 @@ func (in StoreMemoryInput) Validate() error {
 	}
 	if in.Type != nil && !in.Type.IsValid() {
 		return fmt.Errorf("invalid memory type: %s", *in.Type)
+	}
+	if len(in.Metrics) > 0 {
+		if b, err := json.Marshal(in.Metrics); err != nil {
+			return fmt.Errorf("metrics must be valid JSON: %w", err)
+		} else if len(b) > 10000 {
+			return fmt.Errorf("metrics exceeds maximum serialized size of 10000 bytes")
+		}
 	}
 	return nil
 }
@@ -122,6 +131,7 @@ func (uc *StoreMemory) Execute(ctx context.Context, input StoreMemoryInput) (*St
 
 	// 1. Create verbatim
 	verbatim := entities.NewVerbatim(input.Content, input.Wing, input.Room)
+	verbatim.Metrics = input.Metrics
 
 	// 2. Extract T1 and T2
 	fp, emb, err := uc.extractor.ExtractPipeline(ctx, verbatim, input.Type)

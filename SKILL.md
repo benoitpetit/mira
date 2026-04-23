@@ -93,10 +93,10 @@ If a narrow wing might not have results yet, use `fallback_wings`:
 MIRA supports queries in **any language** (English, French, Spanish, Italian, German, etc.) thanks to cross-lingual embeddings and automatic query expansion. **Do not translate queries yourself.** Query in the same language as the user's message.
 
 ### Good vs Bad Queries
-- ❌ `"auth"` — too vague, will retrieve generic results
-- ✅ `"JWT RS256 auth-service token expiration config"` — specific, entity-rich, yields precise results
-- ❌ `"bug"` — ambiguous
-- ✅ `"nil pointer dereference in parser.go line 42 fix"` — actionable and detailed
+- [x] `"auth"` — too vague, will retrieve generic results
+- [+] `"JWT RS256 auth-service token expiration config"` — specific, entity-rich, yields precise results
+- [x] `"bug"` — ambiguous
+- [+] `"nil pointer dereference in parser.go line 42 fix"` — actionable and detailed
 
 ### Important Recall Rules
 1. **Do NOT mix wings** in reasoning; run separate recalls and merge the results mentally.

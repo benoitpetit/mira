@@ -195,6 +195,7 @@ embeddings:
   dimension: 384
   batch_size: 32
   cache_size: 1000
+  use_simple_embedder: true
 
 hnsw:
   M: 16

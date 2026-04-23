@@ -8,18 +8,18 @@
   
   [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.4.0-blue?style=flat-square)]()
+  [![Version](https://img.shields.io/badge/Version-0.4.2-blue?style=flat-square)]()
   [![Tests](https://img.shields.io/badge/Tests-77%25-brightgreen?style=flat-square)]()
   
   *100% Local • Deterministic • O(n log n) • Clean Architecture*
   
-  [📘 API Reference](docs/API_REFERENCES.md) • [📝 Changelog](CHANGELOG.md) • [🧠 Skill](SKILL.md) • [🇫🇷 Français](README_FR.md)
+  [API Reference](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [Francais](README_FR.md)
   
 </div>
 
 ---
 
-## 📋 Table of Contents
+## Table of Contents
 
 - [What is MIRA?](#what-is-mira)
 - [The Memory Revolution for LLMs](#the-memory-revolution-for-llms)
@@ -49,19 +49,19 @@ Modern LLMs suffer from a fundamental problem: **the context window is limited**
 
 **Traditional approaches fail:**
 
-- ❌ Simple RAG: Retrieval based only on similarity, ignores information density
-- ❌ Sliding window: Loses critical information from the beginning
-- ❌ Static summarization: Doesn't adapt to the current query
-- ❌ Basic Vector DB: O(n) complexity, no budget management
+- [x] Simple RAG: Retrieval based only on similarity, ignores information density
+- [x] Sliding window: Loses critical information from the beginning
+- [x] Static summarization: Doesn't adapt to the current query
+- [x] Basic Vector DB: O(n) complexity, no budget management
 
 **MIRA provides the solution:**
 
-- ✅ **Context Budget Allocation**: Optimizes every token across 6 dimensions
-- ✅ **Information Density**: Prioritizes memory-rich facts
-- ✅ **Temporal Coherence**: Maintains narrative continuity
-- ✅ **Causal Graph**: Understands cause-effect relationships
-- ✅ **O(log n) Search**: HNSW for millions of memories
-- ✅ **Clean Architecture**: Maintainable, testable, extensible
+- [+] **Context Budget Allocation**: Optimizes every token across 6 dimensions
+- [+] **Information Density**: Prioritizes memory-rich facts
+- [+] **Temporal Coherence**: Maintains narrative continuity
+- [+] **Causal Graph**: Understands cause-effect relationships
+- [+] **O(log n) Search**: HNSW for millions of memories
+- [+] **Clean Architecture**: Maintainable, testable, extensible
 
 ---
 
@@ -242,9 +242,9 @@ The human brain doesn't record everything with the same fidelity. MIRA mimics th
 
 | Type           | λ (day⁻¹) | Half-life | Auto-Archive | Usage                   |
 | -------------- | --------- | --------- | ------------ | ----------------------- |
-| `decision`     | 0.001     | ~693 days | ❌           | Architectural decisions  |
-| `fact`         | 0.005     | ~139 days | ❌           | Knowledge, facts         |
-| `preference`   | 0.01      | ~69 days  | ❌           | User preferences         |
+| `decision`     | 0.001     | ~693 days | No           | Architectural decisions  |
+| `fact`         | 0.005     | ~139 days | No           | Knowledge, facts         |
+| `preference`   | 0.01      | ~69 days  | No           | User preferences         |
 | `session_note` | 0.1       | ~7 days   | 30 days      | Session notes           |
 | `debug_log`    | 0.5       | ~1.4 days | 7 days       | Debug logs              |
 
@@ -353,9 +353,9 @@ Instead of a fixed 0.6 relevance floor, MIRA now supports three dynamic methods:
 
 | Method | Description | Default |
 |--------|-------------|---------|
-| `iqr` | First quartile of score distribution | ✅ |
+| `iqr` | First quartile of score distribution | Yes |
 | `elbow` | Largest derivative drop (elbow method) | |
-| `mean_stddev` | mean − stddev | |
+| `mean_stddev` | mean - stddev | |
 
 The threshold is clamped between `0.15` (floor) and `0.75` (ceiling).
 
@@ -560,7 +560,7 @@ We decided to migrate to PostgreSQL for v2...
 
 ```yaml
 system:
-  version: "0.4.0"
+  version: "0.4.2"
 
 storage:
   path: ".mira"
@@ -630,7 +630,7 @@ recall:
 
 mcp:
   name: "mira"
-  version: "0.4.0"
+  version: "0.4.2"
   transport: "stdio"
   timeout_seconds: 30
 
@@ -888,6 +888,10 @@ make prepublish VERSION=x.y.z  # Prepare a release
 
 ## Changelog
 
+### v0.4.2 (2026-04-23)
+
+- 🚀 New version 0.4.2
+
 See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
 ---
@@ -917,6 +921,6 @@ See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
 _"Memory is the sap of artificial intelligence."_
 
-[📘 API Reference](docs/API_REFERENCES.md) • [📝 Changelog](CHANGELOG.md)
+[API Reference](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md)
 
 </div>

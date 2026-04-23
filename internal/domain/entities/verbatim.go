@@ -16,6 +16,7 @@ type Verbatim struct {
 	Wing       string
 	Room       *string
 	Metadata   map[string]any
+	Metrics    map[string]any
 }
 
 // NewVerbatim creates a new verbatim with generated ID
@@ -27,6 +28,7 @@ func NewVerbatim(content, wing string, room *string) *Verbatim {
 		Room:      room,
 		CreatedAt: time.Now(),
 		Metadata:  make(map[string]any),
+		Metrics:   make(map[string]any),
 	}
 }
 

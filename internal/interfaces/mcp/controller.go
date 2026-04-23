@@ -4,6 +4,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -421,11 +422,21 @@ func (c *Controller) handleStore(ctx context.Context, args map[string]interface{
 		}
 	}
 
+	var metrics map[string]any
+	if m, ok := args["metrics"]; ok {
+		if ms, ok := m.(string); ok && ms != "" {
+			if err := json.Unmarshal([]byte(ms), &metrics); err != nil {
+				return nil, fmt.Errorf("metrics must be valid JSON: %w", err)
+			}
+		}
+	}
+
 	input := interactors.StoreMemoryInput{
 		Content: content,
 		Wing:    wing,
 		Room:    room,
 		Type:    memType,
+		Metrics: metrics,
 	}
 
 	output, err := c.storeMemory.Execute(ctx, input)

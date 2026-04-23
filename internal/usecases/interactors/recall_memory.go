@@ -274,9 +274,12 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 
 	if uc.enableFTS5 {
 		g.Go(func() error {
-			var err error
 			lexicalCandidates, err = uc.vectorStore.SearchLexical(gctx, input.Query, uc.fts5Limit, input.Wing, input.Room)
-			return err // lexical search failure is non-fatal
+			if err != nil {
+				// Non-fatal: FTS5 may not be available
+				lexicalCandidates = nil
+			}
+			return nil // Don't propagate lexical errors
 		})
 	}
 

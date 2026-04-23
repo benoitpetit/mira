@@ -6,7 +6,7 @@ require (
 	github.com/coder/hnsw v0.4.0
 	github.com/google/uuid v1.6.0
 	github.com/mark3labs/mcp-go v0.2.0
-	github.com/mattn/go-sqlite3 v1.14.19
+	github.com/mattn/go-sqlite3 v1.14.22
 	github.com/nlpodyssey/cybertron v0.1.0
 	github.com/pkoukk/tiktoken-go v0.1.0
 	github.com/prometheus/client_golang v1.23.2

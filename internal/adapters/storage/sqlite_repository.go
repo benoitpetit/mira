@@ -109,10 +109,12 @@ func (r *SQLiteRepository) StoreVerbatimTx(ctx context.Context, tx *sql.Tx, v *e
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
+	metricsJSON, _ := json.Marshal(v.Metrics)
+
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO verbatim (id, content, token_count, created_at, wing, room, metadata) 
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		v.ID[:], v.Content, v.TokenCount, float64(v.CreatedAt.Unix()), v.Wing, v.Room, string(metadataJSON),
+		`INSERT INTO verbatim (id, content, token_count, created_at, wing, room, metadata, metrics) 
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		v.ID[:], v.Content, v.TokenCount, float64(v.CreatedAt.Unix()), v.Wing, v.Room, string(metadataJSON), string(metricsJSON),
 	)
 	return err
 }
@@ -120,17 +122,18 @@ func (r *SQLiteRepository) StoreVerbatimTx(ctx context.Context, tx *sql.Tx, v *e
 // GetVerbatimByID implements VerbatimRepository
 func (r *SQLiteRepository) GetVerbatimByID(ctx context.Context, id uuid.UUID) (*entities.Verbatim, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, content, token_count, created_at, wing, room, metadata FROM verbatim WHERE id = ?`,
+		`SELECT id, content, token_count, created_at, wing, room, metadata, metrics FROM verbatim WHERE id = ?`,
 		id[:],
 	)
 
 	var v entities.Verbatim
 	var idBytes []byte
 	var metadataJSON []byte
+	var metricsJSON []byte
 	var room sql.NullString
 	var createdAt float64
 
-	err := row.Scan(&idBytes, &v.Content, &v.TokenCount, &createdAt, &v.Wing, &room, &metadataJSON)
+	err := row.Scan(&idBytes, &v.Content, &v.TokenCount, &createdAt, &v.Wing, &room, &metadataJSON, &metricsJSON)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("verbatim not found")
@@ -148,6 +151,9 @@ func (r *SQLiteRepository) GetVerbatimByID(ctx context.Context, id uuid.UUID) (*
 	}
 	if len(metadataJSON) > 0 {
 		_ = json.Unmarshal(metadataJSON, &v.Metadata)
+	}
+	if len(metricsJSON) > 0 {
+		_ = json.Unmarshal(metricsJSON, &v.Metrics)
 	}
 
 	return &v, nil

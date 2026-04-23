@@ -174,14 +174,14 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 		slog.Warn("failed to initialize hnsw index, falling back to sqlite vector search", "error", err)
 		app.vectorStore = vector.NewSQLiteVectorStore(repo.DB())
 	} else {
-		// Essayer de charger l'index existant
+		// Try to load existing index
 		if err := hnswIndex.Load(); err != nil {
 			slog.Warn("failed to load hnsw index, will build from scratch", "error", err)
 		} else if hnswIndex.IsReady() {
 			slog.Info("hnsw index loaded from disk", "vectors", hnswIndex.Stats())
 		}
 
-		// Construire depuis la DB si l'index n'est pas prêt (pas de fichier ou erreur)
+		// Build from DB if index is not ready (no file or error)
 		if !hnswIndex.IsReady() {
 			slog.Info("building hnsw index from sqlite")
 			go func() {
@@ -291,7 +291,7 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 
 // Close cleans up resources
 func (a *Application) Close() error {
-	// Sauvegarder l'index HNSW
+	// Save HNSW index to disk
 	if a.hnswIndex != nil {
 		slog.Info("saving hnsw index to disk")
 		if err := a.hnswIndex.Save(); err != nil {
@@ -325,8 +325,9 @@ func (a *Application) Run() error {
 	// Create MCP server
 	s := server.NewDefaultServer(a.config.MCP.Name, a.config.MCP.Version)
 
-	// Register tools
+	// Register MIRA tools
 	a.controller.RegisterTools(s)
+	slog.Info("MCP tools registered", "mira", len(a.controller.ToolDefinitions()))
 
 	// Setup graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
