@@ -3,7 +3,7 @@ module github.com/benoitpetit/mira
 go 1.23.2
 
 require (
-	github.com/benoitpetit/soul v0.0.0-00010101000000-000000000000
+	github.com/benoitpetit/soul v0.0.1
 	github.com/coder/hnsw v0.4.0
 	github.com/google/uuid v1.6.0
 	github.com/mark3labs/mcp-go v0.2.0
@@ -60,5 +60,3 @@ require (
 	golang.org/x/text v0.28.0 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
 )
-
-replace github.com/benoitpetit/soul => ../../soul
