@@ -560,7 +560,7 @@ Nous avons décidé de migrer vers PostgreSQL pour la v2...
 
 ```yaml
 system:
-  version: "0.4.2"
+  version: "0.4.3"
 
 storage:
   path: ".mira"
@@ -630,7 +630,7 @@ recall:
 
 mcp:
   name: "mira"
-  version: "0.4.2"
+  version: "0.4.3"
   transport: "stdio"
   timeout_seconds: 30
 
@@ -891,6 +891,10 @@ make prepublish VERSION=x.y.z  # Préparer une release
 
 
 ## Changelog
+
+### v0.4.3 (2026-04-23)
+
+- 🚀 Nouvelle version 0.4.3
 
 ### v0.4.2 (2026-04-23)
 
