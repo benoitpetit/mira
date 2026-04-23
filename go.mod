@@ -3,12 +3,13 @@ module github.com/benoitpetit/mira
 go 1.23.2
 
 require (
+	github.com/benoitpetit/soul v0.0.0-00010101000000-000000000000
 	github.com/coder/hnsw v0.4.0
 	github.com/google/uuid v1.6.0
 	github.com/mark3labs/mcp-go v0.2.0
 	github.com/mattn/go-sqlite3 v1.14.22
 	github.com/nlpodyssey/cybertron v0.1.0
-	github.com/pkoukk/tiktoken-go v0.1.0
+	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/prometheus/client_golang v1.23.2
 	github.com/rs/zerolog v1.27.0
 	golang.org/x/sync v0.16.0
@@ -59,3 +60,5 @@ require (
 	golang.org/x/text v0.28.0 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
 )
+
+replace github.com/benoitpetit/soul => ../../soul

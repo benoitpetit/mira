@@ -23,7 +23,9 @@ import (
 	mcpserver "github.com/benoitpetit/mira/internal/interfaces/mcp"
 	"github.com/benoitpetit/mira/internal/usecases/interactors"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
+	mcptypes "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	soul "github.com/benoitpetit/soul"
 )
 
 // Application holds all dependencies
@@ -47,6 +49,8 @@ type Application struct {
 	controller       *mcpserver.Controller
 	webhookManager   ports.WebhookManager
 	metricsCollector ports.MetricsCollector
+	soulApp          *soul.Application
+	soulCtrl         *soul.Controller
 }
 
 // NewApplication creates and wires all dependencies
@@ -73,6 +77,15 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 		return nil, fmt.Errorf("failed to initialize repository: %w", err)
 	}
 	app.repository = repo
+
+	// 2.5. Initialize SOUL identity sub-system (shares MIRA's SQLite connection)
+	if soulApp, err := soul.NewApplicationWithDB(repo.DB()); err != nil {
+		slog.Warn("SOUL init failed, continuing without identity features", "error", err)
+	} else {
+		app.soulApp = soulApp
+		app.soulCtrl = soul.NewController(soulApp)
+		slog.Info("SOUL identity sub-system initialized", "tools", len(app.soulCtrl.ToolDefinitions()))
+	}
 
 	// Log database stats
 	stats, err := repo.GetStats(context.Background())
@@ -306,6 +319,11 @@ func (a *Application) Close() error {
 		a.webhookManager.Stop()
 	}
 
+	// Close SOUL (does not close the shared DB connection)
+	if a.soulApp != nil {
+		a.soulApp.Close()
+	}
+
 	// Close repository
 	if a.repository != nil {
 		return a.repository.Close()
@@ -325,9 +343,28 @@ func (a *Application) Run() error {
 	// Create MCP server
 	s := server.NewDefaultServer(a.config.MCP.Name, a.config.MCP.Version)
 
-	// Register MIRA tools
-	a.controller.RegisterTools(s)
-	slog.Info("MCP tools registered", "mira", len(a.controller.ToolDefinitions()))
+	// Register combined MIRA + SOUL tools
+	if a.soulCtrl != nil {
+		// Combined mode: register all tools from both systems
+		miraTools := a.controller.ToolDefinitions()
+		soulTools := a.soulCtrl.ToolDefinitions()
+		allTools := append(miraTools, soulTools...)
+		slog.Info("MCP tools registered", "mira", len(miraTools), "soul", len(soulTools), "total", len(allTools))
+
+		s.HandleListTools(func(ctx context.Context, cursor *string) (*mcptypes.ListToolsResult, error) {
+			return &mcptypes.ListToolsResult{Tools: allTools}, nil
+		})
+		s.HandleCallTool(func(ctx context.Context, name string, arguments map[string]interface{}) (*mcptypes.CallToolResult, error) {
+			if strings.HasPrefix(name, "soul_") {
+				return a.soulCtrl.Call(ctx, name, arguments)
+			}
+			return a.controller.Call(ctx, name, arguments)
+		})
+	} else {
+		// MIRA-only mode
+		a.controller.RegisterTools(s)
+		slog.Info("MCP tools registered", "mira", len(a.controller.ToolDefinitions()))
+	}
 
 	// Setup graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())

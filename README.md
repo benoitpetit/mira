@@ -1,20 +1,20 @@
 <div align="center">
   <img src="./logo.png" alt="MIRA Logo" width="800">
-  
+
   # MIRA
   ### Memory with Information-theoretic Relevance Allocation
-  
+
   **Long-term Memory System for LLMs with Optimal Context Budget Allocation**
-  
+
   [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
   [![Version](https://img.shields.io/badge/Version-0.4.2-blue?style=flat-square)]()
   [![Tests](https://img.shields.io/badge/Tests-77%25-brightgreen?style=flat-square)]()
-  
+
   *100% Local • Deterministic • O(n log n) • Clean Architecture*
-  
-  [API Reference](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [Francais](README_FR.md)
-  
+
+  [API Reference](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [Francais](README_FR.md) • [SOUL Extension](https://github.com/benoitpetit/soul)
+
 </div>
 
 ---
@@ -42,6 +42,25 @@
 ## What is MIRA?
 
 **MIRA** is a sophisticated long-term memory system designed specifically for **Large Language Models (LLMs)**. Unlike traditional memory systems that simply store and retrieve, MIRA uses **information-theoretic allocation** to optimize every token in the context window.
+
+### SOUL Extension: Identity Preservation
+
+MIRA answers *"What does the agent know?"* But a complete agent needs more: it needs to know *"Who is it?"*
+
+[**SOUL**](https://github.com/benoitpetit/soul) (System for Observed Unique Legacy) is an **optional identity extension** for MIRA that captures, stores, and recalls the personality, voice, and values of AI agents across sessions and model changes.
+
+When embedded in MIRA, SOUL provides **8 additional MCP tools** (16 total) for:
+- Capturing identity from conversations
+- Recalling identity prompts for LLM context injection
+- Detecting identity drift after model changes
+- Generating reinforcement prompts after model swaps
+
+SOUL is **opt-in**. MIRA works perfectly without it. When both are present, they share the same SQLite database.
+
+| Configuration | Tools | What it answers |
+|---------------|-------|-----------------|
+| MIRA only | 8 `mira_*` | "What does the agent know?" |
+| MIRA + SOUL | 16 `mira_*` + `soul_*` | "What does the agent know?" + "Who is the agent?" |
 
 ### The Problem MIRA Solves
 
