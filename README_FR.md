@@ -771,10 +771,10 @@ curl http://localhost:9090/metrics
 
 | Métrique            | Valeur                  |
 | ------------------- | ----------------------- |
-| Recherche HNSW      | ~1ms pour 100K vecteurs |
-| Recherche SQLite    | ~50ms pour 10K vecteurs |
-| Allocation complète | ~5ms avec cache         |
-| Cosine similarity   | 50M ops/sec             |
+| Recherche HNSW      | ~0.14 ms pour 10K vecteurs (O(log n), ~0.5 ms estimé à 100K) |
+| Recherche SQLite    | ~50 ms pour 10K vecteurs |
+| Allocation complète | ~35 ms pour 100 candidats |
+| Cosine similarity   | ~3.3M ops/sec           |
 
 ### Optimisations en v0.3.3
 

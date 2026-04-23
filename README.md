@@ -768,10 +768,10 @@ curl http://localhost:9090/metrics
 
 | Metric            | Value                 |
 | ----------------- | --------------------- |
-| HNSW Search       | ~1ms for 100K vectors |
-| SQLite Search     | ~50ms for 10K vectors |
-| Full Allocation   | ~5ms with cache       |
-| Cosine Similarity | 50M ops/sec           |
+| HNSW Search       | ~0.14 ms for 10K vectors (O(log n), ~0.5 ms est. at 100K) |
+| SQLite Search     | ~50 ms for 10K vectors |
+| Full Allocation   | ~35 ms for 100 candidates |
+| Cosine Similarity | ~3.3M ops/sec         |
 
 ### Optimizations in v0.3.3
 
