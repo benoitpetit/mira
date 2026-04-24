@@ -1,5 +1,5 @@
 system:
-  version: "0.4.4"
+  version: "0.4.5"
 
 storage:
   path: ".mira"
@@ -86,7 +86,7 @@ recall:
 
 mcp:
   name: "mira"
-  version: "0.4.4"
+  version: "0.4.5"
   transport: "stdio"
   timeout_seconds: 30
 
@@ -152,6 +152,34 @@ webhooks:
 # When enabled, SOUL shares MIRA's SQLite database and adds identity
 # capture, drift detection, and model-swap preservation tools.
 # See: https://github.com/benoitpetit/soul
+#
+# DX NOTE: Every SOUL tuning option available in standalone mode can also be
+# configured directly inside MIRA's config file below. No separate SOUL config
+# file or process is required for embedded mode.
 
 soul:
   enabled: false          # Set to true to activate SOUL identity features
+
+  # Identity extraction tuning
+  extraction:
+    min_trait_confidence: 0.3      # Minimum confidence for a trait to be valid
+    min_observations_for_trait: 5  # Observations needed to establish a trait
+
+  # Identity recall tuning
+  recall:
+    default_budget_tokens: 1000    # Token budget for generated identity prompts
+
+  # Drift detection tuning
+  drift_detection:
+    threshold: 0.3                 # Drift alert threshold (0.0 - 1.0)
+    window_size: 10                # Number of versions to analyse
+    auto_check_after_capture: true # Check drift automatically after each capture
+
+  # Model swap behaviour
+  model_swap:
+    auto_reinforce: true           # Generate reinforcement prompt after swap
+
+  # Evolution history tuning
+  evolution:
+    enabled: true                  # Track identity evolution over time
+    max_history_versions: 100      # Max snapshots to retain per agent

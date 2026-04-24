@@ -5,6 +5,15 @@ All notable changes to MIRA will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.5] - 2026-04-24
+
+### Added
+- **Unified SOUL configuration in embedded mode**: MIRA now accepts a full `soul.*` configuration block in its own `config.yaml`. All SOUL tuning options (extraction confidence, drift threshold, recall budget, model-swap behaviour, evolution history) can be customised without running a separate SOUL process or config file.
+- **New SOUL API support**: Uses `soul.NewApplicationWithDBAndConfig` to pass configuration directly to the embedded identity subsystem.
+
+### Changed
+- **Version bump**: 0.4.4 → 0.4.5
+
 ## [0.4.4] - 2026-04-23
 
 ### Added

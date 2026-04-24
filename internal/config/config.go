@@ -27,8 +27,53 @@ type Config struct {
 
 // SoulConfig configures the optional SOUL identity subsystem.
 // When Enabled is false, MIRA runs without identity features (8 tools only).
+// All sub-fields are optional and use SOUL defaults when omitted.
 type SoulConfig struct {
 	Enabled bool `yaml:"enabled"`
+
+	// Extraction controls how identity traits are extracted from conversations.
+	Extraction SoulExtractionConfig `yaml:"extraction"`
+
+	// Recall controls the identity prompt generation budget and behaviour.
+	Recall SoulRecallConfig `yaml:"recall"`
+
+	// DriftDetection configures identity drift monitoring.
+	DriftDetection SoulDriftDetectionConfig `yaml:"drift_detection"`
+
+	// ModelSwap controls automatic reinforcement after a model change.
+	ModelSwap SoulModelSwapConfig `yaml:"model_swap"`
+
+	// Evolution controls versioned identity history tracking.
+	Evolution SoulEvolutionConfig `yaml:"evolution"`
+}
+
+// SoulExtractionConfig mirrors SOUL extraction settings.
+type SoulExtractionConfig struct {
+	MinTraitConfidence      float64 `yaml:"min_trait_confidence"`
+	MinObservationsForTrait int     `yaml:"min_observations_for_trait"`
+}
+
+// SoulRecallConfig mirrors SOUL recall settings.
+type SoulRecallConfig struct {
+	DefaultBudgetTokens int `yaml:"default_budget_tokens"`
+}
+
+// SoulDriftDetectionConfig mirrors SOUL drift detection settings.
+type SoulDriftDetectionConfig struct {
+	Threshold             float64 `yaml:"threshold"`
+	WindowSize            int     `yaml:"window_size"`
+	AutoCheckAfterCapture bool    `yaml:"auto_check_after_capture"`
+}
+
+// SoulModelSwapConfig mirrors SOUL model-swap settings.
+type SoulModelSwapConfig struct {
+	AutoReinforce bool `yaml:"auto_reinforce"`
+}
+
+// SoulEvolutionConfig mirrors SOUL evolution settings.
+type SoulEvolutionConfig struct {
+	Enabled            bool `yaml:"enabled"`
+	MaxHistoryVersions int  `yaml:"max_history_versions"`
 }
 
 type QueryExpansionConfig struct {
@@ -131,7 +176,7 @@ type MCPConfig struct {
 func Default() *Config {
 	return &Config{
 		System: SystemConfig{
-			Version:        "0.4.4",
+			Version:        "0.4.5",
 		},
 		Storage: StorageConfig{
 			Path: ".mira",
@@ -185,7 +230,7 @@ func Default() *Config {
 		},
 		MCP: MCPConfig{
 			Name:           "mira",
-			Version:        "0.4.4",
+			Version:        "0.4.5",
 			Transport:      "stdio",
 			TimeoutSeconds: 30,
 		},
@@ -234,6 +279,25 @@ func Default() *Config {
 		},
 		Soul: SoulConfig{
 			Enabled: false,
+			Extraction: SoulExtractionConfig{
+				MinTraitConfidence:      0.3,
+				MinObservationsForTrait: 5,
+			},
+			Recall: SoulRecallConfig{
+				DefaultBudgetTokens: 1000,
+			},
+			DriftDetection: SoulDriftDetectionConfig{
+				Threshold:             0.3,
+				WindowSize:            10,
+				AutoCheckAfterCapture: true,
+			},
+			ModelSwap: SoulModelSwapConfig{
+				AutoReinforce: true,
+			},
+			Evolution: SoulEvolutionConfig{
+				Enabled:            true,
+				MaxHistoryVersions: 100,
+			},
 		},
 	}
 }
@@ -475,6 +539,27 @@ func (c *Config) Validate() error {
 	}
 	if c.Storage.SQLite.TempStore == "" {
 		c.Storage.SQLite.TempStore = "MEMORY"
+	}
+
+	// Soul validation — apply defaults for zero values so embedded SOUL
+	// behaves identically to standalone SOUL when settings are omitted.
+	if c.Soul.Extraction.MinTraitConfidence <= 0 {
+		c.Soul.Extraction.MinTraitConfidence = 0.3
+	}
+	if c.Soul.Extraction.MinObservationsForTrait <= 0 {
+		c.Soul.Extraction.MinObservationsForTrait = 5
+	}
+	if c.Soul.Recall.DefaultBudgetTokens <= 0 {
+		c.Soul.Recall.DefaultBudgetTokens = 1000
+	}
+	if c.Soul.DriftDetection.Threshold <= 0 {
+		c.Soul.DriftDetection.Threshold = 0.3
+	}
+	if c.Soul.DriftDetection.WindowSize <= 0 {
+		c.Soul.DriftDetection.WindowSize = 10
+	}
+	if c.Soul.Evolution.MaxHistoryVersions <= 0 {
+		c.Soul.Evolution.MaxHistoryVersions = 100
 	}
 
 	return nil

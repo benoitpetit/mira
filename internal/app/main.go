@@ -80,8 +80,21 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 
 	// 2.5. Initialize SOUL identity sub-system (shares MIRA's SQLite connection)
 	// SOUL is opt-in: must be explicitly enabled via config (soul.enabled: true) or --with-soul flag.
+	// When enabled, MIRA passes its own soul.* configuration block to SOUL so that
+	// embedded mode supports the same tuning options as standalone mode.
 	if cfg.Soul.Enabled {
-		if soulApp, err := soul.NewApplicationWithDB(repo.DB()); err != nil {
+		soulCfg := soul.DefaultConfig()
+		soulCfg.MinTraitConfidence = cfg.Soul.Extraction.MinTraitConfidence
+		soulCfg.MinObservationsForTrait = cfg.Soul.Extraction.MinObservationsForTrait
+		soulCfg.MaxContextTokens = cfg.Soul.Recall.DefaultBudgetTokens
+		soulCfg.DriftThreshold = cfg.Soul.DriftDetection.Threshold
+		soulCfg.DriftWindowSize = cfg.Soul.DriftDetection.WindowSize
+		soulCfg.AutoCheckAfterCapture = cfg.Soul.DriftDetection.AutoCheckAfterCapture
+		soulCfg.AutoReinforce = cfg.Soul.ModelSwap.AutoReinforce
+		soulCfg.EvolutionEnabled = cfg.Soul.Evolution.Enabled
+		soulCfg.MaxHistoryVersions = cfg.Soul.Evolution.MaxHistoryVersions
+
+		if soulApp, err := soul.NewApplicationWithDBAndConfig(repo.DB(), soulCfg); err != nil {
 			slog.Warn("SOUL init failed, continuing without identity features", "error", err)
 		} else {
 			app.soulApp = soulApp

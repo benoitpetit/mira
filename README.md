@@ -8,7 +8,7 @@
 
   [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.4.4-blue?style=flat-square)]()
+  [![Version](https://img.shields.io/badge/Version-0.4.5-blue?style=flat-square)]()
   [![Tests](https://img.shields.io/badge/Tests-77%25-brightgreen?style=flat-square)]()
 
   *100% Local • Deterministic • O(n log n) • Clean Architecture*
@@ -579,7 +579,7 @@ We decided to migrate to PostgreSQL for v2...
 
 ```yaml
 system:
-  version: "0.4.4"
+  version: "0.4.5"
 
 storage:
   path: ".mira"
@@ -661,7 +661,7 @@ soul:
 
 mcp:
   name: "mira"
-  version: "0.4.4"
+  version: "0.4.5"
   transport: "stdio"
   timeout_seconds: 30
 
@@ -918,6 +918,11 @@ make prepublish VERSION=x.y.z  # Prepare a release
 ```
 
 ## Changelog
+
+### v0.4.5 (2026-04-24)
+
+- **Unified SOUL configuration**: Configure all SOUL settings directly inside MIRA's `config.yaml` — no separate process or config file needed for embedded mode. Supports drift threshold, recall budget, extraction confidence, model-swap reinforcement, and evolution history tuning.
+- Uses new `soul.NewApplicationWithDBAndConfig` API for seamless config passthrough.
 
 ### v0.4.4 (2026-04-23)
 
