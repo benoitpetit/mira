@@ -582,7 +582,7 @@ Nous avons décidé de migrer vers PostgreSQL pour la v2...
 
 ```yaml
 system:
-  version: "0.4.6"
+  version: "0.4.7"
 
 storage:
   path: ".mira"
@@ -664,7 +664,7 @@ soul:
 
 mcp:
   name: "mira"
-  version: "0.4.6"
+  version: "0.4.7"
   transport: "stdio"  # stdio est le seul transport supporté
   timeout_seconds: 30
 
@@ -925,6 +925,10 @@ make prepublish VERSION=x.y.z  # Préparer une release
 
 
 ## Changelog
+
+### v0.4.7 (2026-04-24)
+
+- 🚀 Nouvelle version 0.4.7
 
 ### v0.4.6 (2026-04-24)
 

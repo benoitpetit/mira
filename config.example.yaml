@@ -1,5 +1,5 @@
 system:
-  version: "0.4.6"
+  version: "0.4.7"
 
 storage:
   path: ".mira"
@@ -86,7 +86,7 @@ recall:
 
 mcp:
   name: "mira"
-  version: "0.4.6"
+  version: "0.4.7"
   transport: "stdio"
   timeout_seconds: 30
 
