@@ -9,9 +9,9 @@
   [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
   [![Version](https://img.shields.io/badge/Version-0.4.5-blue?style=flat-square)]()
-  [![Tests](https://img.shields.io/badge/Tests-77%25-brightgreen?style=flat-square)]()
+  [![Tests](https://img.shields.io/badge/Tests-~55%25-yellow?style=flat-square)]()
   
-  *100% Local • Déterministe • O(n log n) • Clean Architecture*
+  *100% Local • Déterministe (variance embedding < 1e-6) • Clean Architecture*
   
   [Reference API](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [English](README.md)
   
@@ -158,7 +158,7 @@ Selon le budget restant, MIRA choisit intelligemment le niveau de détail :
 │   ┌─────────────┐    ┌─────────────────┐    ┌──────────────────────┐    │
 │   │ Embedding   │───→│  HNSW Search    │───→│  Scoring Composite   │    │
 │   │ Requête     │    │  Top 100        │    │  CBA Algorithm       │    │
-│   │ ℝ³⁸⁴        │    │  O(log n)       │    │  O(n log n)          │    │
+│   │ ℝ³⁸⁴        │    │  O(log n)       │    │  O(n²)               │    │
 │   └─────────────┘    └─────────────────┘    └──────────────────────┘    │
 │                                                        │                │
 │                                                        ▼                │
@@ -278,7 +278,7 @@ Le cerveau humain n'enregistre pas tout avec la même fidélité. MIRA imite cet
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                    ALGORITHME CBA - O(n log n)                      │
+│                    ALGORITHME CBA - O(n²)                           │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                     │
 │  ENTRÉE :  Requête q, Budget B (tokens), Wing w, Room r             │
@@ -582,7 +582,7 @@ Nous avons décidé de migrer vers PostgreSQL pour la v2...
 
 ```yaml
 system:
-  version: "0.4.5"
+  version: "0.4.6"
 
 storage:
   path: ".mira"
@@ -664,8 +664,8 @@ soul:
 
 mcp:
   name: "mira"
-  version: "0.4.5"
-  transport: "stdio"
+  version: "0.4.6"
+  transport: "stdio"  # stdio est le seul transport supporté
   timeout_seconds: 30
 
 # Export de métriques Prometheus
@@ -764,16 +764,16 @@ curl http://localhost:9090/metrics
 | Stockage T0,T1,T2     | O(1)       | Insertion atomique |
 | Recherche vectorielle | O(log n)   | HNSW ANN           |
 | Scoring CBA           | O(n)       | n = candidats      |
-| Allocation            | O(n log n) | Max-heap           |
+| Allocation            | O(n²)      | Sélection gloutonne |
 | BFS Graphe Causal     | O(V+E)     | V=nœuds, E=arêtes  |
 
 ### Performances Réelles
 
 | Métrique            | Valeur                  |
 | ------------------- | ----------------------- |
-| Recherche HNSW      | ~0.14 ms pour 10K vecteurs (O(log n), ~0.5 ms estimé à 100K) |
-| Recherche SQLite    | ~50 ms pour 10K vecteurs |
-| Allocation complète | ~35 ms pour 100 candidats |
+| Recherche HNSW      | ~0.14 ms pour 10K vecteurs (benchmarké, O(log n)) |
+| Recherche SQLite    | ~50 ms pour 10K vecteurs (estimation) |
+| Allocation complète | ~35 ms pour 100 candidats (estimation) |
 | Cosine similarity   | ~3.3M ops/sec           |
 
 ### Optimisations en v0.3.3
@@ -925,6 +925,10 @@ make prepublish VERSION=x.y.z  # Préparer une release
 
 
 ## Changelog
+
+### v0.4.6 (2026-04-24)
+
+- 🚀 Nouvelle version 0.4.6
 
 ### v0.4.5 (2026-04-24)
 

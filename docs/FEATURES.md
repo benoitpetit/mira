@@ -57,7 +57,7 @@ Complete inventory of MIRA capabilities.
 
 | Feature | Description |
 |---------|-------------|
-| HNSW Approximate NN | O(log n) search with M=16, efConstruction=200, efSearch=50 |
+| HNSW Approximate NN | O(log n) search with M=32, efConstruction=200, efSearch=100 (app defaults) |
 | HNSW Persistence | Saves/loads `vectors.bin` across restarts |
 | Background Index Build | Builds HNSW from SQLite embeddings on startup if needed |
 | SQLite Vector Store | Exact brute-force cosine similarity fallback |
@@ -147,5 +147,5 @@ Complete inventory of MIRA capabilities.
 
 ---
 
-*Version: 0.4.4*  
+*Version: 0.4.5*  
 *Last updated: 2026-04-16*

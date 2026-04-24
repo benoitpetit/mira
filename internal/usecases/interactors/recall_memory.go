@@ -779,14 +779,17 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 			c.Score = initialScore * (1.0 - c.MaxOverlap) * c.CausalPenalty * c.SessionBoost
 		}
 
-		// Sort by score descending
-		sort.Slice(remainingCandidates, func(i, j int) bool {
-			return remainingCandidates[i].Score > remainingCandidates[j].Score
-		})
-
-		// Select the best candidate
-		c := remainingCandidates[0]
-		remainingCandidates = remainingCandidates[1:]
+		// Find best candidate via linear scan (O(m) instead of O(m log m))
+		// TODO: A max-heap could achieve O(n log n) overall if scores are updated lazily.
+		bestIdx := 0
+		for i := 1; i < len(remainingCandidates); i++ {
+			if remainingCandidates[i].Score > remainingCandidates[bestIdx].Score {
+				bestIdx = i
+			}
+		}
+		c := remainingCandidates[bestIdx]
+		remainingCandidates[bestIdx] = remainingCandidates[len(remainingCandidates)-1]
+		remainingCandidates = remainingCandidates[:len(remainingCandidates)-1]
 
 		if selectedIDs[c.ID()] {
 			continue

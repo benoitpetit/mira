@@ -176,7 +176,7 @@ type MCPConfig struct {
 func Default() *Config {
 	return &Config{
 		System: SystemConfig{
-			Version:        "0.4.5",
+			Version:        "0.4.6",
 		},
 		Storage: StorageConfig{
 			Path: ".mira",
@@ -230,7 +230,7 @@ func Default() *Config {
 		},
 		MCP: MCPConfig{
 			Name:           "mira",
-			Version:        "0.4.5",
+			Version:        "0.4.6",
 			Transport:      "stdio",
 			TimeoutSeconds: 30,
 		},
@@ -510,7 +510,7 @@ func (c *Config) Validate() error {
 		c.MCP.Name = "mira"
 	}
 	if c.MCP.Version == "" {
-		c.MCP.Version = "0.4.4"
+		c.MCP.Version = "0.4.5"
 	}
 	if c.MCP.Transport == "" {
 		c.MCP.Transport = "stdio"

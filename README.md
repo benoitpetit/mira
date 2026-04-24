@@ -9,9 +9,9 @@
   [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
   [![Version](https://img.shields.io/badge/Version-0.4.5-blue?style=flat-square)]()
-  [![Tests](https://img.shields.io/badge/Tests-77%25-brightgreen?style=flat-square)]()
+  [![Tests](https://img.shields.io/badge/Tests-~55%25-yellow?style=flat-square)]()
 
-  *100% Local • Deterministic • O(n log n) • Clean Architecture*
+  *100% Local • Deterministic (embedding variance < 1e-6) • Clean Architecture*
 
   [API Reference](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [Francais](README_FR.md) • [SOUL Extension](https://github.com/benoitpetit/soul)
 
@@ -275,7 +275,7 @@ The human brain doesn't record everything with the same fidelity. MIRA mimics th
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                    CBA ALGORITHM - O(n log n)                       │
+│                    CBA ALGORITHM - O(n²)                            │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                     │
 │  INPUT:  Query q, Budget B (tokens), Wing w, Room r                 │
@@ -579,7 +579,7 @@ We decided to migrate to PostgreSQL for v2...
 
 ```yaml
 system:
-  version: "0.4.5"
+  version: "0.4.6"
 
 storage:
   path: ".mira"
@@ -661,8 +661,8 @@ soul:
 
 mcp:
   name: "mira"
-  version: "0.4.5"
-  transport: "stdio"
+  version: "0.4.6"
+  transport: "stdio"  # stdio is the only supported transport
   timeout_seconds: 30
 
 # Prometheus metrics export
@@ -761,16 +761,16 @@ curl http://localhost:9090/metrics
 | Store T0,T1,T2   | O(1)       | Atomic insertion |
 | Vector Search    | O(log n)   | HNSW ANN         |
 | CBA Scoring      | O(n)       | n = candidates   |
-| Allocation       | O(n log n) | Max-heap         |
+| Allocation       | O(n²)      | Greedy selection |
 | Causal Graph BFS | O(V+E)     | V=nodes, E=edges |
 
 ### Real-World Performance
 
 | Metric            | Value                 |
 | ----------------- | --------------------- |
-| HNSW Search       | ~0.14 ms for 10K vectors (O(log n), ~0.5 ms est. at 100K) |
-| SQLite Search     | ~50 ms for 10K vectors |
-| Full Allocation   | ~35 ms for 100 candidates |
+| HNSW Search       | ~0.14 ms for 10K vectors (benchmarked, O(log n)) |
+| SQLite Search     | ~50 ms for 10K vectors (estimated) |
+| Full Allocation   | ~35 ms for 100 candidates (estimated) |
 | Cosine Similarity | ~3.3M ops/sec         |
 
 ### Optimizations in v0.3.3
@@ -918,6 +918,10 @@ make prepublish VERSION=x.y.z  # Prepare a release
 ```
 
 ## Changelog
+
+### v0.4.6 (2026-04-24)
+
+- 🚀 New version 0.4.6
 
 ### v0.4.5 (2026-04-24)
 

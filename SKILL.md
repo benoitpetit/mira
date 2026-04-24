@@ -2,7 +2,7 @@
 name: mira
 description: Long-term memory guidance for MIRA MCP integration
 author: benoitpetit
-version: "2.0"
+version: "0.4.5"
 tags: [memory, mcp, mira]
 ---
 
@@ -43,11 +43,11 @@ cp config.example.yaml config.yaml
 Key defaults (no change required):
 - Storage: `.mira/mira.db` (SQLite + WAL)
 - Embedding model: `sentence-transformers/all-MiniLM-L6-v2` (384d)
-- MCP transport: `stdio` (for Claude Desktop, Cursor, etc.)
+- MCP transport: `stdio` (for Claude Desktop, Cursor, etc.) — stdio is currently the only supported transport
 
 ### 4. Run Migrations
 ```bash
-./mira --config config.yaml -migrate
+./mira --config config.yaml --migrate
 ```
 This downloads the embedding model on first run (~80 MB).
 
@@ -185,8 +185,10 @@ Store memories **progressively** as you work. Do not wait until the end of a lon
 
 ### Decision
 ```json
-{ "tool": "mira_store", "arguments": { "content": "Decision: use PostgreSQL for v2 database. Rejected MySQL (not ACID enough) and MongoDB (not relational). Assigned to Jean.", "wing": "<project>", "room": "decisions", "type": "decision" } }
+{ "tool": "mira_store", "arguments": { "content": "Decision: use PostgreSQL for v2 database. Rejected MySQL (not ACID enough) and MongoDB (not relational). Assigned to Jean.", "wing": "<project>", "room": "decisions", "type": "decision", "metrics": { "confidence": 0.95 } } }
 ```
+
+> **Note**: `metrics` is an optional JSON object for attaching custom metadata (e.g., confidence scores, source URLs) to the stored memory.
 
 ### Fact
 ```json
@@ -239,7 +241,7 @@ Store memories **progressively** as you work. Do not wait until the end of a lon
 
 `mira_recall` and `mira_timeline` expose memory IDs as **`T0:<uuid>`** (verbatim references).
 
-- **`mira_load(id)`** — Accepts the exact `T0:<uuid>` from a recall or timeline result to fetch the full original text.
+- **`mira_load(id)`** — Accepts `T0:<uuid>`, `F0:<uuid>`, `V0:<uuid>`, or `FP:<uuid>` from a recall or timeline result to fetch the full original text. Use the exact prefix returned by MIRA.
 - **`mira_causal_chain(id, include_consequences=true)`** — Accepts either a `T0:<uuid>` reference or a Fingerprint ID. Prefer passing the exact `T0:<uuid>` returned by `mira_recall` / `mira_timeline`.
 
 **Never invent IDs.** Only use IDs explicitly returned by MIRA tools.
@@ -258,7 +260,7 @@ Store memories **progressively** as you work. Do not wait until the end of a lon
 ## Anti-Patterns
 
 1. **Never leave important context unstored** — the LLM context window is finite; MIRA is persistent.
-2. **Never invent IDs** — `mira_load` and `mira_causal_chain` require exact IDs returned by MIRA (format `T0:<uuid>`).
+2. **Never invent IDs** — `mira_load` and `mira_causal_chain` require exact IDs returned by MIRA (formats: `T0:<uuid>`, `F0:<uuid>`, `V0:<uuid>`, `FP:<uuid>`).
 3. **Avoid vague recall queries** — `"auth"` is bad; `"JWT RS256 auth-service token config"` is good.
 4. **Do not call `mira_clear_memory`** without explicit user request.
 5. **Keep wing names consistent** — reuse the same canonical wing name across a project.

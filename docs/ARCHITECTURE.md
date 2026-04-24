@@ -154,7 +154,11 @@ where:
   θ = Adaptive Threshold     dynamic relevance floor
 ```
 
-### Algorithm — O(n log n)
+### Algorithm — O(n²) greedy selection
+
+> **Note on complexity**: The current implementation uses a greedy loop with full score
+> recalculation for all remaining candidates at each step. This yields O(n²) practical
+> complexity. A heap-based implementation could achieve O(n log n) in the future.
 
 ```
 1. EMBEDDING
