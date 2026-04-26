@@ -23,9 +23,9 @@ import (
 	mcpserver "github.com/benoitpetit/mira/internal/interfaces/mcp"
 	"github.com/benoitpetit/mira/internal/usecases/interactors"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
+	soul "github.com/benoitpetit/soul"
 	mcptypes "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	soul "github.com/benoitpetit/soul"
 )
 
 // Application holds all dependencies
@@ -58,7 +58,7 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 	app := &Application{config: cfg}
 
 	// 1. Create data directory
-	if err := os.MkdirAll(cfg.Storage.Path, 0755); err != nil {
+	if err := os.MkdirAll(cfg.Storage.Path, 0o755); err != nil {
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
 	if err := ensureGitignore(cfg.Storage.Path); err != nil {
@@ -361,6 +361,22 @@ func (a *Application) Run() error {
 	// Create MCP server
 	s := server.NewDefaultServer(a.config.MCP.Name, a.config.MCP.Version)
 
+	// Advertise tools capability in the initialize handshake.
+	// The default handler only advertises Resources, so Claude Code never
+	// requests tools/list without this override.
+	name, version := a.config.MCP.Name, a.config.MCP.Version
+	s.HandleInitialize(func(ctx context.Context, _ mcptypes.ClientCapabilities, _ mcptypes.Implementation, _ string) (*mcptypes.InitializeResult, error) {
+		return &mcptypes.InitializeResult{
+			ProtocolVersion: "2024-11-05",
+			ServerInfo:      mcptypes.Implementation{Name: name, Version: version},
+			Capabilities: mcptypes.ServerCapabilities{
+				Tools: &struct {
+					ListChanged bool `json:"listChanged"`
+				}{ListChanged: false},
+			},
+		}, nil
+	})
+
 	// Register combined MIRA + SOUL tools
 	if a.soulCtrl != nil {
 		// Combined mode: register all tools from both systems
@@ -459,7 +475,7 @@ func ensureGitignore(dataPath string) error {
 		return nil // already ignored
 	}
 
-	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
