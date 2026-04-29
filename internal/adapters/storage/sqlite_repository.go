@@ -52,7 +52,7 @@ func NewSQLiteRepository(dbPath string, opts SQLiteOptions) (*SQLiteRepository, 
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	db.SetMaxOpenConns(1)
+	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(0)
 	db.SetConnMaxIdleTime(30 * time.Minute)
@@ -117,6 +117,45 @@ func (r *SQLiteRepository) StoreVerbatimTx(ctx context.Context, tx *sql.Tx, v *e
 		v.ID[:], v.Content, v.TokenCount, float64(v.CreatedAt.Unix()), v.Wing, v.Room, string(metadataJSON), string(metricsJSON),
 	)
 	return err
+}
+
+// DeleteVerbatimByID implements VerbatimRepository
+func (r *SQLiteRepository) DeleteVerbatimByID(ctx context.Context, id uuid.UUID) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin delete transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	idBytes := id[:]
+
+	// Delete causal relations for fingerprints associated with this verbatim
+	_, _ = tx.ExecContext(ctx, `
+		DELETE FROM causal_edges WHERE from_id IN (
+			SELECT id FROM fingerprints WHERE verbatim_id = ?
+		) OR to_id IN (
+			SELECT id FROM fingerprints WHERE verbatim_id = ?
+		)`, idBytes, idBytes)
+
+	// Delete causal nodes
+	_, _ = tx.ExecContext(ctx, `
+		DELETE FROM causal_nodes WHERE id IN (
+			SELECT id FROM fingerprints WHERE verbatim_id = ?
+		)`, idBytes)
+
+	// Delete embeddings
+	_, _ = tx.ExecContext(ctx, `DELETE FROM embeddings WHERE id = ?`, idBytes)
+
+	// Delete fingerprints
+	_, _ = tx.ExecContext(ctx, `DELETE FROM fingerprints WHERE verbatim_id = ?`, idBytes)
+
+	// Delete verbatim
+	_, err = tx.ExecContext(ctx, `DELETE FROM verbatim WHERE id = ?`, idBytes)
+	if err != nil {
+		return fmt.Errorf("failed to delete verbatim: %w", err)
+	}
+
+	return tx.Commit()
 }
 
 // GetVerbatimByID implements VerbatimRepository
@@ -471,93 +510,96 @@ func (r *SQLiteRepository) HasEdge(ctx context.Context, fromID, toID uuid.UUID) 
 }
 
 // GetChain implements CausalGraphRepository
-// Performs a BFS traversal up the causal chain (parents) up to maxDepth levels
+// Performs a recursive traversal up the causal chain (ancestors) using a SQLite CTE.
+// This replaces the previous N+1 BFS with a single query, drastically reducing latency.
 func (r *SQLiteRepository) GetChain(ctx context.Context, id uuid.UUID, maxDepth int) ([]*entities.CausalNode, error) {
 	if maxDepth <= 0 {
 		maxDepth = 5 // Default depth
 	}
 
-	var result []*entities.CausalNode
-	visited := make(map[uuid.UUID]bool)
-	queue := []struct {
-		node  uuid.UUID
-		depth int
-	}{{id, 0}}
+	query := `
+		WITH RECURSIVE ancestors(id, node_type, summary, timestamp, wing, room, depth) AS (
+			SELECT id, node_type, summary, timestamp, wing, room, 0
+			FROM causal_nodes
+			WHERE id = ?
+			UNION ALL
+			SELECT n.id, n.node_type, n.summary, n.timestamp, n.wing, n.room, a.depth + 1
+			FROM causal_nodes n
+			JOIN causal_edges e ON n.id = e.from_id
+			JOIN ancestors a ON e.to_id = a.id
+			WHERE a.depth < ?
+		)
+		SELECT id, node_type, summary, timestamp, wing, room
+		FROM ancestors
+		WHERE depth > 0
+		ORDER BY depth DESC
+	`
 
-	for len(queue) > 0 {
-		// Dequeue
-		current := queue[0]
-		queue = queue[1:]
-
-		if current.depth >= maxDepth {
-			continue
-		}
-
-		// Get parents of current node
-		parents, err := r.GetParents(ctx, current.node)
-		if err != nil {
-			return nil, err
-		}
-
-		for _, parent := range parents {
-			if visited[parent.ID] {
-				continue
-			}
-			visited[parent.ID] = true
-			result = append(result, parent)
-			queue = append(queue, struct {
-				node  uuid.UUID
-				depth int
-			}{parent.ID, current.depth + 1})
-		}
+	rows, err := r.db.QueryContext(ctx, query, id[:], maxDepth)
+	if err != nil {
+		return nil, fmt.Errorf("recursive chain query failed: %w", err)
 	}
+	defer rows.Close()
 
-	return result, nil
+	return r.scanCausalNodes(rows)
 }
 
 // GetConsequences implements CausalGraphRepository
-// Performs a BFS traversal down the causal chain (children) up to maxDepth levels
+// Performs a recursive traversal down the causal chain (descendants) using a SQLite CTE.
 func (r *SQLiteRepository) GetConsequences(ctx context.Context, id uuid.UUID, maxDepth int) ([]*entities.CausalNode, error) {
 	if maxDepth <= 0 {
 		maxDepth = 5 // Default depth
 	}
 
-	var result []*entities.CausalNode
-	visited := make(map[uuid.UUID]bool)
-	queue := []struct {
-		node  uuid.UUID
-		depth int
-	}{{id, 0}}
+	query := `
+		WITH RECURSIVE descendants(id, node_type, summary, timestamp, wing, room, depth) AS (
+			SELECT id, node_type, summary, timestamp, wing, room, 0
+			FROM causal_nodes
+			WHERE id = ?
+			UNION ALL
+			SELECT n.id, n.node_type, n.summary, n.timestamp, n.wing, n.room, d.depth + 1
+			FROM causal_nodes n
+			JOIN causal_edges e ON n.id = e.to_id
+			JOIN descendants d ON e.from_id = d.id
+			WHERE d.depth < ?
+		)
+		SELECT id, node_type, summary, timestamp, wing, room
+		FROM descendants
+		WHERE depth > 0
+		ORDER BY depth ASC
+	`
 
-	for len(queue) > 0 {
-		// Dequeue
-		current := queue[0]
-		queue = queue[1:]
+	rows, err := r.db.QueryContext(ctx, query, id[:], maxDepth)
+	if err != nil {
+		return nil, fmt.Errorf("recursive consequences query failed: %w", err)
+	}
+	defer rows.Close()
 
-		if current.depth >= maxDepth {
+	return r.scanCausalNodes(rows)
+}
+
+// scanCausalNodes reads causal_node rows from a sql.Rows result set.
+// Extracted to avoid duplication between GetChain and GetConsequences CTE queries.
+func (r *SQLiteRepository) scanCausalNodes(rows *sql.Rows) ([]*entities.CausalNode, error) {
+	var nodes []*entities.CausalNode
+	for rows.Next() {
+		node := &entities.CausalNode{}
+		var idBytes []byte
+		var timestamp float64
+		var room sql.NullString
+
+		err := rows.Scan(&idBytes, &node.Type, &node.Summary, &timestamp, &node.Wing, &room)
+		if err != nil {
 			continue
 		}
-
-		// Get children of current node
-		children, err := r.GetChildren(ctx, current.node)
-		if err != nil {
-			return nil, err
+		node.ID, _ = uuid.FromBytes(idBytes)
+		node.Timestamp = time.Unix(int64(timestamp), 0)
+		if room.Valid {
+			node.Room = &room.String
 		}
-
-		for _, child := range children {
-			if visited[child.ID] {
-				continue
-			}
-			visited[child.ID] = true
-			result = append(result, child)
-			queue = append(queue, struct {
-				node  uuid.UUID
-				depth int
-			}{child.ID, current.depth + 1})
-		}
+		nodes = append(nodes, node)
 	}
-
-	return result, nil
+	return nodes, rows.Err()
 }
 
 // GetParents implements CausalGraphRepository
@@ -858,6 +900,69 @@ func (r *SQLiteRepository) ClearAll(ctx context.Context) error {
 	return tx.Commit()
 }
 
+// ClearByIDs removes all memories and related data for a list of verbatim IDs.
+func (r *SQLiteRepository) ClearByIDs(ctx context.Context, ids []uuid.UUID) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin clear transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	count := len(ids)
+
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, 0, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args = append(args, id[:])
+	}
+	idList := strings.Join(placeholders, ", ")
+
+	_, _ = tx.ExecContext(ctx,
+		`DELETE FROM causal_edges WHERE from_id IN (
+			SELECT id FROM fingerprints WHERE verbatim_id IN (`+idList+`)
+		) OR to_id IN (
+			SELECT id FROM fingerprints WHERE verbatim_id IN (`+idList+`)
+		)`,
+		append(args, args...)...,
+	)
+
+	_, _ = tx.ExecContext(ctx,
+		`DELETE FROM causal_nodes WHERE id IN (
+			SELECT id FROM fingerprints WHERE verbatim_id IN (`+idList+`)
+		)`,
+		args...,
+	)
+
+	_, _ = tx.ExecContext(ctx,
+		`DELETE FROM embeddings WHERE id IN (`+idList+`)`,
+		args...,
+	)
+
+	_, _ = tx.ExecContext(ctx,
+		`DELETE FROM fingerprints WHERE verbatim_id IN (`+idList+`)`,
+		args...,
+	)
+
+	_, err = tx.ExecContext(ctx,
+		`DELETE FROM verbatim WHERE id IN (`+idList+`)`,
+		args...,
+	)
+	if err != nil {
+		return 0, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("failed to commit clear transaction: %w", err)
+	}
+
+	return count, nil
+}
+
 // ClearByRoom removes all memories and related data for a specific wing/room.
 func (r *SQLiteRepository) ClearByRoom(ctx context.Context, wing string, room *string) (int, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -1115,6 +1220,106 @@ func (r *SQLiteRepository) SearchLexical(ctx context.Context, query string, limi
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating fts5 rows: %w", err)
+	}
+
+	return candidates, nil
+}
+
+// SearchExact returns candidates whose verbatim content exactly matches the query.
+func (r *SQLiteRepository) SearchExact(ctx context.Context, query string, limit int, wing, room *string) ([]*entities.Candidate, error) {
+	if !r.fts5Enabled {
+		return nil, fmt.Errorf("FTS5 not available")
+	}
+
+	sqlQuery := `
+		SELECT v.id, v.content, v.wing, v.room, v.token_count, v.created_at,
+			   f.id, f.ftype, f.fact_count, f.token_estimate, f.model_hash, f.data,
+			   e.vector, e.dim
+		FROM verbatim v
+		JOIN fingerprints f ON v.id = f.verbatim_id
+		JOIN embeddings e ON v.id = e.id
+		WHERE v.content = ?`
+	args := []interface{}{query}
+
+	if wing != nil {
+		sqlQuery += " AND v.wing = ?"
+		args = append(args, *wing)
+	}
+	if room != nil {
+		sqlQuery += " AND v.room = ?"
+		args = append(args, *room)
+	}
+
+	sqlQuery += " LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := r.db.QueryContext(ctx, sqlQuery, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var candidates []*entities.Candidate
+	for rows.Next() {
+		var vID, fID []byte
+		var vContent, vWing, fType, fModelHash string
+		var vRoom sql.NullString
+		var vTokenCount, fFactCount, fTokenEstimate, eDim int
+		var vCreatedAt float64
+		var fData []byte
+		var eVector []byte
+
+		err := rows.Scan(
+			&vID, &vContent, &vWing, &vRoom, &vTokenCount, &vCreatedAt,
+			&fID, &fType, &fFactCount, &fTokenEstimate, &fModelHash, &fData,
+			&eVector, &eDim,
+		)
+		if err != nil {
+			continue
+		}
+
+		id, err := uuid.FromBytes(vID)
+		if err != nil {
+			continue
+		}
+
+		vec := make([]float32, eDim)
+		vecLen := len(eVector) / 4
+		if vecLen > eDim {
+			vecLen = eDim
+		}
+		for i := 0; i < vecLen; i++ {
+			u := binary.LittleEndian.Uint32(eVector[i*4 : i*4+4])
+			vec[i] = math.Float32frombits(u)
+		}
+
+		verbatim := &entities.Verbatim{
+			ID:         id,
+			Content:    vContent,
+			Wing:       vWing,
+			TokenCount: vTokenCount,
+			CreatedAt:  time.Unix(int64(vCreatedAt), 0),
+		}
+		if vRoom.Valid {
+			verbatim.Room = &vRoom.String
+		}
+
+		fpID, _ := uuid.FromBytes(fID)
+		fp := &entities.Fingerprint{
+			ID:            fpID,
+			VerbatimID:    id,
+			Type:          valueobjects.MemoryType(fType),
+			FactCount:     fFactCount,
+			TokenEstimate: fTokenEstimate,
+			ModelHash:     fModelHash,
+		}
+		_ = json.Unmarshal(fData, &fp.Data)
+
+		candidates = append(candidates, entities.NewCandidate(fp, verbatim, vec))
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating exact rows: %w", err)
 	}
 
 	return candidates, nil

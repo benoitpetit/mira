@@ -43,6 +43,10 @@ func (m *mockStatsRepositoryForClear) ClearByRoom(ctx context.Context, wing stri
 	return 0, nil
 }
 
+func (m *mockStatsRepositoryForClear) ClearByIDs(ctx context.Context, ids []uuid.UUID) (int, error) {
+	return 0, nil
+}
+
 // mockVectorStoreForClear mocks VectorStore for ClearMemory tests
 type mockVectorStoreForClear struct {
 	clearAllFunc    func(ctx context.Context) error

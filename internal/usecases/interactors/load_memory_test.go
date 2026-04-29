@@ -32,6 +32,10 @@ func (m *mockVerbatimRepository) GetVerbatimByID(ctx context.Context, id uuid.UU
 	return nil, nil
 }
 
+func (m *mockVerbatimRepository) DeleteVerbatimByID(ctx context.Context, id uuid.UUID) error {
+	return nil
+}
+
 // MockFingerprintRepository pour les tests
 type mockLoadFingerprintRepository struct {
 	getFingerprintByIDFunc func(ctx context.Context, id uuid.UUID) (*entities.Fingerprint, error)

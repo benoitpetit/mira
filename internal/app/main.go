@@ -15,6 +15,7 @@ import (
 	"github.com/benoitpetit/mira/internal/adapters/extraction"
 	"github.com/benoitpetit/mira/internal/adapters/logging"
 	"github.com/benoitpetit/mira/internal/adapters/metrics"
+	mirasoul "github.com/benoitpetit/mira/internal/adapters/soul"
 	"github.com/benoitpetit/mira/internal/adapters/storage"
 	"github.com/benoitpetit/mira/internal/adapters/vector"
 	webhookadapter "github.com/benoitpetit/mira/internal/adapters/webhook"
@@ -45,17 +46,22 @@ type Application struct {
 	getCausalChain   *interactors.GetCausalChain
 	archiveMemories  *interactors.ArchiveMemories
 	clearMemory      *interactors.ClearMemory
+	deleteMemory     *interactors.DeleteMemory
+	searchSemantic   *interactors.SearchSemantic
+	updateMemory     *interactors.UpdateMemory
+	consolidateMemories *interactors.ConsolidateMemories
 	renderer         *interactors.DefaultFingerprintRenderer
 	controller       *mcpserver.Controller
 	webhookManager   ports.WebhookManager
 	metricsCollector ports.MetricsCollector
 	soulApp          *soul.Application
 	soulCtrl         *soul.Controller
+	startTime        time.Time
 }
 
 // NewApplication creates and wires all dependencies
 func NewApplication(cfg *config.Config) (*Application, error) {
-	app := &Application{config: cfg}
+	app := &Application{config: cfg, startTime: time.Now()}
 
 	// 1. Create data directory
 	if err := os.MkdirAll(cfg.Storage.Path, 0o755); err != nil {
@@ -97,6 +103,7 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 		if soulApp, err := soul.NewApplicationWithDBAndConfig(repo.DB(), soulCfg); err != nil {
 			slog.Warn("SOUL init failed, continuing without identity features", "error", err)
 		} else {
+			soulApp.SetMiraProvider(mirasoul.NewMiraProvider(repo.DB()))
 			app.soulApp = soulApp
 			app.soulCtrl = soul.NewController(soulApp)
 			slog.Info("SOUL identity sub-system initialized", "tools", len(app.soulCtrl.ToolDefinitions()))
@@ -205,9 +212,18 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 		slog.Warn("failed to initialize hnsw index, falling back to sqlite vector search", "error", err)
 		app.vectorStore = vector.NewSQLiteVectorStore(repo.DB())
 	} else {
+		// Set model hash for validation
+		hnswIndex.SetModelHash(cfg.Embeddings.ModelHash)
+
 		// Try to load existing index
 		if err := hnswIndex.Load(); err != nil {
 			slog.Warn("failed to load hnsw index, will build from scratch", "error", err)
+			// If mismatch (dimension or model hash), clear the stale index file
+			if strings.Contains(err.Error(), "mismatch") {
+				slog.Info("stale hnsw index detected, removing old index file")
+				_ = os.Remove(indexPath)
+				_ = os.Remove(indexPath + ".sha256")
+			}
 		} else if hnswIndex.IsReady() {
 			slog.Info("hnsw index loaded from disk", "vectors", hnswIndex.Stats())
 		}
@@ -262,6 +278,8 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 		repo, app.extractor, app.extractor, app.vectorStore, app.metricsCollector, logger,
 	)
 
+	recallLogger := logging.NewSimpleLoggerWithPrefix("[RecallMemory]", false)
+
 	app.recallMemory = interactors.NewRecallMemory(
 		app.vectorStore,
 		app.overlapCache,
@@ -295,14 +313,19 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 			DecayRates:                    cfg.DecayRates,
 		},
 		app.metricsCollector,
+		recallLogger,
 	)
 
 	app.loadMemory = interactors.NewLoadMemory(repo, repo)
 	app.getTimeline = interactors.NewGetTimeline(repo)
-	app.getStatus = interactors.NewGetStatus(repo, repo)
+	app.getStatus = interactors.NewGetStatus(repo, repo, app.startTime, "0.4.7")
 	app.getCausalChain = interactors.NewGetCausalChain(repo)
 	app.archiveMemories = interactors.NewArchiveMemories(repo)
 	app.clearMemory = interactors.NewClearMemory(repo, app.vectorStore)
+	app.deleteMemory = interactors.NewDeleteMemory(repo, app.vectorStore)
+	app.searchSemantic = interactors.NewSearchSemantic(app.vectorStore, app.embedder)
+	app.updateMemory = interactors.NewUpdateMemory(repo, app.extractor, app.vectorStore)
+	app.consolidateMemories = interactors.NewConsolidateMemories(repo, app.vectorStore, app.embedder, app.extractor)
 
 	// 12. Initialize controller
 	app.controller = mcpserver.NewController(
@@ -409,15 +432,18 @@ func (a *Application) Run() error {
 
 	// Start server in goroutine
 	errChan := make(chan error, 1)
+	var sseServer *server.SSEServer
 	go func() {
 		slog.Info("mcp server ready", "name", a.config.MCP.Name, "version", a.config.MCP.Version, "transport", a.config.MCP.Transport, "budget", a.config.Allocator.DefaultBudget)
 
-		if a.config.MCP.Transport == "stdio" {
+		switch a.config.MCP.Transport {
+		case "stdio":
 			errChan <- server.ServeStdio(s)
-		} else {
-			// Note: Only stdio transport is currently supported.
-			// SSE and HTTP transports may be added in future versions.
-			errChan <- fmt.Errorf("unsupported transport: %s (only stdio is supported)", a.config.MCP.Transport)
+		case "sse":
+			sseServer = server.NewSSEServer(s, "http://"+a.config.MCP.Address)
+			errChan <- sseServer.Start(a.config.MCP.Address)
+		default:
+			errChan <- fmt.Errorf("unsupported transport: %s (stdio or sse supported)", a.config.MCP.Transport)
 		}
 	}()
 
@@ -425,6 +451,28 @@ func (a *Application) Run() error {
 	select {
 	case sig := <-sigChan:
 		slog.Info("received shutdown signal", "signal", sig)
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		// Shutdown SSE server first if running
+		if sseServer != nil {
+			if err := sseServer.Shutdown(shutdownCtx); err != nil {
+				slog.Warn("sse server shutdown error", "error", err)
+			}
+		}
+		done := make(chan error, 1)
+		go func() {
+			done <- a.Close()
+		}()
+		select {
+		case err := <-done:
+			if err != nil {
+				slog.Warn("graceful shutdown completed with error", "error", err)
+			} else {
+				slog.Info("graceful shutdown completed")
+			}
+		case <-shutdownCtx.Done():
+			slog.Warn("graceful shutdown timed out")
+		}
 		cancel()
 		return nil
 	case err := <-errChan:
@@ -451,6 +499,22 @@ func RunWithConfig(configPath string) error {
 	}
 	return app.Run()
 }
+
+// Library accessors for external modules (e.g., Miracloud SaaS)
+
+func (a *Application) StoreMemoryUC() *interactors.StoreMemory     { return a.storeMemory }
+func (a *Application) RecallMemoryUC() *interactors.RecallMemory   { return a.recallMemory }
+func (a *Application) LoadMemoryUC() *interactors.LoadMemory       { return a.loadMemory }
+func (a *Application) GetTimelineUC() *interactors.GetTimeline     { return a.getTimeline }
+func (a *Application) GetStatusUC() *interactors.GetStatus         { return a.getStatus }
+func (a *Application) GetCausalChainUC() *interactors.GetCausalChain { return a.getCausalChain }
+func (a *Application) ArchiveMemoriesUC() *interactors.ArchiveMemories { return a.archiveMemories }
+func (a *Application) ClearMemoryUC() *interactors.ClearMemory     { return a.clearMemory }
+func (a *Application) DeleteMemoryUC() *interactors.DeleteMemory   { return a.deleteMemory }
+func (a *Application) SearchSemanticUC() *interactors.SearchSemantic { return a.searchSemantic }
+func (a *Application) UpdateMemoryUC() *interactors.UpdateMemory     { return a.updateMemory }
+func (a *Application) ConsolidateMemoriesUC() *interactors.ConsolidateMemories { return a.consolidateMemories }
+func (a *Application) SoulApplication() *soul.Application          { return a.soulApp }
 
 // ensureGitignore adds .mira/ to .gitignore if a .gitignore exists in the project root.
 func ensureGitignore(dataPath string) error {

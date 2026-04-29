@@ -208,6 +208,7 @@ Examples:
 						"wing":           map[string]string{"type": "string", "description": "Filter by wing/namespace"},
 						"room":           map[string]string{"type": "string", "description": "Filter by room/sub-category"},
 						"fallback_wings": map[string]string{"type": "string", "description": "Comma-separated fallback wings to search if primary wing yields no results"},
+							"session_id":     map[string]string{"type": "string", "description": "Session ID for multi-turn memory injection (optional)"},
 					},
 				},
 			},
@@ -364,6 +365,8 @@ func (c *Controller) Call(ctx context.Context, name string, arguments map[string
 		return c.handleLoad(ctx, arguments)
 	case "mira_causal_chain":
 		return c.handleCausalChain(ctx, arguments)
+	case "mira_health":
+		return c.handleHealth(ctx)
 	case "mira_status":
 		return c.handleStatus(ctx)
 	case "mira_timeline":
@@ -505,12 +508,20 @@ func (c *Controller) handleRecall(ctx context.Context, args map[string]interface
 		}
 	}
 
+	var sessionID *string
+	if sid, ok := args["session_id"]; ok {
+		if sids, ok := sid.(string); ok && sids != "" {
+			sessionID = &sids
+		}
+	}
+
 	input := interactors.RecallMemoryInput{
 		Query:         query,
 		Budget:        budget,
 		Wing:          wing,
 		Room:          room,
 		FallbackWings: fallbackWings,
+		SessionID:     sessionID,
 	}
 
 	output, err := c.recallMemory.Execute(ctx, input)
@@ -669,6 +680,27 @@ func (c *Controller) handleCausalChain(ctx context.Context, args map[string]inte
 	}, nil
 }
 
+func (c *Controller) handleHealth(ctx context.Context) (*mcptypes.CallToolResult, error) {
+	output, err := c.getStatus.Execute(ctx)
+	if err != nil {
+		return &mcptypes.CallToolResult{
+			Content: []mcptypes.Content{mcptypes.TextContent{Type: "text", Text: `{"status":"degraded","db_connected":false}`}},
+		}, nil
+	}
+
+	status := "healthy"
+	if output.Stats.VerbatimCount == 0 {
+		status = "healthy (empty)"
+	}
+
+	result := fmt.Sprintf(`{"status":"%s","db_connected":true,"memory_count":%d}`,
+		status, output.Stats.VerbatimCount)
+
+	return &mcptypes.CallToolResult{
+		Content: []mcptypes.Content{mcptypes.TextContent{Type: "text", Text: result}},
+	}, nil
+}
+
 func (c *Controller) handleStatus(ctx context.Context) (*mcptypes.CallToolResult, error) {
 	output, err := c.getStatus.Execute(ctx)
 	if err != nil {
@@ -677,8 +709,11 @@ func (c *Controller) handleStatus(ctx context.Context) (*mcptypes.CallToolResult
 
 	stats := output.Stats
 
-	result := fmt.Sprintf(`MIRA System Status:
+	result := fmt.Sprintf(`MIRA System Status
 ═══════════════════════════════════════
+Version: %s
+Uptime: %s
+
 Storage:
   Verbatims: %d
   Fingerprints: %d
@@ -696,6 +731,8 @@ Memory Distribution:
 
 Active Wings: %v
 ═══════════════════════════════════════`,
+		output.Version,
+		output.Uptime,
 		stats.VerbatimCount,
 		stats.FingerprintCount,
 		stats.EmbeddingCount,

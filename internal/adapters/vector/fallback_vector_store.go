@@ -62,6 +62,29 @@ func (f *fallbackVectorStore) ClearByRoom(ctx context.Context, wing string, room
 	return f.primary.ClearByRoom(ctx, wing, room)
 }
 
+// SearchExact performs an exact content match via the fallback store.
+// It uses lexical search with a generous limit and filters for verbatim equality.
+func (f *fallbackVectorStore) SearchExact(ctx context.Context, query string, limit int, wing, room *string) ([]*entities.Candidate, error) {
+	if f.fallback == nil {
+		return nil, nil
+	}
+	candidates, err := f.fallback.SearchLexical(ctx, query, limit*5, wing, room)
+	if err != nil {
+		return nil, err
+	}
+	var exact []*entities.Candidate
+	trimmedQuery := strings.TrimSpace(query)
+	for _, c := range candidates {
+		if c.Verbatim != nil && strings.EqualFold(strings.TrimSpace(c.Verbatim.Content), trimmedQuery) {
+			exact = append(exact, c)
+			if len(exact) >= limit {
+				break
+			}
+		}
+	}
+	return exact, nil
+}
+
 // isNotReady heuristically detects "index not ready" errors from HNSW.
 func isNotReady(err error) bool {
 	if err == nil {

@@ -31,6 +31,9 @@ type VerbatimRepository interface {
 	// GetVerbatimByID retrieves a verbatim by its unique identifier.
 	// Returns an error if not found.
 	GetVerbatimByID(ctx context.Context, id uuid.UUID) (*entities.Verbatim, error)
+
+	// DeleteVerbatimByID deletes a verbatim and all associated data by ID.
+	DeleteVerbatimByID(ctx context.Context, id uuid.UUID) error
 }
 
 // FingerprintRepository defines the interface for fingerprint (T1) storage.
@@ -129,6 +132,10 @@ type StatsRepository interface {
 	// ClearByRoom removes all memories and related data for a specific wing/room.
 	// Returns the number of deleted verbatims.
 	ClearByRoom(ctx context.Context, wing string, room *string) (int, error)
+
+	// ClearByIDs removes all memories and related data for a list of verbatim IDs.
+	// Returns the number of deleted verbatims.
+	ClearByIDs(ctx context.Context, ids []uuid.UUID) (int, error)
 }
 
 // TransactionManager defines the interface for database transaction management.

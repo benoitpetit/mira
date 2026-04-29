@@ -37,20 +37,26 @@ MIRA is a **long-term memory system for Large Language Models (LLMs)** designed 
 - **Automatic Type Detection**: decision, fact, preference, session_note, debug_log
 - **Causal Graph Linking**: Auto-detects BECAUSE, TRIGGERED, CONTRADICTS, UPDATES, RESOLVES relations
 - **Project-Scoped Storage**: Isolated `.mira/` databases per project with auto-gitignore
+- **Cross-Layer Validation**: T0/T1 coherence checks (entity presence, type/data alignment)
+- **Negation Detection**: EN/FR patterns mark extracted fingerprints with `negated` flag
+- **Exact Deduplication**: Content-hash exact-match prevents storing identical verbatims twice
 
 ### Memory Retrieval
-- **Context Budget Allocation (CBA)**: Greedy token-budget optimizer with 6-dimensional scoring
+- **Context Budget Allocation (CBA)**: Greedy token-budget optimizer with 6-dimensional scoring + diversity boost
 - **HNSW Vector Search**: O(log n) approximate nearest neighbor over millions of memories
 - **Hybrid Search**: Dense + FTS5 lexical fusion via Reciprocal Rank Fusion (RRF)
 - **Query Expansion**: Multi-variant embedding averaging for cross-lingual robustness
 - **Search-Time Clustering**: Real-time deduplication of near-duplicate results
 - **Heuristic Reranker**: Lightweight lexical reranking for precision boost
+- **Dynamic Budget Adjustment**: Semantic budget scales ±20% based on query complexity
+- **Multi-Turn Session Injection**: `session_id` boost recalls memories selected in previous turns
 
 ### Operations & Observability
-- **8 MCP Tools**: store, recall, load, causal_chain, timeline, status, archive, clear_memory
-- **Prometheus Metrics**: `/metrics`, `/health`, `/health/live`, `/health/ready`
-- **Webhook Notifications**: HMAC-signed HTTP callbacks with circuit breaker resilience
+- **9 MCP Tools**: store, recall, load, causal_chain, timeline, status, archive, clear_memory, **health**
+- **Prometheus Metrics**: `/metrics`, `/health`, `/health/live`, `/health/ready` — counters for store/recall/search/embed/errors, gauges for memory/vector counts
+- **Webhook Notifications**: HMAC-signed HTTP callbacks with circuit breaker resilience and DLQ retry
 - **Zero-Config Startup**: Runs without `config.yaml` using embedded defaults
+- **SSE Transport**: MCP server can run over Server-Sent Events (`transport: sse`) in addition to stdio
 
 ---
 
@@ -64,5 +70,5 @@ MIRA is a **long-term memory system for Large Language Models (LLMs)** designed 
 
 ---
 
-*Version documented: 0.4.5*  
-*Last updated: 2026-04-16*
+*Version documented: 0.4.7*  
+*Last updated: 2026-04-30*

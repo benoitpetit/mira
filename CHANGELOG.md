@@ -5,6 +5,30 @@ All notable changes to MIRA will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.7] - 2026-04-30
+
+### Added
+- **SSE Transport**: MCP server now supports `transport: sse` for Server-Sent Events over HTTP, enabling remote clients and web UIs. Configurable via `mcp.address`.
+- **Multi-Turn Memory Injection**: `mira_recall` accepts an optional `session_id` parameter. Memories selected in previous turns of the same session receive a +30% relevance boost, improving conversational coherence across multiple agent turns.
+- **Dynamic Budget Adjustment**: The recall budget automatically scales ±20% based on query complexity (token count). Short queries (< 5 tokens) reduce budget by 20%; long queries (> 50 tokens) increase it by 20%.
+- **Diversity Boost in CBA**: The greedy Context Budget Allocator now applies a diversity boost (+10% α per new subject covered), favoring candidates that introduce novel topics and improving context coverage.
+- **Exact Deduplication**: New `SearchExact` method on vector stores performs content-hash exact matching before storage, preventing identical verbatims from being stored twice.
+- **Cross-Layer T0/T1 Validation**: `NativeExtractor` performs soft coherence checks between verbatim (T0) and fingerprint (T1). Validates entity presence, type/data alignment, and token ratio sanity. Inconsistencies are stored in `fingerprint.data.custom.validation_alerts`.
+- **Negation Detection**: English and French negation patterns (`not`, `pas`, `jamais`, etc.) are detected during extraction and set `negated=true` on the fingerprint.
+- **Semantic Causal Graph Filtering**: Causal relations now require shared subjects or entities between source and target fingerprints, drastically reducing false positives.
+- **Health Check MCP Tool**: New `mira_health` tool returns a quick JSON status (`status`, `db_connected`, `memory_count`) for liveness/readiness probes.
+- **Enhanced Metrics**: Prometheus metrics now include `mira_store_facts_total` and `mira_recall_selected_total` counters, plus `UpdateMemoryCount`/`UpdateVectorCount` gauges.
+- **Structured Logging in RecallMemory**: Added `logger` support to `RecallMemory` with operational logging (budget, candidates, selected, duration).
+
+### Changed
+- **Graceful Shutdown**: SIGINT/SIGTERM handling now includes a 5-second timeout and proper SSE server shutdown before database closure.
+- **MCP Transport Options**: `stdio` remains the default; `sse` is now a fully supported alternative.
+
+### Fixed
+- **ConsolidateMemories Bug**: Fixed critical bug where `ConsolidateMemories` deleted ALL memories in a room instead of only the cluster member UUIDs.
+- **SQLite Concurrency**: Increased `maxOpenConns` from 1 to 10 for better concurrent read performance under WAL mode.
+- **HNSW Validation**: Added runtime dimension and model-hash consistency checks at startup, with automatic rebuild on mismatch.
+
 ## [0.4.5] - 2026-04-24
 
 ### Added

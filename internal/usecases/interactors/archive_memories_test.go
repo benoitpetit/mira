@@ -7,6 +7,7 @@ import (
 
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
+	"github.com/google/uuid"
 )
 
 // MockStatsRepositoryForArchive pour les tests
@@ -34,6 +35,10 @@ func (m *mockStatsRepositoryForArchive) ClearAll(ctx context.Context) error {
 }
 
 func (m *mockStatsRepositoryForArchive) ClearByRoom(ctx context.Context, wing string, room *string) (int, error) {
+	return 0, nil
+}
+
+func (m *mockStatsRepositoryForArchive) ClearByIDs(ctx context.Context, ids []uuid.UUID) (int, error) {
 	return 0, nil
 }
 

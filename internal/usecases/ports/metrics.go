@@ -14,6 +14,11 @@ type MetricsCollector interface {
 	RecordRecall(duration time.Duration)
 	RecordSearch(duration time.Duration, usedHNSW bool)
 	RecordEmbed(duration time.Duration)
+	RecordError()
+	RecordStoreResult(factCount int)
+	RecordRecallResult(selectedCount int, budgetUsed float64)
+	UpdateMemoryCount(count int)
+	UpdateVectorCount(count int)
 	GetReport(ctx context.Context) MetricsReport
 }
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
+	"github.com/google/uuid"
 )
 
 // MockStatsRepositoryForTimeline pour les tests
@@ -35,6 +36,10 @@ func (m *mockStatsRepositoryForTimeline) ClearAll(ctx context.Context) error {
 }
 
 func (m *mockStatsRepositoryForTimeline) ClearByRoom(ctx context.Context, wing string, room *string) (int, error) {
+	return 0, nil
+}
+
+func (m *mockStatsRepositoryForTimeline) ClearByIDs(ctx context.Context, ids []uuid.UUID) (int, error) {
 	return 0, nil
 }
 
