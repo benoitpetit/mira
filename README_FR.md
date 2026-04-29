@@ -8,7 +8,7 @@
   
   [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.4.5-blue?style=flat-square)]()
+  [![Version](https://img.shields.io/badge/Version-0.4.7-blue?style=flat-square)]()
   [![Tests](https://img.shields.io/badge/Tests-~55%25-yellow?style=flat-square)]()
   
   *100% Local • Déterministe (variance embedding < 1e-6) • Clean Architecture*
@@ -665,7 +665,8 @@ soul:
 mcp:
   name: "mira"
   version: "0.4.7"
-  transport: "stdio"  # stdio est le seul transport supporté
+  transport: "stdio"  # "stdio" pour Claude Desktop/Cursor, "sse" pour HTTP Server-Sent Events
+  address: "localhost:3001"  # Adresse de bind quand transport est "sse"
   timeout_seconds: 30
 
 # Export de métriques Prometheus
@@ -691,14 +692,15 @@ webhooks:
 
 | Outil               | Description                             |
 | ------------------- | --------------------------------------- |
-| `mira_store`        | Stocke mémoire avec extraction T0→T1,T2 |
-| `mira_recall`       | Récupère contexte optimal avec budget   |
+| `mira_store`        | Stocke mémoire avec extraction T0/T1/T2 |
+| `mira_recall`       | Récupère contexte optimal avec budget (`session_id` supporté) |
 | `mira_load`         | Charge verbatim complet par ID          |
 | `mira_causal_chain` | Remonte la chaîne causale               |
-| `mira_status`       | Statistiques système et santé           |
+| `mira_status`       | Statistiques, version et uptime         |
+| `mira_health`       | Health check rapide (JSON)              |
 | `mira_timeline`     | Reconstruction chronologique filtrée    |
-| `mira_archive`      | Archive et nettoie vieilles mémoires    |
-| `mira_clear_memory` | Supprime définitivement toutes les mémoires ou celles d'un room |
+| `mira_archive`      | Archive et nettoie les vieilles mémoires|
+| `mira_clear_memory` | Suppression permanente globale ou par salle |
 
 ### Wings de Secours (Fallback Wings)
 
@@ -926,13 +928,23 @@ make prepublish VERSION=x.y.z  # Préparer une release
 
 ## Changelog
 
-### v0.4.7 (2026-04-24)
+### v0.4.7 (2026-04-30)
 
-- 🚀 Nouvelle version 0.4.7
+- **Transport SSE** : Le serveur MCP supporte maintenant `transport: sse` pour Server-Sent Events sur HTTP.
+- **Injection Multi-Tour** : `mira_recall` accepte `session_id` pour booster les mémoires des tours précédents.
+- **Budget Dynamique** : Le budget de recall s'ajuste automatiquement ±20% selon la complexité de la requête.
+- **Boost Diversité** : La sélection greedy CBA favorise les candidats couvrant de nouveaux sujets.
+- **Déduplication Exacte** : `SearchExact` empêche le stockage de verbatims identiques.
+- **Validation T0/T1** : Vérifications de cohérence avec `validation_alerts` dans le fingerprint.
+- **Détection Négation** : Patterns EN/FR marquent `negated=true` sur les fingerprints.
+- **Graphe Causal Sémantique** : Les relations nécessitent des sujets/entités communs.
+- **Tool Health Check** : Nouveau tool MCP `mira_health`.
+- **Shutdown Gracieux** : Timeout 5s avec arrêt propre du serveur SSE.
+- **Métriques Enrichies** : Compteurs pour facts stockés et mémoires sélectionnées.
 
 ### v0.4.6 (2026-04-24)
 
-- 🚀 Nouvelle version 0.4.6
+- 🚀 Release de maintenance
 
 ### v0.4.5 (2026-04-24)
 

@@ -25,6 +25,7 @@ type RecallMemoryInput struct {
 	Wing          *string
 	Room          *string
 	FallbackWings []string
+	SessionID     *string
 }
 
 // RecallMemoryOutput contains the output of recalling memories
@@ -99,6 +100,7 @@ type RecallMemory struct {
 	reranker         ports.Reranker
 	cache            *embeddingCache
 	metricsCollector ports.MetricsCollector
+	logger           ports.Logger
 
 	// Configuration
 	defaultBudget                 int
@@ -108,6 +110,7 @@ type RecallMemory struct {
 	sessionBoostBeta              float64
 	sessionBoostMax               float64
 	causalPenaltyAlpha            float64
+	diversityBoostAlpha           float64
 	densitySigmoidK               float64
 	densitySigmoidMu              float64
 	thresholdMethod               string
@@ -122,7 +125,12 @@ type RecallMemory struct {
 	searchTimeClusteringThreshold float64
 	rerankerEnabled               bool
 	rerankerTopK                  int
+	sessionMemoryBoost            float64
 	decayRates                    map[string]float64
+
+	// Session cache for multi-turn memory injection
+	sessionCache     map[string][]uuid.UUID
+	sessionCacheMu   sync.RWMutex
 }
 
 // RecallMemoryConfig configures the recall interactor
@@ -134,6 +142,7 @@ type RecallMemoryConfig struct {
 	SessionBoostBeta              float64
 	SessionBoostMax               float64
 	CausalPenaltyAlpha            float64
+	DiversityBoostAlpha           float64
 	DensitySigmoidK               float64
 	DensitySigmoidMu              float64
 	EmbeddingCacheSize            int
@@ -149,6 +158,7 @@ type RecallMemoryConfig struct {
 	SearchTimeClusteringThreshold float64
 	RerankerEnabled               bool
 	RerankerTopK                  int
+	SessionMemoryBoost            float64
 	TagRepo                       ports.TagRepository
 	Reranker                      ports.Reranker
 	DecayRates                    map[string]float64
@@ -164,6 +174,7 @@ func DefaultRecallMemoryConfig() RecallMemoryConfig {
 		SessionBoostBeta:              0.2,
 		SessionBoostMax:               1.2,
 		CausalPenaltyAlpha:            0.15,
+		DiversityBoostAlpha:           0.1,
 		DensitySigmoidK:               2.0,
 		DensitySigmoidMu:              0.3,
 		EmbeddingCacheSize:            1000,
@@ -179,6 +190,7 @@ func DefaultRecallMemoryConfig() RecallMemoryConfig {
 		SearchTimeClusteringThreshold: 0.88,
 		RerankerEnabled:               false,
 		RerankerTopK:                  30,
+		SessionMemoryBoost:            1.3,
 		DecayRates: map[string]float64{
 			"decision":     0.001,
 			"fact":         0.005,
@@ -198,6 +210,7 @@ func NewRecallMemory(
 	renderer ports.FingerprintRenderer,
 	config RecallMemoryConfig,
 	metricsCollector ports.MetricsCollector,
+	logger ports.Logger,
 ) *RecallMemory {
 	cacheSize := config.EmbeddingCacheSize
 	if cacheSize <= 0 {
@@ -217,6 +230,7 @@ func NewRecallMemory(
 		renderer:                      renderer,
 		cache:                         newEmbeddingCache(cacheSize),
 		metricsCollector:              metricsCollector,
+		logger:                        logger,
 		defaultBudget:                 config.DefaultBudget,
 		maxCandidates:                 config.MaxCandidates,
 		earlyPruningThreshold:         config.EarlyPruningThreshold,
@@ -224,6 +238,7 @@ func NewRecallMemory(
 		sessionBoostBeta:              config.SessionBoostBeta,
 		sessionBoostMax:               config.SessionBoostMax,
 		causalPenaltyAlpha:            config.CausalPenaltyAlpha,
+		diversityBoostAlpha:           config.DiversityBoostAlpha,
 		densitySigmoidK:               config.DensitySigmoidK,
 		densitySigmoidMu:              config.DensitySigmoidMu,
 		thresholdMethod:               config.ThresholdMethod,
@@ -238,9 +253,11 @@ func NewRecallMemory(
 		searchTimeClusteringThreshold: config.SearchTimeClusteringThreshold,
 		rerankerEnabled:               config.RerankerEnabled,
 		rerankerTopK:                  config.RerankerTopK,
+		sessionMemoryBoost:            config.SessionMemoryBoost,
 		tagRepo:                       config.TagRepo,
 		reranker:                      config.Reranker,
 		decayRates:                    decayRates,
+		sessionCache:                  make(map[string][]uuid.UUID),
 	}
 }
 
@@ -251,6 +268,14 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 	budget := input.Budget
 	if budget <= 0 {
 		budget = uc.defaultBudget
+	}
+
+	// Dynamic semantic budget adjustment based on query complexity
+	queryTokens := len(strings.Fields(input.Query))
+	if queryTokens < 5 {
+		budget = int(float64(budget) * 0.8)
+	} else if queryTokens > 50 {
+		budget = int(float64(budget) * 1.2)
 	}
 
 	// 1. Get query embedding with cache
@@ -360,7 +385,7 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 	}
 
 	// 6. Greedy selection
-	selected := uc.selectGreedy(ctx, pruned, budget)
+	selected := uc.selectGreedy(ctx, pruned, budget, input.SessionID)
 
 	totalTokens := 0
 	for _, s := range selected {
@@ -375,6 +400,45 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 	// Record metrics if collector is available
 	if uc.metricsCollector != nil {
 		uc.metricsCollector.RecordRecall(time.Since(start))
+		uc.metricsCollector.RecordRecallResult(len(selected), budgetUsed)
+	}
+
+	if uc.logger != nil {
+		uc.logger.Info("Recall completed",
+			"query_tokens", queryTokens,
+			"budget", budget,
+			"candidates", len(pruned),
+			"selected", len(selected),
+			"total_tokens", totalTokens,
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
+	}
+
+	// Update session cache for multi-turn memory injection
+	if input.SessionID != nil && *input.SessionID != "" {
+		uc.sessionCacheMu.Lock()
+		if uc.sessionCache == nil {
+			uc.sessionCache = make(map[string][]uuid.UUID)
+		}
+		existing := uc.sessionCache[*input.SessionID]
+		for _, sel := range selected {
+			found := false
+			for _, id := range existing {
+				if id == sel.CandidateID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				existing = append(existing, sel.CandidateID)
+			}
+		}
+		// Limit session cache to 20 memories to prevent pollution
+		if len(existing) > 20 {
+			existing = existing[len(existing)-20:]
+		}
+		uc.sessionCache[*input.SessionID] = existing
+		uc.sessionCacheMu.Unlock()
 	}
 
 	return &RecallMemoryOutput{
@@ -694,7 +758,7 @@ func (uc *RecallMemory) applyReranker(ctx context.Context, query string, candida
 	return candidates
 }
 
-func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities.Candidate, budget int) []*valueobjects.SelectedMemory {
+func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities.Candidate, budget int, sessionID *string) []*valueobjects.SelectedMemory {
 	if len(candidates) == 0 {
 		return nil
 	}
@@ -708,6 +772,26 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 	selectedEmbeddings := make([][]float32, 0)
 	selectedIDs := make(map[uuid.UUID]bool)
 	selectedTimes := make([]time.Time, 0)
+	coveredSubjects := make(map[string]bool)
+
+	// Build ID lookup for accessing candidate metadata during selection
+	candidateByID := make(map[uuid.UUID]*entities.Candidate)
+	for _, c := range candidates {
+		candidateByID[c.ID()] = c
+	}
+
+	// Retrieve session memory IDs for multi-turn boost
+	var sessionMemoryIDs map[uuid.UUID]bool
+	if sessionID != nil && *sessionID != "" {
+		uc.sessionCacheMu.RLock()
+		if ids, ok := uc.sessionCache[*sessionID]; ok {
+			sessionMemoryIDs = make(map[uuid.UUID]bool, len(ids))
+			for _, id := range ids {
+				sessionMemoryIDs[id] = true
+			}
+		}
+		uc.sessionCacheMu.RUnlock()
+	}
 
 	// Pre-compute adaptive threshold for early-pruning inside greedy loop
 	greedyThresholdScores := make([]float64, 0, len(candidates))
@@ -721,10 +805,13 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 		for _, c := range remainingCandidates {
 			// Initial score (without overlap) for early pruning
 			initialScore := c.Relevance * c.Density * c.Recency
+			if sessionMemoryIDs != nil && sessionMemoryIDs[c.ID()] {
+				initialScore *= uc.sessionMemoryBoost
+			}
 
 			// Early pruning: if the initial score is too low, skip expensive overlap calculation
-			// We compute a theoretical max score (if overlap=0, causal=1, session=1+boost)
-			maxPossibleScore := initialScore * 1.0 * 1.0 * (1.0 + uc.sessionBoostBeta)
+			// We compute a theoretical max score (if overlap=0, causal=1, session=1+boost, diversity=1+alpha)
+			maxPossibleScore := initialScore * 1.0 * 1.0 * (1.0 + uc.sessionBoostBeta) * (1.0 + uc.diversityBoostAlpha)
 			if maxPossibleScore < greedyThreshold {
 				c.Score = maxPossibleScore // Set a low score so it gets sorted to the end
 				c.MaxOverlap = 0
@@ -775,8 +862,20 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 			}
 			c.SessionBoost = sessionBoost
 
+			// Diversity boost: favor candidates covering new subjects
+			diversityBoost := 1.0
+			if c.Memory != nil && len(c.Memory.Subjects) > 0 {
+				newSubjects := 0
+				for _, s := range c.Memory.Subjects {
+					if !coveredSubjects[strings.ToLower(s)] {
+						newSubjects++
+					}
+				}
+				diversityBoost = 1.0 + uc.diversityBoostAlpha*float64(newSubjects)/float64(len(c.Memory.Subjects))
+			}
+
 			// Recalculate score
-			c.Score = initialScore * (1.0 - c.MaxOverlap) * c.CausalPenalty * c.SessionBoost
+			c.Score = initialScore * (1.0 - c.MaxOverlap) * c.CausalPenalty * c.SessionBoost * diversityBoost
 		}
 
 		// Find best candidate via linear scan (O(m) instead of O(m log m))
@@ -827,6 +926,11 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 		selectedEmbeddings = append(selectedEmbeddings, c.Embedding)
 		selectedIDs[c.ID()] = true
 		selectedTimes = append(selectedTimes, c.Verbatim.CreatedAt)
+		if c.Memory != nil {
+			for _, s := range c.Memory.Subjects {
+				coveredSubjects[strings.ToLower(s)] = true
+			}
+		}
 		tokensUsed += tokenCost
 	}
 

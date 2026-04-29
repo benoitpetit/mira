@@ -34,9 +34,9 @@ func TestDetectCausalRelations_English(t *testing.T) {
 		{"resolves", "This fix resolves the memory leak", valueobjects.RelResolves},
 	}
 
-	recentFp := &entities.Fingerprint{}
+	recentFp := &entities.Fingerprint{Subjects: []string{"decision"}, Entities: []string{"system"}}
 	recentFp.ID = [16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
-	newFp := &entities.Fingerprint{}
+	newFp := &entities.Fingerprint{Subjects: []string{"decision"}, Entities: []string{"system"}}
 	newFp.ID = [16]byte{16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1}
 
 	for _, tt := range tests {
@@ -71,9 +71,9 @@ func TestDetectCausalRelations_French(t *testing.T) {
 		{"resolves", "Ce correctif résout le problème", valueobjects.RelResolves},
 	}
 
-	recentFp := &entities.Fingerprint{}
+	recentFp := &entities.Fingerprint{Subjects: []string{"decision"}, Entities: []string{"system"}}
 	recentFp.ID = [16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
-	newFp := &entities.Fingerprint{}
+	newFp := &entities.Fingerprint{Subjects: []string{"decision"}, Entities: []string{"system"}}
 	newFp.ID = [16]byte{16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1}
 
 	for _, tt := range tests {
@@ -197,5 +197,66 @@ func TestExtractEntities_Gazetteer(t *testing.T) {
 	}
 	if !hasParis {
 		t.Error("expected 'Paris' from gazetteer not found")
+	}
+}
+
+func TestNegationDetection(t *testing.T) {
+	e := newTestExtractor(t)
+
+	tests := []struct {
+		content  string
+		negated  bool
+	}{
+		{"I do not like this approach.", true},
+		{"We decided to use Kubernetes.", false},
+		{"This is never going to work.", true},
+		{"She doesn't approve the change.", true},
+		{"The database max is 100.", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.content, func(t *testing.T) {
+			v := &entities.Verbatim{Content: tt.content}
+			memType := e.detectType(tt.content)
+			tokens := e.tokenize(tt.content)
+			extractedEntities := e.extractEntities(tokens, tt.content)
+			data := e.extractStructured(v, tokens, extractedEntities, memType)
+			if data.Negated != tt.negated {
+				t.Errorf("negation=%v, want %v", data.Negated, tt.negated)
+			}
+		})
+	}
+}
+
+func TestValidateCrossT0T1(t *testing.T) {
+	e := newTestExtractor(t)
+
+	// Valid case: entities present in verbatim
+	content := "Microsoft decided to adopt Kubernetes."
+	v := &entities.Verbatim{Content: content, TokenCount: 10}
+	memType := e.detectType(content)
+	tokens := e.tokenize(content)
+	extractedEntities := e.extractEntities(tokens, content)
+	data := e.extractStructured(v, tokens, extractedEntities, memType)
+	fp := entities.NewFingerprint(v.ID, memType, e.modelHash)
+	fp.WithData(data).WithTokenEstimate(5)
+	alerts := e.validateCrossT0T1(v, fp)
+	if len(alerts) > 0 {
+		t.Errorf("expected no alerts for coherent content, got %v", alerts)
+	}
+
+	// Invalid case: force a decision type but empty decision data
+	v2 := &entities.Verbatim{Content: "Random note without decision.", TokenCount: 10}
+	fp2 := entities.NewFingerprint(v2.ID, valueobjects.TypeDecision, e.modelHash)
+	fp2.WithData(valueobjects.FingerprintData{Decision: ""}).WithTokenEstimate(5)
+	alerts2 := e.validateCrossT0T1(v2, fp2)
+	found := false
+	for _, a := range alerts2 {
+		if a == "type=Decision but no decision extracted" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 'type=Decision but no decision extracted' alert, got %v", alerts2)
 	}
 }

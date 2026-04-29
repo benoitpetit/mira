@@ -8,7 +8,7 @@
 
   [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.4.5-blue?style=flat-square)]()
+  [![Version](https://img.shields.io/badge/Version-0.4.7-blue?style=flat-square)]()
   [![Tests](https://img.shields.io/badge/Tests-~55%25-yellow?style=flat-square)]()
 
   *100% Local • Deterministic (embedding variance < 1e-6) • Clean Architecture*
@@ -662,7 +662,8 @@ soul:
 mcp:
   name: "mira"
   version: "0.4.7"
-  transport: "stdio"  # stdio is the only supported transport
+  transport: "stdio"  # "stdio" for Claude Desktop/Cursor, "sse" for HTTP Server-Sent Events
+  address: "localhost:3001"  # Bind address when transport is "sse"
   timeout_seconds: 30
 
 # Prometheus metrics export
@@ -688,11 +689,12 @@ webhooks:
 
 | Tool                | Description                           |
 | ------------------- | ------------------------------------- |
-| `mira_store`        | Store memory with T0→T1,T2 extraction |
-| `mira_recall`       | Retrieve optimal context with budget  |
+| `mira_store`        | Store memory with T0/T1/T2 extraction |
+| `mira_recall`       | Retrieve optimal context with budget (supports `session_id`) |
 | `mira_load`         | Load full verbatim by ID              |
 | `mira_causal_chain` | Trace causal chain                    |
-| `mira_status`       | System statistics and health          |
+| `mira_status`       | System statistics, version, and uptime |
+| `mira_health`       | Quick health check (JSON)             |
 | `mira_timeline`     | Filtered chronological reconstruction |
 | `mira_archive`      | Archive and clean old memories        |
 | `mira_clear_memory` | Permanently delete all or room-scoped memories |
@@ -919,13 +921,23 @@ make prepublish VERSION=x.y.z  # Prepare a release
 
 ## Changelog
 
-### v0.4.7 (2026-04-24)
+### v0.4.7 (2026-04-30)
 
-- 🚀 New version 0.4.7
+- **SSE Transport**: MCP server now supports `transport: sse` for Server-Sent Events over HTTP.
+- **Multi-turn Memory Injection**: `mira_recall` accepts `session_id` for cross-turn memory boosting.
+- **Dynamic Budget Adjustment**: Recall budget scales ±20% based on query token count.
+- **Diversity Boost**: CBA greedy selection favors candidates with new subjects.
+- **Exact Deduplication**: `SearchExact` prevents storing identical verbatims twice.
+- **T0/T1 Validation**: Soft coherence checks with `validation_alerts` in fingerprint data.
+- **Negation Detection**: EN/FR patterns set `negated=true` on fingerprints.
+- **Causal Graph Semantics**: Relations require shared subjects/entities.
+- **Health Check Tool**: New `mira_health` MCP tool.
+- **Graceful Shutdown**: 5s timeout with SSE server shutdown.
+- **Metrics Enrichment**: Counters for store facts and recall selected.
 
 ### v0.4.6 (2026-04-24)
 
-- 🚀 New version 0.4.6
+- 🚀 Maintenance release
 
 ### v0.4.5 (2026-04-24)
 

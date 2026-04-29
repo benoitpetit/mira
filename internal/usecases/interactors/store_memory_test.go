@@ -11,6 +11,7 @@ import (
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
 	"github.com/google/uuid"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // Mock Transaction
@@ -18,6 +19,16 @@ type mockTx struct{}
 
 func (m *mockTx) Commit() error   { return nil }
 func (m *mockTx) Rollback() error { return nil }
+
+var testDB *sql.DB
+
+func init() {
+	var err error
+	testDB, err = sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		panic(err)
+	}
+}
 func (m *mockTx) Exec(query string, args ...interface{}) (sql.Result, error) { return nil, nil }
 func (m *mockTx) Query(query string, args ...interface{}) (*sql.Rows, error) { return nil, nil }
 func (m *mockTx) QueryRow(query string, args ...interface{}) *sql.Row { return nil }
@@ -46,9 +57,7 @@ func newMockStoreRepository() *mockStoreRepository {
 }
 
 func (m *mockStoreRepository) Begin() (*sql.Tx, error) {
-	// Return nil - we'll handle this specially in the use case
-	// by using non-tx methods when tx is nil
-	return nil, nil
+	return testDB.Begin()
 }
 
 func (m *mockStoreRepository) StoreVerbatim(ctx context.Context, verbatim *entities.Verbatim) error {
@@ -62,6 +71,11 @@ func (m *mockStoreRepository) StoreVerbatimTx(ctx context.Context, tx *sql.Tx, v
 
 func (m *mockStoreRepository) GetVerbatimByID(ctx context.Context, id uuid.UUID) (*entities.Verbatim, error) {
 	return m.verbatims[id], nil
+}
+
+func (m *mockStoreRepository) DeleteVerbatimByID(ctx context.Context, id uuid.UUID) error {
+	delete(m.verbatims, id)
+	return nil
 }
 
 func (m *mockStoreRepository) StoreFingerprint(ctx context.Context, fp *entities.Fingerprint) error {
@@ -175,6 +189,10 @@ func (m *mockStoreRepository) ClearAll(ctx context.Context) error {
 }
 
 func (m *mockStoreRepository) ClearByRoom(ctx context.Context, wing string, room *string) (int, error) {
+	return 0, nil
+}
+
+func (m *mockStoreRepository) ClearByIDs(ctx context.Context, ids []uuid.UUID) (int, error) {
 	return 0, nil
 }
 

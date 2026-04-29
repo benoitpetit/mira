@@ -26,12 +26,13 @@ Practical examples for using MIRA's MCP tools in real-world scenarios.
 | Tool | Description | Arguments |
 |------|-------------|-----------|
 | `mira_store` | Store a memory with T0/T1/T2 extraction | `content` (required), `wing` (required), `room` (optional), `type` (optional) |
-| `mira_recall` | Retrieve optimal context with budget via multi-stage pipeline (expansion, hybrid search, clustering, reranker) | `query` (required), `budget` (optional), `wing` (optional), `room` (optional), `fallback_wings` (optional) |
+| `mira_recall` | Retrieve optimal context with budget via multi-stage pipeline (expansion, hybrid search, clustering, reranker). Supports multi-turn session injection | `query` (required), `budget` (optional), `wing` (optional), `room` (optional), `fallback_wings` (optional), `session_id` (optional) |
 | `mira_load` | Load full verbatim by ID | `id` (required) |
 | `mira_causal_chain` | Trace causal chain | `id` (required), `max_depth` (optional), `include_consequences` (optional) |
 | `mira_timeline` | Chronological reconstruction | `wing` (required), `room` (optional), `since` (optional), `until` (optional), `type` (optional) |
-| `mira_status` | System statistics and health | none |
+| `mira_status` | System statistics, health, version, and uptime | none |
 | `mira_archive` | Archive old memories | none |
+| `mira_health` | Quick health check — returns JSON `status`, `db_connected`, `memory_count` | none |
 | `mira_clear_memory` | Permanently delete all or room-scoped memories | `mode` (`global` or `room`), `wing` (required for room), `room` (optional for room) |
 
 **Note on `room`**: If omitted, MIRA automatically assigns a standard room based on the detected memory type:
@@ -548,8 +549,11 @@ mira_recall(query="How should I handle payment retries?", wing="payment-service"
 
 **Response:**
 ```
-MIRA System Status:
+MIRA System Status
 ═══════════════════════════════════════
+Version: 0.4.7
+Uptime: 2h15m30s
+
 Storage:
   Verbatims: 1250
   Fingerprints: 1250
@@ -567,6 +571,20 @@ Memory Distribution:
 
 Active Wings: [auth-service, api-gateway, payment-service, user-service]
 ═══════════════════════════════════════
+```
+
+### Quick Health Check
+
+```json
+{
+  "tool": "mira_health",
+  "arguments": {}
+}
+```
+
+**Response:**
+```json
+{"status":"healthy","db_connected":true,"memory_count":1250}
 ```
 
 ---
@@ -594,7 +612,7 @@ curl http://localhost:9090/health
 {
   "status": "healthy",
   "timestamp": "2026-04-10T14:30:00Z",
-  "version": "0.4.5",
+  "version": "0.4.7",
   "checks": {
     "database": {"status": "pass", "message": "connected"},
     "vector_store": {"status": "pass", "message": "HNSW ready"},
@@ -619,6 +637,8 @@ Available metrics at `/metrics`:
 | `mira_embed_duration_seconds` | Histogram | Embedding latency |
 | `mira_memory_count` | Gauge | Current number of memories |
 | `mira_vector_count` | Gauge | Current number of vectors in index |
+| `mira_store_facts_total` | Counter | Total facts extracted during store operations |
+| `mira_recall_selected_total` | Counter | Total memories selected during recall operations |
 
 ---
 
@@ -751,5 +771,5 @@ recall:
 | `search_time_clustering.enabled` | `true` | Deduplicate results at search time |
 | `reranker.enabled` | `false` | Enable heuristic lexical reranking |
 
-*Last updated: 2026-04-23*
-*Version: 0.4.5*
+*Last updated: 2026-04-30*
+*Version: 0.4.7*

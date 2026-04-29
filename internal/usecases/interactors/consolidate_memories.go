@@ -170,27 +170,23 @@ func (uc *ConsolidateMemories) Execute(ctx context.Context, input ConsolidateMem
 		if err != nil {
 			continue
 		}
-		if tx != nil {
-			_ = uc.repository.StoreVerbatimTx(ctx, tx, verbatim)
-			_ = uc.repository.StoreFingerprintTx(ctx, tx, fp)
-			_ = uc.repository.StoreEmbeddingTx(ctx, tx, emb)
-			_ = tx.Commit()
-		} else {
-			_ = uc.repository.StoreVerbatim(ctx, verbatim)
-			_ = uc.repository.StoreFingerprint(ctx, fp)
-			_ = uc.repository.StoreEmbedding(ctx, emb)
-		}
+		_ = uc.repository.StoreVerbatimTx(ctx, tx, verbatim)
+		_ = uc.repository.StoreFingerprintTx(ctx, tx, fp)
+		_ = uc.repository.StoreEmbeddingTx(ctx, tx, emb)
+		_ = tx.Commit()
 
 		candidate := entities.NewCandidate(fp, verbatim, emb.Vector)
 		_ = uc.vectorStore.AddCandidate(ctx, candidate)
 
 		output.ConsolidatedCount++
 
-		// Remove original notes
+		// Remove original notes by ID (not by room, to avoid deleting unrelated memories)
+		idsToRemove := make([]uuid.UUID, 0, len(cluster))
 		for _, n := range cluster {
-			_, _ = uc.repository.ClearByRoom(ctx, input.Wing, func() *string { r := n.verbatim.Room; if r == nil { return nil }; return r }())
-			output.RemovedCount++
+			idsToRemove = append(idsToRemove, n.verbatim.ID)
 		}
+		deleted, _ := uc.repository.ClearByIDs(ctx, idsToRemove)
+		output.RemovedCount += deleted
 	}
 
 	return output, nil

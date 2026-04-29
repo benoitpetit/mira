@@ -16,5 +16,6 @@ type FingerprintData struct {
 	Assignee    string         `json:"assignee,omitempty"`
 	Deadline    string         `json:"deadline,omitempty"`
 	VerbatimRef string         `json:"verbatim_ref"`
+	Negated     bool           `json:"negated,omitempty"`
 	Custom      map[string]any `json:"custom,omitempty"`
 }

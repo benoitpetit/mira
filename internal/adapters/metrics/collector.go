@@ -20,13 +20,19 @@ type SimpleMetricsCollector struct {
 	recallCount    int64
 	recallDuration time.Duration
 	recallLast     time.Time
-	searchCount    int64
-	searchDuration time.Duration
-	searchLast     time.Time
-	embedCount     int64
-	embedDuration  time.Duration
-	embedLast      time.Time
-	startTime      time.Time
+	searchCount      int64
+	searchDuration   time.Duration
+	searchLast       time.Time
+	embedCount       int64
+	embedDuration    time.Duration
+	embedLast        time.Time
+	errorCount       int64
+	storeFactCount   int64
+	recallSelected   int64
+	recallBudgetUsed float64
+	memoryCount      int64
+	vectorCount      int64
+	startTime        time.Time
 }
 
 // NewSimpleMetricsCollector creates a new simple metrics collector
@@ -75,6 +81,42 @@ func (m *SimpleMetricsCollector) RecordEmbed(duration time.Duration) {
 	m.embedCount++
 	m.embedDuration += duration
 	m.embedLast = time.Now()
+}
+
+// RecordError records an error occurrence
+func (m *SimpleMetricsCollector) RecordError() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.errorCount++
+}
+
+// RecordStoreResult records the result of a store operation
+func (m *SimpleMetricsCollector) RecordStoreResult(factCount int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.storeFactCount += int64(factCount)
+}
+
+// RecordRecallResult records the result of a recall operation
+func (m *SimpleMetricsCollector) RecordRecallResult(selectedCount int, budgetUsed float64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.recallSelected += int64(selectedCount)
+	m.recallBudgetUsed += budgetUsed
+}
+
+// UpdateMemoryCount updates the current memory count gauge
+func (m *SimpleMetricsCollector) UpdateMemoryCount(count int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.memoryCount = int64(count)
+}
+
+// UpdateVectorCount updates the current vector count gauge
+func (m *SimpleMetricsCollector) UpdateVectorCount(count int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.vectorCount = int64(count)
 }
 
 // GetReport returns a metrics report

@@ -67,4 +67,5 @@ func main() {
 	if err := application.Run(); err != nil {
 		log.Fatalf("Application error: %v", err)
 	}
+	application.Close()
 }

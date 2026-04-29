@@ -26,8 +26,10 @@ type PrometheusCollector struct {
 	errorsTotal prometheus.Counter
 
 	// Métriques de jauge (état actuel)
-	memoryCount prometheus.Gauge
-	vectorCount prometheus.Gauge
+	memoryCount    prometheus.Gauge
+	vectorCount    prometheus.Gauge
+	storeFacts     prometheus.Counter
+	recallSelected prometheus.Counter
 
 	// Registre Prometheus
 	registry *prometheus.Registry
@@ -93,6 +95,16 @@ func NewPrometheusCollector() *PrometheusCollector {
 			Name: "mira_vector_count",
 			Help: "Current number of vectors in the index",
 		}),
+
+		storeFacts: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "mira_store_facts_total",
+			Help: "Total number of facts extracted during store operations",
+		}),
+
+		recallSelected: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "mira_recall_selected_total",
+			Help: "Total number of memories selected during recall operations",
+		}),
 	}
 
 	// Enregistrer toutes les métriques
@@ -107,6 +119,8 @@ func NewPrometheusCollector() *PrometheusCollector {
 		pc.errorsTotal,
 		pc.memoryCount,
 		pc.vectorCount,
+		pc.storeFacts,
+		pc.recallSelected,
 	)
 
 	return pc
@@ -143,6 +157,16 @@ func (pc *PrometheusCollector) RecordEmbed(duration time.Duration) {
 // RecordError records an error
 func (pc *PrometheusCollector) RecordError() {
 	pc.errorsTotal.Inc()
+}
+
+// RecordStoreResult records the result of a store operation
+func (pc *PrometheusCollector) RecordStoreResult(factCount int) {
+	pc.storeFacts.Add(float64(factCount))
+}
+
+// RecordRecallResult records the result of a recall operation
+func (pc *PrometheusCollector) RecordRecallResult(selectedCount int, budgetUsed float64) {
+	pc.recallSelected.Add(float64(selectedCount))
 }
 
 // UpdateMemoryCount updates the memory count gauge

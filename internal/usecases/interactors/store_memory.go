@@ -129,6 +129,22 @@ func (uc *StoreMemory) Execute(ctx context.Context, input StoreMemoryInput) (*St
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
+	// 0. Exact deduplication — if an identical verbatim already exists, return it
+	if exactStore, ok := uc.vectorStore.(interface {
+		SearchExact(ctx context.Context, query string, limit int, wing, room *string) ([]*entities.Candidate, error)
+	}); ok {
+		exact, err := exactStore.SearchExact(ctx, input.Content, 1, &input.Wing, input.Room)
+		if err == nil && len(exact) > 0 && exact[0].Memory != nil {
+			return &StoreMemoryOutput{
+				FingerprintID: exact[0].Memory.ID.String(),
+				Type:          string(exact[0].Memory.Type),
+				FactCount:     exact[0].Memory.FactCount,
+				TokenCount:    exact[0].Verbatim.TokenCount,
+				ModelHash:     exact[0].Memory.ModelHash,
+			}, nil
+		}
+	}
+
 	// 1. Create verbatim
 	verbatim := entities.NewVerbatim(input.Content, input.Wing, input.Room)
 	verbatim.Metrics = input.Metrics
@@ -153,40 +169,27 @@ func (uc *StoreMemory) Execute(ctx context.Context, input StoreMemoryInput) (*St
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
-	// Handle nil tx (for testing) - use non-tx methods
-	if tx == nil {
-		if err := uc.repository.StoreVerbatim(ctx, verbatim); err != nil {
-			return nil, fmt.Errorf("failed to store verbatim: %w", err)
-		}
-		if err := uc.repository.StoreFingerprint(ctx, fp); err != nil {
-			return nil, fmt.Errorf("failed to store fingerprint: %w", err)
-		}
-		if err := uc.repository.StoreEmbedding(ctx, emb); err != nil {
-			return nil, fmt.Errorf("failed to store embedding: %w", err)
-		}
-	} else {
-		// Store T0
-		if err := uc.repository.StoreVerbatimTx(ctx, tx, verbatim); err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("failed to store verbatim: %w", err)
-		}
+	// Store T0
+	if err := uc.repository.StoreVerbatimTx(ctx, tx, verbatim); err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to store verbatim: %w", err)
+	}
 
-		// Store T1
-		if err := uc.repository.StoreFingerprintTx(ctx, tx, fp); err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("failed to store fingerprint: %w", err)
-		}
+	// Store T1
+	if err := uc.repository.StoreFingerprintTx(ctx, tx, fp); err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to store fingerprint: %w", err)
+	}
 
-		// Store T2
-		if err := uc.repository.StoreEmbeddingTx(ctx, tx, emb); err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("failed to store embedding: %w", err)
-		}
+	// Store T2
+	if err := uc.repository.StoreEmbeddingTx(ctx, tx, emb); err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to store embedding: %w", err)
+	}
 
-		// Commit transaction
-		if err := tx.Commit(); err != nil {
-			return nil, fmt.Errorf("failed to commit transaction: %w", err)
-		}
+	// Commit transaction
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	// 4. Add to vector store (non-fatal)
@@ -253,6 +256,7 @@ func (uc *StoreMemory) Execute(ctx context.Context, input StoreMemoryInput) (*St
 	// Record metrics if collector is available
 	if uc.metricsCollector != nil {
 		uc.metricsCollector.RecordStore(time.Since(start))
+		uc.metricsCollector.RecordStoreResult(fp.FactCount)
 	}
 
 	return &StoreMemoryOutput{

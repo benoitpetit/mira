@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
+	"github.com/google/uuid"
 )
 
 // MockStatsRepository pour les tests
@@ -35,6 +37,10 @@ func (m *mockStatsRepository) ClearAll(ctx context.Context) error {
 }
 
 func (m *mockStatsRepository) ClearByRoom(ctx context.Context, wing string, room *string) (int, error) {
+	return 0, nil
+}
+
+func (m *mockStatsRepository) ClearByIDs(ctx context.Context, ids []uuid.UUID) (int, error) {
 	return 0, nil
 }
 
@@ -86,7 +92,7 @@ func TestGetStatus_Execute(t *testing.T) {
 		},
 	}
 
-	interactor := NewGetStatus(mockStatsRepo, mockModelRepo)
+	interactor := NewGetStatus(mockStatsRepo, mockModelRepo, time.Now(), "test")
 	output, err := interactor.Execute(ctx)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
@@ -168,7 +174,7 @@ func TestGetStatus_EmptyDatabase(t *testing.T) {
 		},
 	}
 
-	interactor := NewGetStatus(mockStatsRepo, mockModelRepo)
+	interactor := NewGetStatus(mockStatsRepo, mockModelRepo, time.Now(), "test")
 	output, err := interactor.Execute(ctx)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
@@ -220,7 +226,7 @@ func TestGetStatus_WithModels(t *testing.T) {
 		},
 	}
 
-	interactor := NewGetStatus(mockStatsRepo, mockModelRepo)
+	interactor := NewGetStatus(mockStatsRepo, mockModelRepo, time.Now(), "test")
 	output, err := interactor.Execute(ctx)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
@@ -252,7 +258,7 @@ func TestGetStatus_StatsError(t *testing.T) {
 		},
 	}
 
-	interactor := NewGetStatus(mockStatsRepo, mockModelRepo)
+	interactor := NewGetStatus(mockStatsRepo, mockModelRepo, time.Now(), "test")
 	output, err := interactor.Execute(ctx)
 	if err == nil {
 		t.Error("Expected error for stats failure, got nil")
@@ -286,7 +292,7 @@ func TestGetStatus_ModelsError(t *testing.T) {
 		},
 	}
 
-	interactor := NewGetStatus(mockStatsRepo, mockModelRepo)
+	interactor := NewGetStatus(mockStatsRepo, mockModelRepo, time.Now(), "test")
 	output, err := interactor.Execute(ctx)
 	if err != nil {
 		t.Fatalf("Execute should not fail when models error: %v", err)

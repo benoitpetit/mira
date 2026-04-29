@@ -28,6 +28,7 @@ type HNSWStore struct {
 	graph     *hnsw.Graph[node]
 	store     ports.EmbeddingSource
 	dimension int
+	modelHash string
 	indexPath string
 	mu        sync.RWMutex
 	idToUUID  map[string]uuid.UUID
@@ -99,9 +100,28 @@ func (h *HNSWStore) applyOptions(opts HNSWOptions) {
 	h.graph.Distance = hnsw.DistanceFunc(util.CosineDistance)
 }
 
+// SetModelHash sets the expected embedding model hash for validation.
+func (h *HNSWStore) SetModelHash(hash string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.modelHash = hash
+}
+
 // SearchLexical implements VectorStore by delegating to the underlying EmbeddingSource.
 func (h *HNSWStore) SearchLexical(ctx context.Context, query string, limit int, wing, room *string) ([]*entities.Candidate, error) {
 	return h.store.SearchLexical(ctx, query, limit, wing, room)
+}
+
+// SearchExact implements VectorStore exact search by delegating to the underlying store.
+func (h *HNSWStore) SearchExact(ctx context.Context, query string, limit int, wing, room *string) ([]*entities.Candidate, error) {
+	if h.store != nil {
+		if exactStore, ok := h.store.(interface {
+			SearchExact(ctx context.Context, query string, limit int, wing, room *string) ([]*entities.Candidate, error)
+		}); ok {
+			return exactStore.SearchExact(ctx, query, limit, wing, room)
+		}
+	}
+	return nil, nil
 }
 
 // Search implements VectorStore
@@ -111,6 +131,11 @@ func (h *HNSWStore) Search(ctx context.Context, queryVec []float32, limit int, w
 
 	if !h.ready {
 		return nil, fmt.Errorf("HNSW index not ready")
+	}
+
+	// Validate query vector dimension
+	if len(queryVec) != h.dimension {
+		return nil, fmt.Errorf("query vector dimension mismatch: got %d, expected %d", len(queryVec), h.dimension)
 	}
 
 	// Search in HNSW
@@ -263,6 +288,7 @@ type hnswNodeData struct {
 type hnswIndexData struct {
 	Version   string            // Version du format
 	Dimension int               // Dimension des embeddings
+	ModelHash string            // Hash du modèle d'embedding
 	NodeCount int               // Nombre de nœuds
 	Nodes     []hnswNodeData    // Données des nœuds
 	UUIDToID  map[string]string // Mapping UUID -> ID interne
@@ -309,6 +335,7 @@ func (h *HNSWStore) Save() error {
 	data := hnswIndexData{
 		Version:   "1.0",
 		Dimension: h.dimension,
+		ModelHash: h.modelHash,
 		NodeCount: len(nodes),
 		Nodes:     nodes,
 		UUIDToID:  uuidToID,
@@ -419,6 +446,11 @@ func (h *HNSWStore) Load() error {
 	// Vérifier la dimension
 	if data.Dimension != 0 && data.Dimension != h.dimension {
 		return fmt.Errorf("dimension mismatch: saved=%d, expected=%d", data.Dimension, h.dimension)
+	}
+
+	// Vérifier le model hash
+	if data.ModelHash != "" && h.modelHash != "" && data.ModelHash != h.modelHash {
+		return fmt.Errorf("model hash mismatch: saved=%s, expected=%s", data.ModelHash, h.modelHash)
 	}
 
 	h.mu.Lock()

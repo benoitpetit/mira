@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"math"
 	"regexp"
 	"strings"
@@ -40,6 +41,7 @@ type NativeExtractor struct {
 	factStatePattern   *regexp.Regexp
 	factDataPattern    *regexp.Regexp
 	subjectPatterns    []*regexp.Regexp
+	negationPatterns   []*regexp.Regexp
 
 	// Gazetteers for NER
 	commonFirstNames map[string]bool
@@ -134,6 +136,11 @@ func (e *NativeExtractor) compilePatterns() {
 	e.factStatePattern = regexp.MustCompile(`(?i)(?:is|are|was|were|has|have|contains|equals|means|requires|supports|runs on|uses|costs|weighs|measures)\s+`)
 	e.factDataPattern = regexp.MustCompile(`(?i)(?:\d{2,}|true|false|v\d+\.\d+|version\s+\d|port\s+\d|http[s]?://|[A-Z]{2,}\d+)`)
 
+	e.negationPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\b(not|no|never|none|nobody|nothing|neither|nowhere|don't|doesn't|didn't|won't|wouldn't|couldn't|shouldn't|can't|isn't|aren't|wasn't|weren't|hasn't|haven't|hadn't)\b`),
+		regexp.MustCompile(`(?i)(?:^|\s)(?:pas|ne\s+\w+\s+pas|jamais|rien|personne|aucun|nulle part)(?:$|\s|[.,;!?])`),
+	}
+
 	e.subjectPatterns = []*regexp.Regexp{
 		regexp.MustCompile(`(?i)(?:subject|topic|about|regarding)\s*[:\s]+([\p{L}\p{N}\s.]+?)(?:\.|\n|$)`),
 		regexp.MustCompile(`(?i)(?:migration|architecture|auth|api|db|database|frontend|backend|deploy)\s+(?:of\s+)?([\p{L}\p{N}\s]+?)(?:\.|\n|$)`),
@@ -221,6 +228,14 @@ func (e *NativeExtractor) ExtractPipeline(ctx context.Context, verbatim *entitie
 	fp.CalculateFactCount()
 	fp.Entities = extractedEntities
 	fp.Subjects = data.Subject
+
+	// Cross-layer T0/T1 validation (soft check, non-blocking)
+	if alerts := e.validateCrossT0T1(verbatim, fp); len(alerts) > 0 {
+		if fp.Data.Custom == nil {
+			fp.Data.Custom = make(map[string]any)
+		}
+		fp.Data.Custom["validation_alerts"] = alerts
+	}
 
 	embedding := entities.NewEmbedding(verbatim.ID, e.modelHash, vec)
 	embedding.Normalized = true
@@ -430,6 +445,14 @@ func (e *NativeExtractor) extractStructured(v *entities.Verbatim, tokens []Token
 		}
 	}
 
+	// Negation detection
+	for _, pattern := range e.negationPatterns {
+		if pattern.MatchString(content) {
+			data.Negated = true
+			break
+		}
+	}
+
 	// Subject inference
 	data.Subject = e.inferSubject(content, entities, memType)
 
@@ -475,6 +498,43 @@ func (e *NativeExtractor) inferSubject(content string, entities []string, memTyp
 	return subjects
 }
 
+// validateCrossT0T1 performs soft validation that extracted T1 data is consistent with T0 verbatim.
+// Returns a list of alert strings; never blocks extraction.
+func (e *NativeExtractor) validateCrossT0T1(verbatim *entities.Verbatim, fp *entities.Fingerprint) []string {
+	var alerts []string
+	contentLower := strings.ToLower(verbatim.Content)
+
+	// 1. Entity presence check
+	for _, ent := range fp.Entities {
+		if !strings.Contains(contentLower, strings.ToLower(ent)) {
+			alerts = append(alerts, fmt.Sprintf("entity %q not found in verbatim", ent))
+		}
+	}
+
+	// 2. Type/data coherence check
+	switch fp.Type {
+	case valueobjects.TypeDecision:
+		if fp.Data.Decision == "" {
+			alerts = append(alerts, "type=Decision but no decision extracted")
+		}
+	case valueobjects.TypeFact:
+		if fp.Data.Decision != "" {
+			alerts = append(alerts, "type=Fact but decision field is populated")
+		}
+	case valueobjects.TypePreference:
+		if !e.preferencePattern.MatchString(contentLower) {
+			alerts = append(alerts, "type=Preference but no preference pattern matched")
+		}
+	}
+
+	// 3. Token ratio sanity (T1 should not exceed T0 by orders of magnitude)
+	if fp.TokenEstimate > verbatim.TokenCount*10 && verbatim.TokenCount > 0 {
+		alerts = append(alerts, fmt.Sprintf("T1 token estimate (%d) vastly exceeds T0 (%d)", fp.TokenEstimate, verbatim.TokenCount))
+	}
+
+	return alerts
+}
+
 func (e *NativeExtractor) normalizeL2(vec []float32) []float32 {
 	var sum float64
 	for _, v := range vec {
@@ -514,9 +574,13 @@ func (e *NativeExtractor) DetectCausalRelations(ctx context.Context, newFp *enti
 
 	for _, cp := range e.causalPatterns {
 		if cp.pattern.MatchString(contentLower) {
-			// Find first recent fingerprint not already linked
+			// Find first recent fingerprint with semantic overlap
 			for _, recentFp := range recentFps {
-				if recentFp != nil && !seen[recentFp.ID] {
+				if recentFp == nil || seen[recentFp.ID] {
+					continue
+				}
+				// Require semantic overlap (shared subject or entity) to reduce false positives
+				if hasSemanticOverlap(newFp, recentFp) {
 					edge := entities.NewCausalEdge(recentFp.ID, newFp.ID, cp.relType)
 					edges = append(edges, edge)
 					seen[recentFp.ID] = true
@@ -527,6 +591,28 @@ func (e *NativeExtractor) DetectCausalRelations(ctx context.Context, newFp *enti
 	}
 
 	return edges, nil
+}
+
+// hasSemanticOverlap checks whether two fingerprints share at least one subject or entity.
+func hasSemanticOverlap(a, b *entities.Fingerprint) bool {
+	set := make(map[string]bool)
+	for _, s := range a.Subjects {
+		set[strings.ToLower(s)] = true
+	}
+	for _, e := range a.Entities {
+		set[strings.ToLower(e)] = true
+	}
+	for _, s := range b.Subjects {
+		if set[strings.ToLower(s)] {
+			return true
+		}
+	}
+	for _, e := range b.Entities {
+		if set[strings.ToLower(e)] {
+			return true
+		}
+	}
+	return false
 }
 
 // Ensure NativeExtractor implements the Extractor interface

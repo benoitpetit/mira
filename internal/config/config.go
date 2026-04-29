@@ -170,6 +170,7 @@ type MCPConfig struct {
 	Version        string `yaml:"version"`
 	Transport      string `yaml:"transport"`
 	TimeoutSeconds int    `yaml:"timeout_seconds"`
+	Address        string `yaml:"address"`
 }
 
 // Default returns default configuration
@@ -233,6 +234,7 @@ func Default() *Config {
 			Version:        "0.4.7",
 			Transport:      "stdio",
 			TimeoutSeconds: 30,
+			Address:        "localhost:3001",
 		},
 		// HNSW configuration - vector search index
 		// Note: EfConstruction is not supported by the underlying hnsw library (coder/hnsw v0.4.0).
@@ -517,6 +519,9 @@ func (c *Config) Validate() error {
 	}
 	if c.MCP.TimeoutSeconds <= 0 {
 		c.MCP.TimeoutSeconds = 30
+	}
+	if c.MCP.Address == "" {
+		c.MCP.Address = "localhost:3001"
 	}
 
 	// Embeddings validation - ModelHash

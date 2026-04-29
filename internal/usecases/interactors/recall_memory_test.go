@@ -123,6 +123,11 @@ func (m *mockRecallMetricsCollector) RecordEmbed(duration time.Duration) {}
 func (m *mockRecallMetricsCollector) GetReport(ctx context.Context) ports.MetricsReport {
 	return ports.MetricsReport{}
 }
+func (m *mockRecallMetricsCollector) RecordError() {}
+func (m *mockRecallMetricsCollector) RecordStoreResult(factCount int) {}
+func (m *mockRecallMetricsCollector) RecordRecallResult(selectedCount int, budgetUsed float64) {}
+func (m *mockRecallMetricsCollector) UpdateMemoryCount(count int) {}
+func (m *mockRecallMetricsCollector) UpdateVectorCount(count int) {}
 
 // createTestInteractor creates a RecallMemory interactor with mock dependencies
 func createTestInteractor(candidates []*entities.Candidate) *RecallMemory {
@@ -134,7 +139,7 @@ func createTestInteractor(candidates []*entities.Candidate) *RecallMemory {
 	metrics := &mockRecallMetricsCollector{}
 
 	config := DefaultRecallMemoryConfig()
-	return NewRecallMemory(vectorStore, cache, graph, embedder, renderer, config, metrics)
+	return NewRecallMemory(vectorStore, cache, graph, embedder, renderer, config, metrics, nil)
 }
 
 // TestExecute tests end-to-end RecallMemory use case
@@ -427,7 +432,7 @@ func TestSelectGreedy(t *testing.T) {
 			scored := interactor.scoreCandidates(tt.candidates, queryVec, nil)
 			pruned := interactor.pruneCandidates(scored)
 
-			selected := interactor.selectGreedy(ctx, pruned, tt.budget)
+			selected := interactor.selectGreedy(ctx, pruned, tt.budget, nil)
 
 			// Verify budget is respected
 			totalTokens := 0
@@ -925,7 +930,7 @@ func BenchmarkSelectGreedy(b *testing.B) {
 		// Work on a copy to avoid modifying original data between iterations
 		prunedCopy := make([]*entities.Candidate, len(pruned))
 		copy(prunedCopy, pruned)
-		uc.selectGreedy(ctx, prunedCopy, 4000)
+		uc.selectGreedy(ctx, prunedCopy, 4000, nil)
 	}
 }
 

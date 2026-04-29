@@ -87,7 +87,8 @@ recall:
 mcp:
   name: "mira"
   version: "0.4.7"
-  transport: "stdio"
+  transport: "stdio"      # "stdio" for Claude Desktop/Cursor, "sse" for HTTP Server-Sent Events
+  address: "localhost:3001" # Bind address when transport is "sse"
   timeout_seconds: 30
 
 # =============================================================================

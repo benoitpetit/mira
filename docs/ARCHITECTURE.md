@@ -142,7 +142,7 @@ MIRA's retrieval is not "top-k by similarity". It is a **constrained optimizatio
 ### Composite Score Formula
 
 ```
-S(m) = ρ × δ × η × (1-σ) × τ × χ × 𝟙[ρ>θ]
+S(m) = ρ × δ × η × (1-σ) × τ × χ × υ × 𝟙[ρ>θ]
 
 where:
   ρ = Semantic Relevance     cos(embedding_m, embedding_q)
@@ -150,6 +150,7 @@ where:
   η = Temporal Weight        exp(-λ × age_days)
   σ = Max Overlap            sim(m, already_selected)
   τ = Session Boost          1.2 if within 2h window
+  υ = Diversity Boost        1 + α × (new_subjects / total_subjects)
   χ = Causal Penalty         exp(-0.15 × |causal_links|)
   θ = Adaptive Threshold     dynamic relevance floor
 ```
@@ -358,7 +359,7 @@ The `Config` struct is organized into logical sections:
 | `archive_thresholds` | Auto-archive days per type           |
 | `overlap_cache` | TTL and max entries for pairwise cache     |
 | `extraction`  | NLP parameters (entity length, causal lookback) |
-| `mcp`         | Server name, version, transport, timeout     |
+| `mcp`         | Server name, version, transport, address, timeout |
 
 ### Example: New `recall` Section
 

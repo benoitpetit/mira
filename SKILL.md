@@ -2,7 +2,7 @@
 name: mira
 description: Long-term memory guidance for MIRA MCP integration
 author: benoitpetit
-version: "0.4.5"
+version: "0.4.7"
 tags: [memory, mcp, mira]
 ---
 
@@ -10,7 +10,7 @@ tags: [memory, mcp, mira]
 
 You are augmented with **MIRA** (Memory with Information-theoretic Relevance Allocation), an external MCP server providing long-term, cross-session memory for LLMs. MIRA uses a **multi-stage retrieval pipeline** (Query Expansion → Dense HNSW Search → Lexical FTS5 Search → RRF Fusion → Search-Time Clustering → Tag Boost → Adaptive Threshold → CBA Greedy Allocation) to retrieve the most relevant context within a token budget.
 
-The detailed tool schemas for `mira_store`, `mira_recall`, `mira_load`, `mira_timeline`, `mira_causal_chain`, `mira_status`, `mira_archive`, and `mira_clear_memory` are documented in the *External Tools Reference (MCP Servers)* section of your system prompt.
+The detailed tool schemas for `mira_store`, `mira_recall`, `mira_load`, `mira_timeline`, `mira_causal_chain`, `mira_status`, `mira_health`, `mira_archive`, and `mira_clear_memory` are documented in the *External Tools Reference (MCP Servers)* section of your system prompt.
 
 > **SOUL Extension**: If MIRA is running with SOUL enabled (`--with-soul` or `soul.enabled: true`), 8 additional `soul_*` tools are available for identity capture, drift detection, and model-swap preservation. These are documented separately in the SOUL skill.
 
@@ -43,7 +43,7 @@ cp config.example.yaml config.yaml
 Key defaults (no change required):
 - Storage: `.mira/mira.db` (SQLite + WAL)
 - Embedding model: `sentence-transformers/all-MiniLM-L6-v2` (384d)
-- MCP transport: `stdio` (for Claude Desktop, Cursor, etc.) — stdio is currently the only supported transport
+- MCP transport: `stdio` (for Claude Desktop, Cursor, etc.) or `sse` for HTTP Server-Sent Events
 
 ### 4. Run Migrations
 ```bash
@@ -55,6 +55,10 @@ This downloads the embedding model on first run (~80 MB).
 ```bash
 # stdio mode (for Claude Desktop, Cursor, b0p, etc.)
 ./mira --config config.yaml
+
+# sse mode (for remote clients or web UIs)
+./mira --config config.yaml
+# With mcp.transport: "sse" and mcp.address: "localhost:3001" in config.yaml
 ```
 
 ### 6. MCP Client Configuration
@@ -148,6 +152,11 @@ If you do not specify `room`, MIRA auto-assigns one based on `type`:
 Always start with a project-specific recall:
 ```json
 { "tool": "mira_recall", "arguments": { "query": "authentication strategy JWT", "wing": "<project>", "budget": 4000 } }
+```
+
+For multi-turn conversations, use `session_id` to boost memories selected in previous turns:
+```json
+{ "tool": "mira_recall", "arguments": { "query": "auth strategy", "wing": "<project>", "session_id": "session-abc-123", "budget": 4000 } }
 ```
 
 ### Step 2: Query general wing if sparse
@@ -252,7 +261,8 @@ Store memories **progressively** as you work. Do not wait until the end of a lon
 
 - **`mira_timeline(wing="<project>")`** — Review project evolution before major refactors. Filter by `room`, `type`, `since`, `until`.
 - **`mira_archive`** — Call occasionally to archive stale session notes and debug logs.
-- **`mira_status`** — Check system health, memory counts, and index status before heavy usage.
+- **`mira_status`** — Check system health, memory counts, version, uptime, and index status before heavy usage.
+- **`mira_health`** — Quick JSON health check (`status`, `db_connected`, `memory_count`). Use for lightweight liveness probes.
 - **`mira_clear_memory`** — Permanently delete memories (global or room-scoped). **Use ONLY with explicit user request.**
 
 ---
