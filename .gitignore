@@ -3,7 +3,8 @@ docs/adr/
 docs/dev/
 
 # Build artifacts
-mira
+/mira
+bin/
 *.exe
 *.dll
 *.so
