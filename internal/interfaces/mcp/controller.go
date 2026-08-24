@@ -90,6 +90,11 @@ type (
 		Execute(ctx context.Context, input interactors.ClearMemoryInput) (*interactors.ClearMemoryOutput, error)
 	}
 
+	// CompressMemoriesExecutor runs on-demand compression
+	CompressMemoriesExecutor interface {
+		Execute(ctx context.Context, input interactors.CompressMemoriesInput) (*interactors.CompressMemoriesOutput, error)
+	}
+
 	// FingerprintLookup provides read-only access to fingerprint lookups
 	FingerprintLookup interface {
 		GetFingerprintByVerbatimID(ctx context.Context, verbatimID uuid.UUID) (*entities.Fingerprint, error)
@@ -98,15 +103,16 @@ type (
 
 // Controller handles MCP tool calls
 type Controller struct {
-	storeMemory     StoreMemoryExecutor
-	recallMemory    RecallMemoryExecutor
-	loadMemory      LoadMemoryExecutor
-	getTimeline     GetTimelineExecutor
-	getStatus       GetStatusExecutor
-	getCausalChain  GetCausalChainExecutor
-	archiveMemories ArchiveMemoriesExecutor
-	clearMemory     ClearMemoryExecutor
-	fingerprintRepo FingerprintLookup
+	storeMemory      StoreMemoryExecutor
+	recallMemory     RecallMemoryExecutor
+	loadMemory       LoadMemoryExecutor
+	getTimeline      GetTimelineExecutor
+	getStatus        GetStatusExecutor
+	getCausalChain   GetCausalChainExecutor
+	archiveMemories  ArchiveMemoriesExecutor
+	clearMemory      ClearMemoryExecutor
+	compressMemories CompressMemoriesExecutor
+	fingerprintRepo  FingerprintLookup
 }
 
 // NewController creates a new MCP controller
@@ -120,17 +126,19 @@ func NewController(
 	archiveMemories *interactors.ArchiveMemories,
 	clearMemory *interactors.ClearMemory,
 	fingerprintRepo FingerprintLookup,
+	compressMemories *interactors.CompressMemories,
 ) *Controller {
 	return &Controller{
-		storeMemory:     storeMemory,
-		recallMemory:    recallMemory,
-		loadMemory:      loadMemory,
-		getTimeline:     getTimeline,
-		getStatus:       getStatus,
-		getCausalChain:  getCausalChain,
-		archiveMemories: archiveMemories,
-		clearMemory:     clearMemory,
-		fingerprintRepo: fingerprintRepo,
+		storeMemory:      storeMemory,
+		recallMemory:     recallMemory,
+		loadMemory:       loadMemory,
+		getTimeline:      getTimeline,
+		getStatus:        getStatus,
+		getCausalChain:   getCausalChain,
+		archiveMemories:  archiveMemories,
+		clearMemory:      clearMemory,
+		fingerprintRepo:  fingerprintRepo,
+		compressMemories: compressMemories,
 	}
 }
 
@@ -145,7 +153,7 @@ func (c *Controller) RegisterTools(mcpServer server.MCPServer) {
 	})
 }
 
-// ToolDefinitions returns the 8 MIRA tool definitions.
+// ToolDefinitions returns the 9 MIRA tool definitions.
 // Used for combined registration when SOUL is embedded.
 func (c *Controller) ToolDefinitions() []mcptypes.Tool {
 	return []mcptypes.Tool{
@@ -194,6 +202,7 @@ Parameters:
   - wing: Filter to specific namespace/project
   - room: Filter to specific sub-category
   - fallback_wings: Comma-separated fallback wings to search if primary wing yields no results
+  - session_id: Optional session identifier for multi-turn memory injection (boosts memories recalled in previous turns by +30%)
 
 Examples:
   General recall (EN): {"query": "What was decided about authentication?", "budget": 2000}
@@ -350,6 +359,49 @@ Examples:
 					},
 				},
 			},
+			{
+				Name: "mira_health",
+				Description: `Quick JSON health check for MIRA system.
+
+Returns lightweight JSON status for liveness/readiness probes:
+  - status: "healthy" | "degraded"
+  - db_connected: true | false
+  - memory_count: Total memories stored
+  - vector_index_ready: true | false
+
+No parameters required. Use for lightweight probes versus mira_status for full stats.`,
+				InputSchema: mcptypes.ToolInputSchema{
+					Type:       "object",
+					Properties: map[string]interface{}{},
+				},
+			},
+			{
+				Name: "mira_compress",
+				Description: `Run rule-based context compression over session_note verbatims.
+
+Generates condensed summaries (stored alongside originals) that the recall engine
+surfaces automatically when the token budget is tight. No LLM required — compression
+is deterministic and instant.
+
+Parameters:
+  - wing:       Limit compression to a specific wing (optional; default: all wings)
+  - min_tokens: Only compress verbatims with at least this many tokens (optional; default: 100)
+  - dry_run:    Count candidates without persisting summaries (optional; default: false)
+
+Examples:
+  Compress everything:       {}
+  Compress one wing:         {"wing": "auth-service"}
+  Preview without saving:    {"dry_run": true}
+  Only long notes:           {"min_tokens": 200}`,
+				InputSchema: mcptypes.ToolInputSchema{
+					Type: "object",
+					Properties: map[string]interface{}{
+						"wing":       map[string]string{"type": "string", "description": "Limit to this wing (optional)"},
+						"min_tokens": map[string]string{"type": "number", "description": "Minimum token count to qualify (default: 100)"},
+						"dry_run":    map[string]string{"type": "boolean", "description": "Preview without persisting (default: false)"},
+					},
+				},
+			},
 	}
 }
 
@@ -375,6 +427,8 @@ func (c *Controller) Call(ctx context.Context, name string, arguments map[string
 		return c.handleArchive(ctx)
 	case "mira_clear_memory":
 		return c.handleClearMemory(ctx, arguments)
+	case "mira_compress":
+		return c.handleCompress(ctx, arguments)
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}
@@ -555,6 +609,7 @@ func (c *Controller) handleRecall(ctx context.Context, args map[string]interface
 	parts = append(parts, "INSTRUCTIONS:")
 	parts = append(parts, "- HEADER: Reference only, use mira_load(id) for full content")
 	parts = append(parts, "- FINGERPRINT: Essential extracted facts (informational density)")
+	parts = append(parts, "- COMPRESSED: Rule-based summary (~40% of verbatim, when available)")
 	parts = append(parts, "- VERBATIM: Complete original content")
 
 	return &mcptypes.CallToolResult{
@@ -588,6 +643,36 @@ func (c *Controller) handleLoad(ctx context.Context, args map[string]interface{}
 
 	return &mcptypes.CallToolResult{
 		Content: []mcptypes.Content{mcptypes.TextContent{Type: "text", Text: meta + output.Verbatim.Content}},
+	}, nil
+}
+
+func (c *Controller) handleCompress(ctx context.Context, args map[string]interface{}) (*mcptypes.CallToolResult, error) {
+	input := interactors.CompressMemoriesInput{}
+
+	if w, ok := args["wing"].(string); ok {
+		input.Wing = strings.TrimSpace(w)
+	}
+	if mt, ok := args["min_tokens"].(float64); ok && mt > 0 {
+		input.MinTokens = int(mt)
+	}
+	if dr, ok := args["dry_run"].(bool); ok {
+		input.DryRun = dr
+	}
+
+	output, err := c.compressMemories.Execute(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+
+	qualifier := ""
+	if input.DryRun {
+		qualifier = " (dry-run — nothing persisted)"
+	}
+	result := fmt.Sprintf("Compression complete%s:\n- Compressed: %d verbatims\n- Tokens saved: %d",
+		qualifier, output.CompressedCount, output.TokensSaved)
+
+	return &mcptypes.CallToolResult{
+		Content: []mcptypes.Content{mcptypes.TextContent{Type: "text", Text: result}},
 	}, nil
 }
 
@@ -795,6 +880,12 @@ func (c *Controller) handleTimeline(ctx context.Context, args map[string]interfa
 		case int:
 			limit = v
 		}
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
 	}
 
 	var mt *valueobjects.MemoryType

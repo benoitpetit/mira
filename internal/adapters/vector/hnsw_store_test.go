@@ -608,3 +608,203 @@ func TestHNSWStoreCompletePersistence(t *testing.T) {
 	t.Logf("Persistence test passed: %d vectors saved and loaded, search returned %d results",
 		store2.Stats(), len(results2))
 }
+
+// TestHNSWStore_SetModelHash verifies the setter doesn't panic or error.
+func TestHNSWStore_SetModelHash(t *testing.T) {
+	store, _, cleanup := setupTestStoreT(t, 10)
+	defer cleanup()
+	// Must not panic.
+	store.SetModelHash("abc123")
+}
+
+// TestHNSWStore_SearchLexical_AndExact delegates to the underlying SQLite store.
+// Without FTS5 these calls should return gracefully (nil or error).
+func TestHNSWStore_SearchLexical_AndExact(t *testing.T) {
+	store, _, cleanup := setupTestStoreT(t, 10)
+	defer cleanup()
+	ctx := context.Background()
+
+	// SearchLexical delegates to store.SearchLexical — may return an error if FTS5
+	// is unavailable; we just need the code path to be exercised without panic.
+	_, _ = store.SearchLexical(ctx, "foo", 5, nil, nil)
+
+	// SearchExact delegates to exactStore interface; SQLiteRepository implements it.
+	_, _ = store.SearchExact(ctx, "foo", 5, nil, nil)
+}
+
+// TestHNSWStore_ClearAll resets the in-memory index.
+func TestHNSWStore_ClearAll(t *testing.T) {
+	dim := 10
+	store, repo, cleanup := setupTestStoreT(t, dim)
+	defer cleanup()
+
+	// Add candidates and build.
+	for i := 0; i < 3; i++ {
+		c := createAndPersistCandidate(t, repo, dim, "wing", nil, float32(i+1)*0.1)
+		if err := store.AddCandidate(context.Background(), c); err != nil {
+			t.Fatalf("AddCandidate: %v", err)
+		}
+	}
+	if err := store.BuildFromStore(context.Background()); err != nil {
+		t.Fatalf("BuildFromStore: %v", err)
+	}
+	if !store.IsReady() {
+		t.Fatal("expected store to be ready before ClearAll")
+	}
+
+	if err := store.ClearAll(context.Background()); err != nil {
+		t.Fatalf("ClearAll: %v", err)
+	}
+
+	// After ClearAll the index is reset and no longer ready.
+	if store.IsReady() {
+		t.Error("expected store to be NOT ready after ClearAll")
+	}
+	if store.Stats() != 0 {
+		t.Errorf("Stats() = %d after ClearAll, want 0", store.Stats())
+	}
+}
+
+// TestHNSWStore_ClearByRoom rebuilds the index from the DB (which was already
+// cleared by the repository layer).
+func TestHNSWStore_ClearByRoom(t *testing.T) {
+	dim := 10
+	store, repo, cleanup := setupTestStoreT(t, dim)
+	defer cleanup()
+
+	c := createAndPersistCandidate(t, repo, dim, "wing", nil, 0.5)
+	if err := store.AddCandidate(context.Background(), c); err != nil {
+		t.Fatalf("AddCandidate: %v", err)
+	}
+
+	// ClearByRoom triggers a BuildFromStore internally — must not error.
+	if err := store.ClearByRoom(context.Background(), "wing", nil); err != nil {
+		t.Fatalf("ClearByRoom: %v", err)
+	}
+}
+
+// TestTimeUnix verifies the float64→time.Time conversion helper.
+func TestTimeUnix(t *testing.T) {
+	ts := float64(1_700_000_000)
+	got := timeUnix(ts)
+	if got.Unix() != int64(ts) {
+		t.Errorf("timeUnix(%v).Unix() = %d, want %d", ts, got.Unix(), int64(ts))
+	}
+	// Zero value.
+	if timeUnix(0).Unix() != 0 {
+		t.Error("timeUnix(0) should be Unix epoch")
+	}
+}
+
+// ── AES-256-GCM encryption (J2) ───────────────────────────────────────────────
+
+func newTestHNSWStore(t *testing.T) (*HNSWStore, func()) {
+	t.Helper()
+	tmp := t.TempDir()
+	repo, err := storage.NewSQLiteRepository(tmp+"/test.db", storage.SQLiteOptions{})
+	if err != nil {
+		t.Fatalf("repo: %v", err)
+	}
+	store, err := NewHNSWStore(repo, 4, tmp+"/vectors.bin", DefaultHNSWOptions())
+	if err != nil {
+		t.Fatalf("hnsw: %v", err)
+	}
+	return store, func() { repo.Close() }
+}
+
+func TestSetEncryptionKey_32Bytes(t *testing.T) {
+	s, cleanup := newTestHNSWStore(t)
+	defer cleanup()
+
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i)
+	}
+	s.SetEncryptionKey(key)
+	// re-set to nil (disables encryption)
+	s.SetEncryptionKey(nil)
+}
+
+func TestSetEncryptionKey_ShortKey(t *testing.T) {
+	s, cleanup := newTestHNSWStore(t)
+	defer cleanup()
+	// A short key should be normalised via SHA-256, not rejected
+	s.SetEncryptionKey([]byte("short"))
+}
+
+func TestEncryptDecryptRoundtrip(t *testing.T) {
+	s, cleanup := newTestHNSWStore(t)
+	defer cleanup()
+
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	s.SetEncryptionKey(key)
+
+	plaintext := []byte("hello, AES-256-GCM!")
+	ciphertext, err := s.encryptAESGCM(plaintext)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	if len(ciphertext) <= len(plaintext) {
+		t.Fatal("ciphertext should be longer than plaintext (nonce + tag overhead)")
+	}
+
+	decrypted, err := s.decryptAESGCM(ciphertext)
+	if err != nil {
+		t.Fatalf("decrypt: %v", err)
+	}
+	if string(decrypted) != string(plaintext) {
+		t.Errorf("roundtrip failed: got %q, want %q", decrypted, plaintext)
+	}
+}
+
+func TestDecryptAESGCM_TooShort(t *testing.T) {
+	s, cleanup := newTestHNSWStore(t)
+	defer cleanup()
+
+	key := make([]byte, 32)
+	s.SetEncryptionKey(key)
+
+	_, err := s.decryptAESGCM([]byte("short"))
+	if err == nil {
+		t.Error("expected error for too-short ciphertext")
+	}
+}
+
+func TestSaveLoad_WithEncryption(t *testing.T) {
+	tmp := t.TempDir()
+	repo, err := storage.NewSQLiteRepository(tmp+"/test.db", storage.SQLiteOptions{})
+	if err != nil {
+		t.Fatalf("repo: %v", err)
+	}
+	defer repo.Close()
+
+	indexPath := tmp + "/vectors.bin"
+	store, err := NewHNSWStore(repo, 4, indexPath, DefaultHNSWOptions())
+	if err != nil {
+		t.Fatalf("hnsw: %v", err)
+	}
+
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = 0xAB
+	}
+	store.SetEncryptionKey(key)
+
+	// Save with encryption
+	if err := store.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Load with the same key
+	store2, err := NewHNSWStore(repo, 4, indexPath, DefaultHNSWOptions())
+	if err != nil {
+		t.Fatalf("hnsw2: %v", err)
+	}
+	store2.SetEncryptionKey(key)
+	if err := store2.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+}

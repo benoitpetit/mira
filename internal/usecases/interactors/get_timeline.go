@@ -23,8 +23,8 @@ type GetTimelineInput struct {
 
 // GetTimelineOutput contains the output of getting timeline
 type GetTimelineOutput struct {
-	Items      []*valueobjects.TimelineItem
-	NextCursor *string
+	Items      []*valueobjects.TimelineItem `json:"items"`
+	NextCursor *string                      `json:"next_cursor,omitempty"`
 }
 
 // GetTimeline implements the get timeline use case

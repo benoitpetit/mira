@@ -106,3 +106,68 @@ func TestIsNotReady(t *testing.T) {
 		t.Error("expected false for nil error")
 	}
 }
+
+// TestFallbackVectorStore_DelegatingMethods verifies that AddCandidate, Delete,
+// ClearAll and ClearByRoom all delegate to the primary store.
+func TestFallbackVectorStore_DelegatingMethods(t *testing.T) {
+	primary := &mockPrimaryStore{}
+	fallback := &mockFallbackStore{}
+	store := NewFallbackVectorStore(primary, fallback)
+	ctx := context.Background()
+
+	v := entities.NewVerbatim("test", "w", nil)
+	fp := &entities.Fingerprint{ID: v.ID, VerbatimID: v.ID, Type: valueobjects.TypeFact}
+	candidate := entities.NewCandidate(fp, v, []float32{1, 0})
+
+	if err := store.AddCandidate(ctx, candidate); err != nil {
+		t.Errorf("AddCandidate: %v", err)
+	}
+	if err := store.Delete(ctx, uuid.New()); err != nil {
+		t.Errorf("Delete: %v", err)
+	}
+	if err := store.ClearAll(ctx); err != nil {
+		t.Errorf("ClearAll: %v", err)
+	}
+	room := "r"
+	if err := store.ClearByRoom(ctx, "w", &room); err != nil {
+		t.Errorf("ClearByRoom: %v", err)
+	}
+}
+
+// TestFallbackVectorStore_SearchExact_Match verifies that SearchExact returns
+// only candidates whose content exactly matches the query (case-insensitive).
+func TestFallbackVectorStore_SearchExact_Match(t *testing.T) {
+	target := "Exact Content Match"
+	v1 := entities.NewVerbatim(target, "w", nil)
+	fp1 := &entities.Fingerprint{ID: v1.ID, VerbatimID: v1.ID, Type: valueobjects.TypeFact}
+	c1 := entities.NewCandidate(fp1, v1, []float32{1, 0})
+
+	v2 := entities.NewVerbatim("different content", "w", nil)
+	fp2 := &entities.Fingerprint{ID: v2.ID, VerbatimID: v2.ID, Type: valueobjects.TypeFact}
+	c2 := entities.NewCandidate(fp2, v2, []float32{0, 1})
+
+	fb := &mockFallbackStore{candidates: []*entities.Candidate{c1, c2}}
+	store := NewFallbackVectorStore(&mockPrimaryStore{}, fb)
+	ctx := context.Background()
+
+	results, err := store.SearchExact(ctx, target, 10, nil, nil)
+	if err != nil {
+		t.Fatalf("SearchExact: %v", err)
+	}
+	if len(results) != 1 || results[0].ID() != v1.ID {
+		t.Errorf("SearchExact expected only c1, got %v", results)
+	}
+}
+
+// TestFallbackVectorStore_SearchExact_NilFallback verifies that SearchExact
+// returns (nil, nil) gracefully when there is no fallback store.
+func TestFallbackVectorStore_SearchExact_NilFallback(t *testing.T) {
+	store := NewFallbackVectorStore(&mockPrimaryStore{}, nil)
+	results, err := store.SearchExact(context.Background(), "anything", 10, nil, nil)
+	if err != nil {
+		t.Errorf("SearchExact(nil fallback): unexpected error: %v", err)
+	}
+	if results != nil {
+		t.Errorf("SearchExact(nil fallback): expected nil results, got %v", results)
+	}
+}

@@ -2,6 +2,7 @@ package interactors
 
 import (
 	"context"
+	"errors"
 	"math"
 	"testing"
 	"time"
@@ -515,15 +516,14 @@ func TestEmbeddingCacheDetailed(t *testing.T) {
 			name:    "access updates LRU order",
 			maxSize: 2,
 			ops: []cacheOp{
-				{op: "set", key: "a", vec: []float32{1.0}}, // order: [a]
-				{op: "set", key: "b", vec: []float32{2.0}}, // order: [a, b]
-				// Note: get() does NOT update LRU order in this implementation
-				// Only set() updates the order when the key already exists
+				{op: "set", key: "a", vec: []float32{1.0}}, // order (MRU→LRU): [a]
+				{op: "set", key: "b", vec: []float32{2.0}}, // order: [b, a]
+				// get("a") promotes "a" to MRU: order becomes [a, b]
 				{op: "get", key: "a", expectFound: true},
-				// Adding "c" should evict "a" (at front), since get() didn't update order
-				{op: "set", key: "c", vec: []float32{3.0}}, // order: [b, c] after evicting a
-				{op: "get", key: "a", expectFound: false},  // "a" was evicted
-				{op: "get", key: "b", expectFound: true},
+				// Adding "c" evicts the LRU entry, which is now "b"
+				{op: "set", key: "c", vec: []float32{3.0}}, // evicts b → [c, a]
+				{op: "get", key: "a", expectFound: true},   // "a" is still present
+				{op: "get", key: "b", expectFound: false},  // "b" was evicted
 				{op: "get", key: "c", expectFound: true},
 			},
 		},
@@ -790,24 +790,25 @@ func TestEmbeddingCache(t *testing.T) {
 	cache.set("key1", vec1)
 	cache.set("key2", vec2)
 
-	// Retrieve existing
+	// Retrieve key1 — this promotes it to most-recently-used.
+	// After this get(), LRU order is: key2 (oldest) → key1 (newest).
 	if v, ok := cache.get("key1"); !ok {
 		t.Error("Expected to find key1")
 	} else if len(v) != 3 || v[0] != 1.0 {
 		t.Error("Retrieved wrong value for key1")
 	}
 
-	// Add third item (should evict key1 - LRU)
+	// Add third item: cache is full, so the LRU entry (key2) is evicted.
 	cache.set("key3", vec3)
 
-	// key1 should be evicted
-	if _, ok := cache.get("key1"); ok {
-		t.Error("Expected key1 to be evicted")
+	// key2 should be evicted (it was least-recently used after the get above)
+	if _, ok := cache.get("key2"); ok {
+		t.Error("Expected key2 to be evicted (LRU)")
 	}
 
-	// key2 and key3 should exist
-	if _, ok := cache.get("key2"); !ok {
-		t.Error("Expected to find key2")
+	// key1 and key3 should still exist
+	if _, ok := cache.get("key1"); !ok {
+		t.Error("Expected to find key1")
 	}
 	if _, ok := cache.get("key3"); !ok {
 		t.Error("Expected to find key3")
@@ -1010,3 +1011,254 @@ var _ ports.CausalGraph = (*mockRecallCausalGraph)(nil)
 var _ ports.VectorStore = (*mockRecallVectorStore)(nil)
 var _ ports.FingerprintRenderer = (*mockRecallRenderer)(nil)
 var _ ports.MetricsCollector = (*mockRecallMetricsCollector)(nil)
+
+// ----------------------------------------------------------------------------
+// adaptiveThresholdMeanStddev
+// ----------------------------------------------------------------------------
+
+func TestAdaptiveThresholdMeanStddev_FewScores(t *testing.T) {
+	// < 3 scores → fixed fallback of 0.3
+	if got := adaptiveThresholdMeanStddev([]float64{0.8, 0.9}); got != 0.3 {
+		t.Errorf("expected 0.3, got %f", got)
+	}
+	if got := adaptiveThresholdMeanStddev(nil); got != 0.3 {
+		t.Errorf("expected 0.3 for nil, got %f", got)
+	}
+}
+
+func TestAdaptiveThresholdMeanStddev_MeanMinusStddev(t *testing.T) {
+	// scores [0.6, 0.7, 0.8] → mean=0.7, variance=((0.1)²+(0)²+(0.1)²)/3≈0.00667, stddev≈0.0816
+	// threshold ≈ 0.7 - 0.0816 ≈ 0.618
+	scores := []float64{0.6, 0.7, 0.8}
+	got := adaptiveThresholdMeanStddev(scores)
+	if got < 0.55 || got > 0.7 {
+		t.Errorf("expected threshold in [0.55, 0.70], got %f", got)
+	}
+}
+
+func TestAdaptiveThresholdMeanStddev_IdenticalScores(t *testing.T) {
+	// All same → stddev=0 → threshold = mean
+	scores := []float64{0.5, 0.5, 0.5}
+	got := adaptiveThresholdMeanStddev(scores)
+	if math.Abs(got-0.5) > 1e-9 {
+		t.Errorf("expected 0.5 for identical scores, got %f", got)
+	}
+}
+
+// ----------------------------------------------------------------------------
+// adaptiveThresholdElbow
+// ----------------------------------------------------------------------------
+
+func TestAdaptiveThresholdElbow_FewScores(t *testing.T) {
+	// < 3 scores → fixed 0.3
+	if got := adaptiveThresholdElbow([]float64{0.9}); got != 0.3 {
+		t.Errorf("expected 0.3, got %f", got)
+	}
+	if got := adaptiveThresholdElbow(nil); got != 0.3 {
+		t.Errorf("expected 0.3 for nil, got %f", got)
+	}
+}
+
+func TestAdaptiveThresholdElbow_ClearElbow(t *testing.T) {
+	// Big drop between 0.9 and 0.3 → elbow should cut at or after the big gap.
+	// Sorted desc: [0.9, 0.89, 0.88, 0.3, 0.29]
+	// Derivatives: [0.01, 0.01, 0.58, 0.01]
+	// mean≈0.1525, std≈0.2627, cutoff≈0.415
+	// first d > cutoff is index 2 (d=0.58) → return sorted[3] = 0.3
+	scores := []float64{0.9, 0.89, 0.88, 0.3, 0.29}
+	got := adaptiveThresholdElbow(scores)
+	if got > 0.35 {
+		t.Errorf("expected elbow threshold ≤ 0.35, got %f", got)
+	}
+}
+
+func TestAdaptiveThresholdElbow_NoElbow(t *testing.T) {
+	// Uniform gap → no derivative exceeds cutoff → returns last element
+	scores := []float64{0.9, 0.8, 0.7}
+	got := adaptiveThresholdElbow(scores)
+	if got < 0.0 || got > 1.0 {
+		t.Errorf("expected value in [0, 1], got %f", got)
+	}
+}
+
+// ----------------------------------------------------------------------------
+// adaptiveThreshold dispatch (iqr / elbow / default)
+// ----------------------------------------------------------------------------
+
+func TestAdaptiveThresholdDispatch_IQR(t *testing.T) {
+	config := DefaultRecallMemoryConfig()
+	config.ThresholdMethod = "iqr"
+	uc := NewRecallMemory(
+		&mockRecallVectorStore{}, &mockRecallOverlapCache{}, &mockRecallCausalGraph{},
+		&mockRecallEmbedder{}, &mockRecallRenderer{}, config, &mockRecallMetricsCollector{}, nil,
+	)
+	scores := []float64{0.8, 0.7, 0.6, 0.5, 0.4}
+	got := uc.adaptiveThreshold(scores)
+	if got < uc.thresholdFloor || got > uc.thresholdCeiling {
+		t.Errorf("iqr threshold %f outside [%f, %f]", got, uc.thresholdFloor, uc.thresholdCeiling)
+	}
+}
+
+func TestAdaptiveThresholdDispatch_Elbow(t *testing.T) {
+	config := DefaultRecallMemoryConfig()
+	config.ThresholdMethod = "elbow"
+	uc := NewRecallMemory(
+		&mockRecallVectorStore{}, &mockRecallOverlapCache{}, &mockRecallCausalGraph{},
+		&mockRecallEmbedder{}, &mockRecallRenderer{}, config, &mockRecallMetricsCollector{}, nil,
+	)
+	scores := []float64{0.9, 0.89, 0.88, 0.3, 0.29}
+	got := uc.adaptiveThreshold(scores)
+	if got < uc.thresholdFloor || got > uc.thresholdCeiling {
+		t.Errorf("elbow threshold %f outside [%f, %f]", got, uc.thresholdFloor, uc.thresholdCeiling)
+	}
+}
+
+func TestAdaptiveThresholdDispatch_FloorCeiling(t *testing.T) {
+	config := DefaultRecallMemoryConfig()
+	config.ThresholdFloor = 0.5
+	config.ThresholdCeiling = 0.6
+	uc := NewRecallMemory(
+		&mockRecallVectorStore{}, &mockRecallOverlapCache{}, &mockRecallCausalGraph{},
+		&mockRecallEmbedder{}, &mockRecallRenderer{}, config, &mockRecallMetricsCollector{}, nil,
+	)
+	// Mean-stddev of identical scores = 0.0 → clamped to floor 0.5
+	got := uc.adaptiveThreshold([]float64{0.1, 0.1, 0.1})
+	if got != 0.5 {
+		t.Errorf("expected threshold clamped to floor 0.5, got %f", got)
+	}
+	// Very high scores → raw > ceiling → clamped to 0.6
+	got = uc.adaptiveThreshold([]float64{0.99, 0.98, 0.97})
+	if got != 0.6 {
+		t.Errorf("expected threshold clamped to ceiling 0.6, got %f", got)
+	}
+}
+
+// ----------------------------------------------------------------------------
+// applyReranker
+// ----------------------------------------------------------------------------
+
+// mockRecallReranker implements ports.Reranker for applyReranker tests.
+type mockRecallReranker struct {
+	rerankFunc func(ctx context.Context, query string, candidates []string) ([]float64, error)
+}
+
+func (m *mockRecallReranker) Rerank(ctx context.Context, query string, candidates []string) ([]float64, error) {
+	if m.rerankFunc != nil {
+		return m.rerankFunc(ctx, query, candidates)
+	}
+	scores := make([]float64, len(candidates))
+	for i := range scores {
+		scores[i] = 0.5
+	}
+	return scores, nil
+}
+
+var _ ports.Reranker = (*mockRecallReranker)(nil)
+
+func TestApplyReranker_BlendsScores(t *testing.T) {
+	config := DefaultRecallMemoryConfig()
+	config.RerankerEnabled = true
+	config.RerankerTopK = 10
+	reranker := &mockRecallReranker{
+		rerankFunc: func(_ context.Context, _ string, candidates []string) ([]float64, error) {
+			// Return 1.0 for first candidate, 0.0 for rest
+			scores := make([]float64, len(candidates))
+			scores[0] = 1.0
+			return scores, nil
+		},
+	}
+	config.Reranker = reranker
+
+	uc := NewRecallMemory(
+		&mockRecallVectorStore{}, &mockRecallOverlapCache{}, &mockRecallCausalGraph{},
+		&mockRecallEmbedder{}, &mockRecallRenderer{}, config, &mockRecallMetricsCollector{}, nil,
+	)
+	uc.rerankerTopK = 10
+
+	now := time.Now()
+	c0 := createTestCandidateWithRelevance("c0", now, 0.8)
+	c1 := createTestCandidateWithRelevance("c1", now, 0.8)
+
+	out := uc.applyReranker(context.Background(), "query", []*entities.Candidate{c0, c1})
+
+	// c0: blended = 0.7*0.8 + 0.3*1.0 = 0.86
+	// c1: blended = 0.7*0.8 + 0.3*0.0 = 0.56
+	if len(out) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(out))
+	}
+	// Re-sorted by blended relevance: c0 should be first
+	if math.Abs(out[0].Relevance-0.86) > 0.01 {
+		t.Errorf("c0 blended relevance: want ≈0.86, got %f", out[0].Relevance)
+	}
+	if math.Abs(out[1].Relevance-0.56) > 0.01 {
+		t.Errorf("c1 blended relevance: want ≈0.56, got %f", out[1].Relevance)
+	}
+}
+
+func TestApplyReranker_FallbackOnError(t *testing.T) {
+	config := DefaultRecallMemoryConfig()
+	config.RerankerTopK = 10
+	config.Reranker = &mockRecallReranker{
+		rerankFunc: func(_ context.Context, _ string, _ []string) ([]float64, error) {
+			return nil, errors.New("reranker unavailable")
+		},
+	}
+
+	uc := NewRecallMemory(
+		&mockRecallVectorStore{}, &mockRecallOverlapCache{}, &mockRecallCausalGraph{},
+		&mockRecallEmbedder{}, &mockRecallRenderer{}, config, &mockRecallMetricsCollector{}, nil,
+	)
+	uc.rerankerTopK = 10
+
+	now := time.Now()
+	orig := []*entities.Candidate{
+		createTestCandidateWithRelevance("c0", now, 0.9),
+		createTestCandidateWithRelevance("c1", now, 0.7),
+	}
+	// Copy original relevances
+	wantRelev := []float64{0.9, 0.7}
+
+	out := uc.applyReranker(context.Background(), "query", orig)
+	if len(out) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(out))
+	}
+	// Scores should be unchanged (returned as-is on error)
+	for i, c := range out {
+		if math.Abs(c.Relevance-wantRelev[i]) > 1e-9 {
+			t.Errorf("candidate %d: relevance should be unchanged, want %f got %f", i, wantRelev[i], c.Relevance)
+		}
+	}
+}
+
+func TestApplyReranker_TopKLimitsInput(t *testing.T) {
+	config := DefaultRecallMemoryConfig()
+	config.Reranker = &mockRecallReranker{}
+
+	uc := NewRecallMemory(
+		&mockRecallVectorStore{}, &mockRecallOverlapCache{}, &mockRecallCausalGraph{},
+		&mockRecallEmbedder{}, &mockRecallRenderer{}, config, &mockRecallMetricsCollector{}, nil,
+	)
+	uc.rerankerTopK = 2 // Only top 2 sent to reranker
+
+	var receivedCount int
+	uc.reranker = &mockRecallReranker{
+		rerankFunc: func(_ context.Context, _ string, candidates []string) ([]float64, error) {
+			receivedCount = len(candidates)
+			return make([]float64, len(candidates)), nil
+		},
+	}
+
+	now := time.Now()
+	candidates := []*entities.Candidate{
+		createTestCandidateWithRelevance("c0", now, 0.9),
+		createTestCandidateWithRelevance("c1", now, 0.8),
+		createTestCandidateWithRelevance("c2", now, 0.7),
+		createTestCandidateWithRelevance("c3", now, 0.6),
+	}
+
+	uc.applyReranker(context.Background(), "query", candidates)
+
+	if receivedCount != 2 {
+		t.Errorf("expected reranker to receive 2 candidates (topK=2), got %d", receivedCount)
+	}
+}

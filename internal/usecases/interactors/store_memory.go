@@ -65,21 +65,23 @@ func (in StoreMemoryInput) Validate() error {
 
 // StoreMemoryOutput contains the output of storing a memory
 type StoreMemoryOutput struct {
-	FingerprintID string
-	Type          string
-	FactCount     int
-	TokenCount    int
-	ModelHash     string
+	FingerprintID string `json:"fingerprint_id"`
+	Type          string `json:"type"`
+	FactCount     int    `json:"fact_count"`
+	TokenCount    int    `json:"token_count"`
+	ModelHash     string `json:"model_hash"`
 }
 
 // StoreMemory implements the store memory use case
 type StoreMemory struct {
-	repository       ports.Repository
-	extractor        ports.FingerprintExtractor
-	causalDetector   ports.CausalRelationDetector
-	vectorStore      ports.VectorStore
-	metricsCollector ports.MetricsCollector
-	logger           ports.Logger
+	repository          ports.Repository
+	extractor           ports.FingerprintExtractor
+	causalDetector      ports.CausalRelationDetector
+	vectorStore         ports.VectorStore
+	metricsCollector    ports.MetricsCollector
+	logger              ports.Logger
+	autoCompressEnabled bool
+	autoCompressMinTok  int
 }
 
 // NewStoreMemory creates a new store memory interactor
@@ -99,6 +101,18 @@ func NewStoreMemory(
 		metricsCollector: metricsCollector,
 		logger:           logger,
 	}
+}
+
+// WithCompression enables rule-based auto-compression for session_notes
+// that exceed minTokens at store time. The compression runs in a goroutine
+// (non-fatal, fire-and-forget). minTokens <= 0 defaults to 100.
+func (uc *StoreMemory) WithCompression(enabled bool, minTokens int) *StoreMemory {
+	uc.autoCompressEnabled = enabled
+	uc.autoCompressMinTok = minTokens
+	if uc.autoCompressMinTok <= 0 {
+		uc.autoCompressMinTok = 100
+	}
+	return uc
 }
 
 // defaultRoomForType suggests a standard room when none is provided.
@@ -206,6 +220,26 @@ func (uc *StoreMemory) Execute(ctx context.Context, input StoreMemoryInput) (*St
 
 	// 4b. Store tags for semantic filtering (non-fatal)
 	uc.storeTags(ctx, verbatim.ID, fp, input.Content)
+
+	// 4c. Auto-compress session notes (non-fatal, async)
+	if uc.autoCompressEnabled &&
+		fp.Type == valueobjects.TypeSessionNote &&
+		verbatim.TokenCount >= uc.autoCompressMinTok {
+		go func(id uuid.UUID, content string, tokenCount int) {
+			summary := CompressText(content)
+			summaryTokens := EstimateSummaryTokens(summary)
+			if summaryTokens < tokenCount {
+				if err := uc.repository.UpdateVerbatimSummary(context.Background(), id, summary, summaryTokens); err != nil {
+					if uc.logger != nil {
+						uc.logger.Warn("Auto-compress: failed to store summary",
+							"error", err,
+							"verbatim_id", id.String(),
+						)
+					}
+				}
+			}
+		}(verbatim.ID, verbatim.Content, verbatim.TokenCount)
+	}
 
 	// 5. Create causal node (non-fatal)
 	node := entities.NewCausalNode(fp.ID, string(fp.Type), fp.Data.Subject[0], input.Wing, input.Room)

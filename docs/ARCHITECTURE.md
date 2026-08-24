@@ -49,13 +49,15 @@ MIRA follows **Uncle Bob's Clean Architecture** with strict dependency direction
 │   │  • vector: HNSWStore, SQLiteVectorStore, FallbackVectorStore│   │
 │   │  • extraction: NativeExtractor, CybertronEmbedder           │   │
 │   │  • webhook, metrics, logging                                │   │
+│   │  • mcp: MCP controller (stdio / SSE)                        │   │
+│   │  • rest: REST HTTP API (optional, :8080)                    │   │
 │   │  ✓ Implements ports                                         │   │
 │   └─────────────────────────────────────────────────────────────┘   │
 │                              ▲                                      │
 │                              │                                      │
 │   ┌─────────────────────────────────────────────────────────────┐   │
 │   │  FRAMEWORKS & DRIVERS                                       │   │
-│   │  • SQLite3, HNSW lib, Cybertron, MCP Server                 │   │
+│   │  • SQLite3, HNSW lib, Cybertron, MCP Server, net/http       │   │
 │   │  ✓ External technical details                               │   │
 │   └─────────────────────────────────────────────────────────────┘   │
 │                                                                     │
@@ -66,7 +68,8 @@ MIRA follows **Uncle Bob's Clean Architecture** with strict dependency direction
 
 ```
 mira/
-├── cmd/mira/                    # Entry point
+├── cmd/mira/                    # Entry point (cobra CLI)
+│   └── main.go                  # Subcommands: server, migrate, doctor, query, export, import
 ├── internal/
 │   ├── domain/                  # Pure business logic
 │   │   ├── entities/            # Verbatim, Fingerprint, Embedding, Candidate, CausalNode
@@ -82,10 +85,14 @@ mira/
 │   │   ├── metrics/             # Prometheus and simple collectors
 │   │   └── webhook/             # HTTP notifications
 │   ├── interfaces/              # External protocol adapters
-│   │   └── mcp/                 # MCP controller
+│   │   ├── mcp/                 # MCP controller (stdio / SSE)
+│   │   └── rest/                # Optional REST HTTP API (:8080)
+│   │       ├── handler.go       # 13 route handlers (Go 1.22+ method+path ServeMux)
+│   │       ├── middleware.go    # recovery, structured logging, Bearer auth
+│   │       └── openapi.go       # OpenAPI 3.1 spec (Go structs → JSON, served at /openapi.json)
 │   ├── config/                  # Configuration loading and validation
 │   └── app/                     # Composition root (DI)
-│       ├── main.go              # Dependency injection
+│       ├── main.go              # Dependency injection + REST server wiring
 │       ├── health.go            # Health checks
 │       └── main_test.go         # Application tests
 ├── docs/                        # Documentation
@@ -354,12 +361,14 @@ The `Config` struct is organized into logical sections:
 | `hnsw`        | HNSW graph parameters (M, Ml, ef_*)          |
 | `metrics`     | Prometheus enablement and address            |
 | `webhooks`    | HTTP callback configuration                  |
-| `recall`      | FTS5, RRF, expansion, clustering, reranker |
+| `recall`      | FTS5, RRF, expansion, clustering, reranker   |
 | `decay_rates` | Per-type exponential decay constants         |
 | `archive_thresholds` | Auto-archive days per type           |
 | `overlap_cache` | TTL and max entries for pairwise cache     |
 | `extraction`  | NLP parameters (entity length, causal lookback) |
 | `mcp`         | Server name, version, transport, address, timeout |
+| `api`         | REST HTTP API: enabled, address, auth_token, timeouts |
+| `soul`        | SOUL identity extension settings            |
 
 ### Example: New `recall` Section
 

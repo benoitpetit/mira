@@ -14,7 +14,7 @@ import (
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/google/uuid"
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/mutecomm/go-sqlcipher/v4"
 )
 
 // SQLiteRepository implements all repository interfaces using SQLite
@@ -28,6 +28,7 @@ type SQLiteRepository struct {
 type SQLiteOptions struct {
 	SessionNoteArchiveDays int
 	DebugLogArchiveDays    int
+	EncryptionKey          string
 }
 
 // DefaultSQLiteOptions returns default options
@@ -50,6 +51,18 @@ func NewSQLiteRepository(dbPath string, opts SQLiteOptions) (*SQLiteRepository, 
 	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=-64000&_mmap_size=268435456")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+
+	if opts.EncryptionKey != "" {
+		// Securely set the key using PRAGMA key
+		// Use fmt.Sprintf for simplicity, but in production we'd use a more robust escaping if keys could contain quotes
+		// Fortunately PRAGMA key '...' handles single quotes by doubling them.
+		escapedKey := strings.ReplaceAll(opts.EncryptionKey, "'", "''")
+		_, err = db.Exec(fmt.Sprintf("PRAGMA key = '%s';", escapedKey))
+		if err != nil {
+			db.Close()
+			return nil, fmt.Errorf("failed to set encryption key: %w", err)
+		}
 	}
 
 	db.SetMaxOpenConns(10)
@@ -112,7 +125,7 @@ func (r *SQLiteRepository) StoreVerbatimTx(ctx context.Context, tx *sql.Tx, v *e
 	metricsJSON, _ := json.Marshal(v.Metrics)
 
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO verbatim (id, content, token_count, created_at, wing, room, metadata, metrics) 
+		`INSERT INTO verbatim (id, content, token_count, created_at, wing, room, metadata, metrics)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		v.ID[:], v.Content, v.TokenCount, float64(v.CreatedAt.Unix()), v.Wing, v.Room, string(metadataJSON), string(metricsJSON),
 	)
@@ -127,6 +140,17 @@ func (r *SQLiteRepository) DeleteVerbatimByID(ctx context.Context, id uuid.UUID)
 	}
 	defer tx.Rollback()
 
+	if err := r.DeleteVerbatimByIDTx(ctx, tx, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// DeleteVerbatimByIDTx implements VerbatimRepository.
+// It deletes a verbatim and all its associated rows (fingerprints, embeddings,
+// causal nodes/edges) within the caller-supplied transaction, so that the delete
+// can be made atomic with a subsequent re-insert of the same ID.
+func (r *SQLiteRepository) DeleteVerbatimByIDTx(ctx context.Context, tx *sql.Tx, id uuid.UUID) error {
 	idBytes := id[:]
 
 	// Delete causal relations for fingerprints associated with this verbatim
@@ -150,18 +174,17 @@ func (r *SQLiteRepository) DeleteVerbatimByID(ctx context.Context, id uuid.UUID)
 	_, _ = tx.ExecContext(ctx, `DELETE FROM fingerprints WHERE verbatim_id = ?`, idBytes)
 
 	// Delete verbatim
-	_, err = tx.ExecContext(ctx, `DELETE FROM verbatim WHERE id = ?`, idBytes)
+	_, err := tx.ExecContext(ctx, `DELETE FROM verbatim WHERE id = ?`, idBytes)
 	if err != nil {
 		return fmt.Errorf("failed to delete verbatim: %w", err)
 	}
-
-	return tx.Commit()
+	return nil
 }
 
 // GetVerbatimByID implements VerbatimRepository
 func (r *SQLiteRepository) GetVerbatimByID(ctx context.Context, id uuid.UUID) (*entities.Verbatim, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, content, token_count, created_at, wing, room, metadata, metrics FROM verbatim WHERE id = ?`,
+		`SELECT id, content, token_count, created_at, wing, room, metadata, metrics, summary, summary_tokens FROM verbatim WHERE id = ?`,
 		id[:],
 	)
 
@@ -170,9 +193,10 @@ func (r *SQLiteRepository) GetVerbatimByID(ctx context.Context, id uuid.UUID) (*
 	var metadataJSON []byte
 	var metricsJSON []byte
 	var room sql.NullString
+	var summary sql.NullString
 	var createdAt float64
 
-	err := row.Scan(&idBytes, &v.Content, &v.TokenCount, &createdAt, &v.Wing, &room, &metadataJSON, &metricsJSON)
+	err := row.Scan(&idBytes, &v.Content, &v.TokenCount, &createdAt, &v.Wing, &room, &metadataJSON, &metricsJSON, &summary, &v.SummaryTokenCount)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("verbatim not found")
@@ -188,6 +212,9 @@ func (r *SQLiteRepository) GetVerbatimByID(ctx context.Context, id uuid.UUID) (*
 	if room.Valid {
 		v.Room = &room.String
 	}
+	if summary.Valid && summary.String != "" {
+		v.Summary = &summary.String
+	}
 	if len(metadataJSON) > 0 {
 		_ = json.Unmarshal(metadataJSON, &v.Metadata)
 	}
@@ -196,6 +223,15 @@ func (r *SQLiteRepository) GetVerbatimByID(ctx context.Context, id uuid.UUID) (*
 	}
 
 	return &v, nil
+}
+
+// UpdateVerbatimSummary implements VerbatimRepository
+func (r *SQLiteRepository) UpdateVerbatimSummary(ctx context.Context, id uuid.UUID, summary string, summaryTokens int) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE verbatim SET summary = ?, summary_tokens = ? WHERE id = ?`,
+		summary, summaryTokens, id[:],
+	)
+	return err
 }
 
 // StoreFingerprint implements FingerprintRepository
@@ -225,7 +261,7 @@ func (r *SQLiteRepository) StoreFingerprintTx(ctx context.Context, tx *sql.Tx, f
 	}
 
 	_, err := tx.ExecContext(ctx,
-		`INSERT INTO fingerprints (id, verbatim_id, ftype, extracted_at, entities, subjects, decision, data, fact_count, token_estimate, model_hash) 
+		`INSERT INTO fingerprints (id, verbatim_id, ftype, extracted_at, entities, subjects, decision, data, fact_count, token_estimate, model_hash)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		fp.ID[:], fp.VerbatimID[:], string(fp.Type), float64(fp.ExtractedAt.Unix()),
 		string(entitiesJSON), string(subjectsJSON), decision, string(dataJSON),
@@ -411,7 +447,7 @@ func (r *SQLiteRepository) StoreEmbeddingTx(ctx context.Context, tx *sql.Tx, emb
 	}
 
 	_, err := tx.ExecContext(ctx,
-		`INSERT INTO embeddings (id, model_hash, dim, vector, normalized, created_at) 
+		`INSERT INTO embeddings (id, model_hash, dim, vector, normalized, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
 		emb.ID[:], emb.ModelHash, emb.Dim, vectorBytes, emb.Normalized, float64(emb.CreatedAt.Unix()),
 	)
@@ -467,7 +503,7 @@ func (r *SQLiteRepository) AddNode(ctx context.Context, node *entities.CausalNod
 // AddNodeTx implements CausalGraphRepository
 func (r *SQLiteRepository) AddNodeTx(ctx context.Context, tx *sql.Tx, node *entities.CausalNode) error {
 	_, err := tx.ExecContext(ctx,
-		`INSERT INTO causal_nodes (id, node_type, summary, timestamp, wing, room) 
+		`INSERT INTO causal_nodes (id, node_type, summary, timestamp, wing, room)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
 		node.ID[:], node.Type, node.Summary, float64(node.Timestamp.Unix()), node.Wing, node.Room,
 	)
@@ -492,7 +528,7 @@ func (r *SQLiteRepository) AddEdge(ctx context.Context, edge *entities.CausalEdg
 // AddEdgeTx implements CausalGraphRepository
 func (r *SQLiteRepository) AddEdgeTx(ctx context.Context, tx *sql.Tx, edge *entities.CausalEdge) error {
 	_, err := tx.ExecContext(ctx,
-		`INSERT OR IGNORE INTO causal_edges (from_id, to_id, relation, weight, detected_at) 
+		`INSERT OR IGNORE INTO causal_edges (from_id, to_id, relation, weight, detected_at)
 		 VALUES (?, ?, ?, ?, ?)`,
 		edge.FromID[:], edge.ToID[:], string(edge.Relation), edge.Weight, float64(edge.DetectedAt.Unix()),
 	)
@@ -689,7 +725,7 @@ func (r *SQLiteRepository) GetChildren(ctx context.Context, nodeID uuid.UUID, re
 func (r *SQLiteRepository) RegisterModel(ctx context.Context, model *entities.EmbeddingModel) error {
 	metadataJSON, _ := json.Marshal(model.Metadata)
 	_, err := r.db.ExecContext(ctx,
-		`INSERT OR IGNORE INTO embedding_models (model_hash, model_name, dimension, created_at, metadata) 
+		`INSERT OR IGNORE INTO embedding_models (model_hash, model_name, dimension, created_at, metadata)
 		 VALUES (?, ?, ?, ?, ?)`,
 		model.ModelHash, model.ModelName, model.Dimension, float64(model.CreatedAt.Unix()), string(metadataJSON),
 	)
@@ -753,11 +789,17 @@ func (r *SQLiteRepository) GetStats(ctx context.Context) (*valueobjects.Stats, e
 // GetTimeline implements StatsRepository
 func (r *SQLiteRepository) GetTimeline(ctx context.Context, wing string, room *string, memType *valueobjects.MemoryType, since, until *string, limit int, cursor *string) ([]*valueobjects.TimelineItem, error) {
 	query := `
-		SELECT v.id, f.ftype, f.extracted_at, f.data
+		SELECT v.id, f.ftype, f.extracted_at, f.data, v.wing
 		FROM fingerprints f
 		JOIN verbatim v ON f.verbatim_id = v.id
-		WHERE v.wing = ?`
-	args := []interface{}{wing}
+		WHERE 1=1`
+	args := []interface{}{}
+
+	// When wing is non-empty, filter by it. An empty string means "all wings".
+	if wing != "" {
+		query += " AND v.wing = ?"
+		args = append(args, wing)
+	}
 
 	if room != nil {
 		query += " AND v.room = ?"
@@ -787,9 +829,8 @@ func (r *SQLiteRepository) GetTimeline(ctx context.Context, wing string, room *s
 	if limit <= 0 {
 		limit = 100
 	}
-	if limit > 1000 {
-		limit = 1000
-	}
+	// No upper cap here: callers (REST handler, MCP controller) enforce their own limits.
+	// The export command legitimately needs to retrieve all records.
 	query += fmt.Sprintf(" ORDER BY f.extracted_at DESC LIMIT %d", limit)
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
@@ -804,8 +845,9 @@ func (r *SQLiteRepository) GetTimeline(ctx context.Context, wing string, room *s
 		var memTypeStr string
 		var extractedAt float64
 		var dataJSON []byte
+		var wingStr string
 
-		if err := rows.Scan(&id, &memTypeStr, &extractedAt, &dataJSON); err != nil {
+		if err := rows.Scan(&id, &memTypeStr, &extractedAt, &dataJSON, &wingStr); err != nil {
 			continue
 		}
 
@@ -833,6 +875,7 @@ func (r *SQLiteRepository) GetTimeline(ctx context.Context, wing string, room *s
 			Timestamp: time.Unix(int64(extractedAt), 0).Format("2006-01-02 15:04"),
 			Type:      valueobjects.MemoryType(memTypeStr),
 			Summary:   summary,
+			Wing:      wingStr,
 		})
 	}
 
@@ -1132,6 +1175,7 @@ func (r *SQLiteRepository) SearchLexical(ctx context.Context, query string, limi
 
 	sqlQuery := `
 		SELECT v.id, v.content, v.wing, v.room, v.token_count, v.created_at,
+			   v.summary, v.summary_tokens,
 			   f.id, f.ftype, f.fact_count, f.token_estimate, f.model_hash, f.data,
 			   e.vector, e.dim
 		FROM verbatim_fts fts
@@ -1164,13 +1208,15 @@ func (r *SQLiteRepository) SearchLexical(ctx context.Context, query string, limi
 		var vID, fID []byte
 		var vContent, vWing, fType, fModelHash string
 		var vRoom sql.NullString
-		var vTokenCount, fFactCount, fTokenEstimate, eDim int
+		var vSummary sql.NullString
+		var vTokenCount, vSummaryTokens, fFactCount, fTokenEstimate, eDim int
 		var vCreatedAt float64
 		var fData []byte
 		var eVector []byte
 
 		err := rows.Scan(
 			&vID, &vContent, &vWing, &vRoom, &vTokenCount, &vCreatedAt,
+			&vSummary, &vSummaryTokens,
 			&fID, &fType, &fFactCount, &fTokenEstimate, &fModelHash, &fData,
 			&eVector, &eDim,
 		)
@@ -1194,14 +1240,18 @@ func (r *SQLiteRepository) SearchLexical(ctx context.Context, query string, limi
 		}
 
 		verbatim := &entities.Verbatim{
-			ID:         id,
-			Content:    vContent,
-			Wing:       vWing,
-			TokenCount: vTokenCount,
-			CreatedAt:  time.Unix(int64(vCreatedAt), 0),
+			ID:                id,
+			Content:           vContent,
+			Wing:              vWing,
+			TokenCount:        vTokenCount,
+			SummaryTokenCount: vSummaryTokens,
+			CreatedAt:         time.Unix(int64(vCreatedAt), 0),
 		}
 		if vRoom.Valid {
 			verbatim.Room = &vRoom.String
+		}
+		if vSummary.Valid && vSummary.String != "" {
+			verbatim.Summary = &vSummary.String
 		}
 
 		fpID, _ := uuid.FromBytes(fID)
@@ -1423,6 +1473,7 @@ func (r *SQLiteRepository) GetCandidatesWithEmbeddings(ctx context.Context, ids 
 
 	query := fmt.Sprintf(`
 		SELECT v.id, v.content, v.wing, v.room, v.token_count, v.created_at,
+			   v.summary, v.summary_tokens,
 			   f.id, f.ftype, f.fact_count, f.token_estimate, f.model_hash, f.data,
 			   e.vector, e.dim
 		FROM verbatim v
@@ -1442,13 +1493,15 @@ func (r *SQLiteRepository) GetCandidatesWithEmbeddings(ctx context.Context, ids 
 		var vID, fID []byte
 		var vContent, vWing, fType, fModelHash string
 		var vRoom sql.NullString
-		var vTokenCount, fFactCount, fTokenEstimate, eDim int
+		var vSummary sql.NullString
+		var vTokenCount, vSummaryTokens, fFactCount, fTokenEstimate, eDim int
 		var vCreatedAt float64
 		var fData []byte
 		var eVector []byte
 
 		err := rows.Scan(
 			&vID, &vContent, &vWing, &vRoom, &vTokenCount, &vCreatedAt,
+			&vSummary, &vSummaryTokens,
 			&fID, &fType, &fFactCount, &fTokenEstimate, &fModelHash, &fData,
 			&eVector, &eDim,
 		)
@@ -1483,14 +1536,18 @@ func (r *SQLiteRepository) GetCandidatesWithEmbeddings(ctx context.Context, ids 
 
 		// Build entities
 		verbatim := &entities.Verbatim{
-			ID:         id,
-			Content:    vContent,
-			Wing:       vWing,
-			TokenCount: vTokenCount,
-			CreatedAt:  time.Unix(int64(vCreatedAt), 0),
+			ID:                id,
+			Content:           vContent,
+			Wing:              vWing,
+			TokenCount:        vTokenCount,
+			SummaryTokenCount: vSummaryTokens,
+			CreatedAt:         time.Unix(int64(vCreatedAt), 0),
 		}
 		if vRoom.Valid {
 			verbatim.Room = &vRoom.String
+		}
+		if vSummary.Valid && vSummary.String != "" {
+			verbatim.Summary = &vSummary.String
 		}
 
 		fpID, _ := uuid.FromBytes(fID)
@@ -1563,4 +1620,115 @@ func (r *SQLiteRepository) GetAllEmbeddings(ctx context.Context) ([]*entities.Em
 	}
 
 	return embeddings, nil
+}
+
+// SaveAuditLog implements AuditRepository
+func (r *SQLiteRepository) SaveAuditLog(ctx context.Context, log *entities.AuditLog) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO audit_log (action, actor, resource, status, metadata) VALUES (?, ?, ?, ?, ?)`,
+		log.Action, log.Actor, log.Resource, log.Status, log.Metadata,
+	)
+	return err
+}
+
+// ListAuditLogs implements AuditRepository
+func (r *SQLiteRepository) ListAuditLogs(ctx context.Context, limit, offset int) ([]*entities.AuditLog, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, timestamp, action, actor, resource, status, metadata FROM audit_log ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
+		limit, offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var logs []*entities.AuditLog
+	for rows.Next() {
+		l := &entities.AuditLog{}
+		var timestamp time.Time
+		if err := rows.Scan(&l.ID, &timestamp, &l.Action, &l.Actor, &l.Resource, &l.Status, &l.Metadata); err != nil {
+			continue
+		}
+		l.Timestamp = timestamp
+		logs = append(logs, l)
+	}
+	return logs, nil
+}
+
+// GetPolicyByTokenHash implements PolicyRepository
+func (r *SQLiteRepository) GetPolicyByTokenHash(ctx context.Context, hash string) (*entities.AccessPolicy, error) {
+	row := r.db.QueryRowContext(ctx,
+		`SELECT token_hash, name, wings, created_at, last_used FROM access_policies WHERE token_hash = ?`,
+		hash,
+	)
+
+	var p entities.AccessPolicy
+	var wingsStr string
+	var lastUsed sql.NullTime
+	err := row.Scan(&p.TokenHash, &p.Name, &wingsStr, &p.CreatedAt, &lastUsed)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("policy not found")
+		}
+		return nil, err
+	}
+
+	if wingsStr != "" {
+		p.Wings = strings.Split(wingsStr, ",")
+	}
+	if lastUsed.Valid {
+		p.LastUsed = &lastUsed.Time
+	}
+
+	// Update last_used asynchronously
+	go func() {
+		_, _ = r.db.Exec(`UPDATE access_policies SET last_used = CURRENT_TIMESTAMP WHERE token_hash = ?`, hash)
+	}()
+
+	return &p, nil
+}
+
+// SavePolicy implements PolicyRepository
+func (r *SQLiteRepository) SavePolicy(ctx context.Context, p *entities.AccessPolicy) error {
+	wingsStr := strings.Join(p.Wings, ",")
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO access_policies (token_hash, name, wings, created_at, last_used)
+		 VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT(token_hash) DO UPDATE SET name=excluded.name, wings=excluded.wings`,
+		p.TokenHash, p.Name, wingsStr, p.CreatedAt, p.LastUsed,
+	)
+	return err
+}
+
+// DeletePolicy implements PolicyRepository
+func (r *SQLiteRepository) DeletePolicy(ctx context.Context, hash string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM access_policies WHERE token_hash = ?`, hash)
+	return err
+}
+
+// ListPolicies implements PolicyRepository
+func (r *SQLiteRepository) ListPolicies(ctx context.Context) ([]*entities.AccessPolicy, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT token_hash, name, wings, created_at, last_used FROM access_policies`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var policies []*entities.AccessPolicy
+	for rows.Next() {
+		p := &entities.AccessPolicy{}
+		var wingsStr string
+		var lastUsed sql.NullTime
+		if err := rows.Scan(&p.TokenHash, &p.Name, &wingsStr, &p.CreatedAt, &lastUsed); err != nil {
+			continue
+		}
+		if wingsStr != "" {
+			p.Wings = strings.Split(wingsStr, ",")
+		}
+		if lastUsed.Valid {
+			p.LastUsed = &lastUsed.Time
+		}
+		policies = append(policies, p)
+	}
+	return policies, nil
 }

@@ -11,7 +11,7 @@ import (
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
 	"github.com/google/uuid"
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/mutecomm/go-sqlcipher/v4"
 )
 
 // Mock Transaction
@@ -31,9 +31,9 @@ func init() {
 }
 func (m *mockTx) Exec(query string, args ...interface{}) (sql.Result, error) { return nil, nil }
 func (m *mockTx) Query(query string, args ...interface{}) (*sql.Rows, error) { return nil, nil }
-func (m *mockTx) QueryRow(query string, args ...interface{}) *sql.Row { return nil }
-func (m *mockTx) Prepare(query string) (*sql.Stmt, error) { return nil, nil }
-func (m *mockTx) Stmt(stmt *sql.Stmt) *sql.Stmt { return nil }
+func (m *mockTx) QueryRow(query string, args ...interface{}) *sql.Row        { return nil }
+func (m *mockTx) Prepare(query string) (*sql.Stmt, error)                    { return nil, nil }
+func (m *mockTx) Stmt(stmt *sql.Stmt) *sql.Stmt                              { return nil }
 
 // Mock Repository implementation
 type mockStoreRepository struct {
@@ -74,6 +74,11 @@ func (m *mockStoreRepository) GetVerbatimByID(ctx context.Context, id uuid.UUID)
 }
 
 func (m *mockStoreRepository) DeleteVerbatimByID(ctx context.Context, id uuid.UUID) error {
+	delete(m.verbatims, id)
+	return nil
+}
+
+func (m *mockStoreRepository) DeleteVerbatimByIDTx(_ context.Context, _ *sql.Tx, id uuid.UUID) error {
 	delete(m.verbatims, id)
 	return nil
 }
@@ -236,6 +241,10 @@ func (m *mockStoreExtractor) DetectCausalRelations(ctx context.Context, newFp *e
 	return nil, nil
 }
 
+func (m *mockStoreExtractor) Summarize(ctx context.Context, texts []string) (string, error) {
+	return strings.Join(texts, "; "), nil
+}
+
 // Mock Vector Store
 type mockStoreVectorStore struct {
 	candidates []*entities.Candidate
@@ -244,9 +253,9 @@ type mockStoreVectorStore struct {
 // Mock Logger
 type mockLogger struct{}
 
-func (m *mockLogger) Debug(_ string, _ ...interface{}) {}
-func (m *mockLogger) Info(_ string, _ ...interface{})  {}
-func (m *mockLogger) Warn(_ string, _ ...interface{})  {}
+func (m *mockLogger) Debug(_ string, _ ...interface{})          {}
+func (m *mockLogger) Info(_ string, _ ...interface{})           {}
+func (m *mockLogger) Warn(_ string, _ ...interface{})           {}
 func (m *mockLogger) Error(_ string, _ error, _ ...interface{}) {}
 
 func (m *mockStoreVectorStore) Search(ctx context.Context, vector []float32, limit int, wing, room *string) ([]*entities.Candidate, error) {
@@ -279,21 +288,21 @@ func TestStoreMemoryExecute(t *testing.T) {
 	repo := newMockStoreRepository()
 	extractor := &mockStoreExtractor{}
 	vectorStore := &mockStoreVectorStore{}
-	
+
 	interactor := NewStoreMemory(repo, extractor, extractor, vectorStore, nil, &mockLogger{})
-	
+
 	input := StoreMemoryInput{
 		Content: "Test content for storage",
 		Wing:    "test-wing",
 		Room:    nil,
 	}
-	
+
 	ctx := context.Background()
 	output, err := interactor.Execute(ctx, input)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
-	
+
 	// Verify output
 	if output.FingerprintID == "" {
 		t.Error("Expected FingerprintID to be set")
@@ -304,7 +313,7 @@ func TestStoreMemoryExecute(t *testing.T) {
 	if output.ModelHash != "test-model" {
 		t.Errorf("Expected ModelHash to be 'test-model', got '%s'", output.ModelHash)
 	}
-	
+
 	// Verify repository state
 	if len(repo.verbatims) != 1 {
 		t.Errorf("Expected 1 verbatim in repository, got %d", len(repo.verbatims))
@@ -315,12 +324,12 @@ func TestStoreMemoryExecute(t *testing.T) {
 	if len(repo.embeddings) != 1 {
 		t.Errorf("Expected 1 embedding in repository, got %d", len(repo.embeddings))
 	}
-	
+
 	// Verify vector store
 	if len(vectorStore.candidates) != 1 {
 		t.Errorf("Expected 1 candidate in vector store, got %d", len(vectorStore.candidates))
 	}
-	
+
 	// Verify causal node was created
 	if len(repo.nodes) != 1 {
 		t.Errorf("Expected 1 causal node, got %d", len(repo.nodes))
@@ -332,22 +341,22 @@ func TestStoreMemoryWithRoom(t *testing.T) {
 	repo := newMockStoreRepository()
 	extractor := &mockStoreExtractor{}
 	vectorStore := &mockStoreVectorStore{}
-	
+
 	interactor := NewStoreMemory(repo, extractor, extractor, vectorStore, nil, &mockLogger{})
-	
+
 	room := "test-room"
 	input := StoreMemoryInput{
 		Content: "Test content",
 		Wing:    "test-wing",
 		Room:    &room,
 	}
-	
+
 	ctx := context.Background()
 	_, err := interactor.Execute(ctx, input)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
-	
+
 	// Verify room was set
 	for _, v := range repo.verbatims {
 		if v.Room == nil || *v.Room != "test-room" {
@@ -362,13 +371,13 @@ func BenchmarkStoreMemoryExecute(b *testing.B) {
 	extractor := &mockStoreExtractor{}
 	vectorStore := &mockStoreVectorStore{}
 	interactor := NewStoreMemory(repo, extractor, extractor, vectorStore, nil, &mockLogger{})
-	
+
 	input := StoreMemoryInput{
 		Content: "Benchmark content",
 		Wing:    "bench-wing",
 		Room:    nil,
 	}
-	
+
 	ctx := context.Background()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -425,6 +434,52 @@ func TestStoreMemoryInputValidate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (m *mockStoreRepository) SaveAuditLog(ctx context.Context, log *entities.AuditLog) error {
+	return nil
+}
+
+func (m *mockStoreRepository) ListAuditLogs(ctx context.Context, limit, offset int) ([]*entities.AuditLog, error) {
+	return nil, nil
+}
+
+func (m *mockStoreRepository) GetPolicyByTokenHash(ctx context.Context, hash string) (*entities.AccessPolicy, error) {
+	return nil, nil
+}
+
+func (m *mockStoreRepository) SavePolicy(ctx context.Context, policy *entities.AccessPolicy) error {
+	return nil
+}
+
+func (m *mockStoreRepository) DeletePolicy(ctx context.Context, hash string) error {
+	return nil
+}
+
+func (m *mockStoreRepository) ListPolicies(ctx context.Context) ([]*entities.AccessPolicy, error) {
+	return nil, nil
+}
+
+// Add missing methods to satisfy the full Repository interface
+
+func (m *mockStoreRepository) DB() *sql.DB { return testDB }
+
+func (m *mockStoreRepository) Close() error { return nil }
+
+func (m *mockStoreRepository) GetCandidatesWithEmbeddings(ctx context.Context, ids []uuid.UUID, wing, room *string) ([]*entities.Candidate, error) {
+	return nil, nil
+}
+
+func (m *mockStoreRepository) GetAllEmbeddings(ctx context.Context) ([]*entities.Embedding, error) {
+	return nil, nil
+}
+
+func (m *mockStoreRepository) SearchLexical(ctx context.Context, query string, limit int, wing, room *string) ([]*entities.Candidate, error) {
+	return nil, nil
+}
+
+func (m *mockStoreRepository) UpdateVerbatimSummary(_ context.Context, _ uuid.UUID, _ string, _ int) error {
+	return nil
 }
 
 // Ensure interfaces are implemented

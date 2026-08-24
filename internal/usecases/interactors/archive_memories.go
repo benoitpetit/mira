@@ -12,7 +12,7 @@ import (
 
 // ArchiveMemoriesOutput contains the output of archiving
 type ArchiveMemoriesOutput struct {
-	Result *valueobjects.ArchiveResult
+	Result *valueobjects.ArchiveResult `json:"result"`
 }
 
 // ArchiveMemories implements the archive memories use case

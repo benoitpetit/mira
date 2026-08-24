@@ -19,12 +19,12 @@ type SearchSemanticInput struct {
 
 // SearchSemanticResult represents a single semantic search result
 type SearchSemanticResult struct {
-	ID         uuid.UUID
-	Content    string
-	Similarity float64
-	Type       string
-	Wing       string
-	Room       *string
+	ID         uuid.UUID `json:"id"`
+	Content    string    `json:"content"`
+	Similarity float64   `json:"similarity"`
+	Type       string    `json:"type"`
+	Wing       string    `json:"wing"`
+	Room       *string   `json:"room,omitempty"`
 }
 
 // SearchSemantic implements pure vector search (without CBA)

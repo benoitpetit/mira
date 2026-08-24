@@ -4,8 +4,6 @@ package extraction
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -18,6 +16,7 @@ import (
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
+	"github.com/benoitpetit/mira/internal/util"
 	"github.com/google/uuid"
 	"github.com/pkoukk/tiktoken-go"
 )
@@ -68,9 +67,8 @@ func NewNativeExtractor(embedder ports.Embedder, opts NativeExtractorOptions) (*
 		minEntityLen = 2
 	}
 
-	// Compute model hash
-	hash := sha256.Sum256([]byte(opts.ModelName))
-	modelHash := hex.EncodeToString(hash[:8])
+	// Compute model hash using the canonical hash function
+	modelHash := util.ComputeModelHash(opts.ModelName)
 
 	e := &NativeExtractor{
 		tokenizer:       tok,
@@ -591,6 +589,22 @@ func (e *NativeExtractor) DetectCausalRelations(ctx context.Context, newFp *enti
 	}
 
 	return edges, nil
+}
+
+// Summarize generates a basic synthesis by joining texts (fallback implementation).
+func (e *NativeExtractor) Summarize(ctx context.Context, texts []string) (string, error) {
+	if len(texts) == 0 {
+		return "", nil
+	}
+	if len(texts) == 1 {
+		return texts[0], nil
+	}
+
+	summary := strings.Join(texts, "; ")
+	if len(summary) > 500 {
+		summary = summary[:500] + "..."
+	}
+	return summary, nil
 }
 
 // hasSemanticOverlap checks whether two fingerprints share at least one subject or entity.

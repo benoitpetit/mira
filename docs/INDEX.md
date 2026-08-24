@@ -22,7 +22,7 @@ MIRA is a **long-term memory system for Large Language Models (LLMs)** designed 
 |----------|-------------|
 | [README.md](../README.md) | Quick start, installation, high-level overview |
 | [README_FR.md](../README_FR.md) | Version française du README |
-| [API_REFERENCES.md](API_REFERENCES.md) | Practical MCP tool examples and integration patterns |
+| [API_REFERENCES.md](API_REFERENCES.md) | MCP tool examples, REST HTTP API (13 endpoints), integration patterns |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Clean Architecture, T0/T1/T2 memory model, CBA algorithm, causal graph |
 | [FEATURES.md](FEATURES.md) | Complete feature catalog |
 | [CHANGELOG.md](../CHANGELOG.md) | Full release history and version notes |
@@ -52,18 +52,21 @@ MIRA is a **long-term memory system for Large Language Models (LLMs)** designed 
 - **Multi-Turn Session Injection**: `session_id` boost recalls memories selected in previous turns
 
 ### Operations & Observability
-- **9 MCP Tools**: store, recall, load, causal_chain, timeline, status, archive, clear_memory, **health**
+- **9 MCP Tools**: store, recall, load, causal_chain, timeline, status, health, archive, clear_memory
+- **REST HTTP API**: Optional HTTP server on `:8080` — 13 endpoints with OpenAPI 3.1 spec, Bearer token auth, and graceful shutdown
 - **Prometheus Metrics**: `/metrics`, `/health`, `/health/live`, `/health/ready` — counters for store/recall/search/embed/errors, gauges for memory/vector counts
 - **Webhook Notifications**: HMAC-signed HTTP callbacks with circuit breaker resilience and DLQ retry
 - **Zero-Config Startup**: Runs without `config.yaml` using embedded defaults
 - **SSE Transport**: MCP server can run over Server-Sent Events (`transport: sse`) in addition to stdio
+- **cobra CLI**: `server`, `migrate`, `doctor`, `query`, `export`, `import` subcommands
 
 ---
 
 ## Quick Links
 
 - **Installation**: See [README.md#installation](../README.md#installation)
-- **MCP Tool Reference**: [API_REFERENCES.md](API_REFERENCES.md)
+- **MCP Tool Reference**: [API_REFERENCES.md#mcp-tools](API_REFERENCES.md#mcp-tools)
+- **REST HTTP API Reference**: [API_REFERENCES.md#rest-http-api](API_REFERENCES.md#rest-http-api)
 - **Architecture Deep-Dive**: [ARCHITECTURE.md](ARCHITECTURE.md)
 - **Feature Matrix**: [FEATURES.md](FEATURES.md)
 - **Changelog**: [CHANGELOG.md](../CHANGELOG.md)

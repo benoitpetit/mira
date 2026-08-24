@@ -1,6 +1,6 @@
 # MIRA API References
 
-Practical examples for using MIRA's MCP tools in real-world scenarios.
+Practical examples for using MIRA's MCP tools and optional REST HTTP API.
 
 ---
 
@@ -14,7 +14,7 @@ Practical examples for using MIRA's MCP tools in real-world scenarios.
 6. [Advanced Queries](#advanced-queries)
 7. [Integration Patterns](#integration-patterns)
 8. [System Monitoring](#system-monitoring)
-9. [HTTP API](#http-api)
+9. [REST HTTP API](#rest-http-api)
 10. [Best Practices](#best-practices)
 
 ---
@@ -589,11 +589,437 @@ Active Wings: [auth-service, api-gateway, payment-service, user-service]
 
 ---
 
-## HTTP API
+## REST HTTP API
 
-When metrics are enabled in configuration, MIRA exposes HTTP endpoints for monitoring.
+MIRA ships an optional REST HTTP API that exposes all memory operations over HTTP/JSON.
+It is **disabled by default**. Enable it via config or CLI flags.
 
-### Health Checks
+### Enable
+
+```bash
+# Via CLI flag
+./mira server --with-api --api-addr :8080 --api-token my-secret
+
+# Via config.yaml
+api:
+  enabled: true
+  address: ":8080"
+  auth_token: "my-secret"   # omit or leave empty for no authentication
+  read_timeout_seconds: 30
+  write_timeout_seconds: 30
+```
+
+### Authentication
+
+When `auth_token` is configured, every request must include:
+
+```
+Authorization: Bearer my-secret
+```
+
+The `GET /openapi.json` endpoint is always public — no token required.
+
+### Endpoint Reference
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/memories` | Store a memory with T0/T1/T2 extraction |
+| `GET` | `/api/v1/memories/{id}` | Load full verbatim by UUID |
+| `PUT` | `/api/v1/memories/{id}` | Update memory content |
+| `DELETE` | `/api/v1/memories/{id}` | Delete a single memory |
+| `POST` | `/api/v1/memories/recall` | Recall context (full CBA pipeline) |
+| `POST` | `/api/v1/memories/search` | Pure semantic vector search |
+| `POST` | `/api/v1/memories/consolidate` | Consolidate redundant memories in a wing |
+| `DELETE` | `/api/v1/memories` | Clear memories (global or scoped) |
+| `GET` | `/api/v1/timeline` | Chronological memory timeline |
+| `POST` | `/api/v1/archive` | Trigger archival of expired memories |
+| `GET` | `/api/v1/causal/{id}` | Causal chain for a memory |
+| `GET` | `/api/v1/status` | System status (JSON) |
+| `GET` | `/openapi.json` | OpenAPI 3.1 specification (always public) |
+
+---
+
+### POST /api/v1/memories — Store
+
+Store a memory with automatic T0/T1/T2 extraction.
+
+**Request body:**
+
+```json
+{
+  "content": "We decided to use PostgreSQL for v2.",
+  "wing": "backend",
+  "room": "architecture",
+  "type": "decision"
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `content` | yes | Memory text (max 64KB) |
+| `wing` | yes | Namespace / project name |
+| `room` | no | Sub-category within wing |
+| `type` | no | `decision`, `fact`, `preference`, `session_note`, `debug_log` (auto-detected if omitted) |
+| `metrics` | no | Arbitrary key-value map attached to the fingerprint |
+
+**Response: 201 Created**
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "type": "decision",
+  "facts": 3,
+  "tokens": 12,
+  "model_hash": "a2d8f3e9"
+}
+```
+
+**Example:**
+
+```bash
+curl -s -X POST http://localhost:8080/api/v1/memories \
+  -H "Authorization: Bearer my-secret" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "We decided to use PostgreSQL for v2 due to ACID guarantees.",
+    "wing": "backend",
+    "room": "architecture",
+    "type": "decision"
+  }'
+```
+
+---
+
+### GET /api/v1/memories/{id} — Load
+
+Load the full verbatim text of a memory by its UUID.
+
+**Response: 200 OK**
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "content": "We decided to use PostgreSQL for v2 due to ACID guarantees.",
+  "wing": "backend",
+  "room": "architecture",
+  "created_at": "2026-04-09T14:30:00Z",
+  "tokens": 12
+}
+```
+
+**Example:**
+
+```bash
+curl -s http://localhost:8080/api/v1/memories/550e8400-e29b-41d4-a716-446655440000 \
+  -H "Authorization: Bearer my-secret"
+```
+
+---
+
+### PUT /api/v1/memories/{id} — Update
+
+Replace the content of a memory. Re-extracts T1/T2.
+
+**Request body:**
+
+```json
+{ "content": "Updated memory text." }
+```
+
+**Response: 200 OK** — updated verbatim object.
+
+---
+
+### DELETE /api/v1/memories/{id} — Delete
+
+Delete a single memory and all associated fingerprints, embeddings, and causal nodes.
+
+**Response: 204 No Content**
+
+---
+
+### POST /api/v1/memories/recall — Recall
+
+Retrieve an optimally budget-allocated context for a query using the full CBA pipeline
+(query expansion → hybrid search → RRF fusion → clustering → adaptive threshold → greedy selection).
+
+**Request body:**
+
+```json
+{
+  "query": "Why did we choose PostgreSQL?",
+  "budget": 2000,
+  "wing": "backend",
+  "room": "architecture",
+  "fallback_wings": ["platform-team", "dba-team"],
+  "session_id": "session-abc123"
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `query` | yes | Search query text |
+| `budget` | no | Token budget (default 4000) |
+| `wing` | no | Filter by wing |
+| `room` | no | Filter by room |
+| `fallback_wings` | no | Searched if primary wing returns no results |
+| `session_id` | no | Multi-turn session ID for cross-turn memory boosting |
+
+**Response: 200 OK**
+
+```json
+{
+  "memories": [
+    {
+      "id": "550e8400-...",
+      "rendered": "--- [1] FINGERPRINT (45 tokens) ---\nDecision: PostgreSQL...",
+      "mode": "fingerprint",
+      "tokens": 45,
+      "score": 0.92
+    }
+  ],
+  "budget_used": 0.023,
+  "total_tokens": 45,
+  "query": "Why did we choose PostgreSQL?"
+}
+```
+
+**Example:**
+
+```bash
+curl -s -X POST http://localhost:8080/api/v1/memories/recall \
+  -H "Authorization: Bearer my-secret" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"Why did we choose PostgreSQL?","budget":2000,"wing":"backend"}'
+```
+
+---
+
+### POST /api/v1/memories/search — Semantic Search
+
+Pure vector search without CBA budget allocation. Returns raw ranked results.
+
+**Request body:**
+
+```json
+{
+  "query": "PostgreSQL ACID",
+  "top_k": 10,
+  "threshold": 0.5
+}
+```
+
+**Response: 200 OK**
+
+```json
+{
+  "results": [
+    {
+      "id": "550e8400-...",
+      "content": "We decided to use PostgreSQL for v2...",
+      "wing": "backend",
+      "score": 0.91
+    }
+  ]
+}
+```
+
+---
+
+### POST /api/v1/memories/consolidate — Consolidate
+
+Identify and merge near-duplicate memories within a wing.
+
+**Request body:**
+
+```json
+{
+  "wing": "backend",
+  "similarity_threshold": 0.92
+}
+```
+
+**Response: 200 OK**
+
+```json
+{
+  "merged": 3,
+  "removed_ids": ["uuid1", "uuid2", "uuid3"]
+}
+```
+
+---
+
+### DELETE /api/v1/memories — Clear
+
+Delete memories by scope.
+
+**Request body:**
+
+```json
+{
+  "mode": "room",
+  "wing": "backend",
+  "room": "debug"
+}
+```
+
+| `mode` | Description |
+|--------|-------------|
+| `all` (default) | Delete everything |
+| `wing` | Delete all memories in the given wing |
+| `room` | Delete memories matching wing + room |
+
+**Response: 200 OK**
+
+```json
+{ "deleted": 42 }
+```
+
+---
+
+### GET /api/v1/timeline — Timeline
+
+Retrieve memories in chronological order.
+
+**Query parameters:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `wing` | Filter by wing |
+| `room` | Filter by room |
+| `type` | Filter by memory type |
+| `since` | ISO 8601 start date |
+| `until` | ISO 8601 end date |
+| `limit` | Maximum results (default 100) |
+| `cursor` | Pagination cursor |
+
+**Example:**
+
+```bash
+curl -s "http://localhost:8080/api/v1/timeline?wing=backend&type=decision&limit=10" \
+  -H "Authorization: Bearer my-secret"
+```
+
+**Response: 200 OK**
+
+```json
+{
+  "items": [
+    { "id": "550e...", "type": "decision", "summary": "PostgreSQL migration", "created_at": "2026-04-09T14:30:00Z" }
+  ],
+  "next_cursor": null
+}
+```
+
+---
+
+### POST /api/v1/archive — Archive
+
+Trigger archival of expired memories according to configured thresholds
+(session notes >30d, debug logs >7d).
+
+**Response: 200 OK**
+
+```json
+{
+  "archived_session_notes": 45,
+  "archived_debug_logs": 128,
+  "total_freed_tokens": 15420
+}
+```
+
+---
+
+### GET /api/v1/causal/{id} — Causal Chain
+
+Retrieve the causal chain (ancestors and optionally consequences) for a memory.
+
+**Query parameters:**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `max_depth` | `10` | Maximum BFS depth |
+| `include_consequences` | `false` | Include downstream effects |
+
+**Example:**
+
+```bash
+curl -s "http://localhost:8080/api/v1/causal/550e8400-e29b-41d4-a716-446655440001?max_depth=5&include_consequences=true" \
+  -H "Authorization: Bearer my-secret"
+```
+
+**Response: 200 OK**
+
+```json
+{
+  "chain": [
+    { "id": "550e...", "relation": "TRIGGERED", "summary": "PostgreSQL migration decision" }
+  ],
+  "consequences": [
+    { "id": "661f...", "relation": "TRIGGERED", "summary": "pgAdmin adoption" }
+  ]
+}
+```
+
+---
+
+### GET /api/v1/status — Status
+
+Returns system statistics identical to the `mira_status` MCP tool.
+
+**Response: 200 OK**
+
+```json
+{
+  "version": "0.4.7",
+  "uptime": "2h15m30s",
+  "stats": {
+    "verbatim_count": 1250,
+    "fingerprint_count": 1250,
+    "embedding_count": 1250,
+    "causal_node_count": 1250,
+    "causal_edge_count": 342,
+    "total_tokens": 456780,
+    "active_wings": ["backend", "auth-service"]
+  }
+}
+```
+
+---
+
+### GET /openapi.json — OpenAPI 3.1 Spec
+
+Returns the complete OpenAPI 3.1 specification as JSON. This endpoint is **always public**
+(no Bearer token required), even when auth is enabled.
+
+```bash
+curl -s http://localhost:8080/openapi.json | jq .info
+```
+
+---
+
+### Error Responses
+
+All error responses follow the same JSON shape:
+
+```json
+{ "error": "human-readable error message" }
+```
+
+| HTTP Status | Meaning |
+|-------------|---------|
+| `400` | Bad request / invalid JSON |
+| `401` | Missing or invalid Bearer token |
+| `404` | Memory not found |
+| `422` | Validation error (missing required field) |
+| `500` | Internal server error |
+
+---
+
+### Prometheus / Health Endpoints (port :9090)
+
+When metrics are enabled in configuration, MIRA also exposes monitoring endpoints on a separate port:
 
 | Endpoint | Description |
 |----------|-------------|
@@ -603,11 +1029,13 @@ When metrics are enabled in configuration, MIRA exposes HTTP endpoints for monit
 | `GET /metrics` | Prometheus metrics export |
 
 **Example:**
+
 ```bash
 curl http://localhost:9090/health
 ```
 
 **Response:**
+
 ```json
 {
   "status": "healthy",
@@ -621,9 +1049,7 @@ curl http://localhost:9090/health
 }
 ```
 
-### Prometheus Metrics
-
-Available metrics at `/metrics`:
+**Available Prometheus metrics at `/metrics`:**
 
 | Metric | Type | Description |
 |--------|------|-------------|

@@ -29,6 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **SQLite Concurrency**: Increased `maxOpenConns` from 1 to 10 for better concurrent read performance under WAL mode.
 - **HNSW Validation**: Added runtime dimension and model-hash consistency checks at startup, with automatic rebuild on mismatch.
 
+## [0.4.6] - 2026-04-24
+
+### Changed
+- Maintenance release — dependency updates and internal cleanup.
+
 ## [0.4.5] - 2026-04-24
 
 ### Added
@@ -386,6 +391,12 @@ hnsw:
 
 ---
 
+[0.4.7]: https://github.com/benoitpetit/mira/releases/tag/v0.4.7
+[0.4.6]: https://github.com/benoitpetit/mira/releases/tag/v0.4.6
+[0.4.5]: https://github.com/benoitpetit/mira/releases/tag/v0.4.5
+[0.4.4]: https://github.com/benoitpetit/mira/releases/tag/v0.4.4
+[0.4.3]: https://github.com/benoitpetit/mira/releases/tag/v0.4.3
+[0.4.2]: https://github.com/benoitpetit/mira/releases/tag/v0.4.2
 [0.4.0]: https://github.com/benoitpetit/mira/releases/tag/v0.4.0
 [0.3.3]: https://github.com/benoitpetit/mira/releases/tag/v0.3.3
 [0.3.2]: https://github.com/benoitpetit/mira/releases/tag/v0.3.2

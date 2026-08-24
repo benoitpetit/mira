@@ -10,12 +10,12 @@ import (
 
 // CausalNode represents a node in the causal graph
 type CausalNode struct {
-	ID        uuid.UUID
-	Type      string
-	Summary   string
-	Timestamp time.Time
-	Wing      string
-	Room      *string
+	ID        uuid.UUID `json:"id"`
+	Type      string    `json:"type"`
+	Summary   string    `json:"summary"`
+	Timestamp time.Time `json:"timestamp"`
+	Wing      string    `json:"wing"`
+	Room      *string   `json:"room,omitempty"`
 }
 
 // NewCausalNode creates a new causal node

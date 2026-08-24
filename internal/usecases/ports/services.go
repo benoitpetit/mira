@@ -105,6 +105,7 @@ type Extractor interface {
 	FingerprintExtractor
 	Embedder
 	CausalRelationDetector
+	Summarizer
 }
 
 // FingerprintRenderer defines the interface for rendering fingerprints to text.
@@ -130,6 +131,12 @@ type Reranker interface {
 	// Rerank scores a list of candidate texts against a query.
 	// Returns scores in the same order as candidates.
 	Rerank(ctx context.Context, query string, candidates []string) ([]float64, error)
+}
+
+// Summarizer defines the interface for abstractive summarization of multiple texts.
+type Summarizer interface {
+	// Summarize generates a concise synthesis of the provided texts.
+	Summarize(ctx context.Context, texts []string) (string, error)
 }
 
 // Logger defines the interface for structured logging.

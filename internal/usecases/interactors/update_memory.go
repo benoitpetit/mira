@@ -38,6 +38,8 @@ func NewUpdateMemory(repo ports.Repository, extractor ports.FingerprintExtractor
 }
 
 // Execute updates a verbatim's content and regenerates its fingerprint and embedding.
+// The delete and re-insert happen inside a single transaction so that a storage
+// failure during re-insert leaves the original verbatim intact (no data loss).
 func (uc *UpdateMemory) Execute(ctx context.Context, input UpdateMemoryInput) (*UpdateMemoryOutput, error) {
 	// 1. Load existing verbatim
 	verbatim, err := uc.repo.GetVerbatimByID(ctx, input.ID)
@@ -54,18 +56,18 @@ func (uc *UpdateMemory) Execute(ctx context.Context, input UpdateMemoryInput) (*
 		return nil, fmt.Errorf("extraction failed: %w", err)
 	}
 
-	// 4. Delete old records
-	if err := uc.repo.DeleteVerbatimByID(ctx, input.ID); err != nil {
-		return nil, fmt.Errorf("failed to delete old verbatim: %w", err)
-	}
-	_ = uc.vectorStore.Delete(ctx, input.ID)
-
-	// 5. Store updated data
+	// 4. Atomically delete old records and insert new ones in a single transaction.
+	//    If the insert fails, the transaction rolls back and the original verbatim
+	//    is preserved — unlike the previous code which deleted first, then inserted.
 	tx, err := uc.repo.Begin()
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	if tx != nil {
+		if err := uc.repo.DeleteVerbatimByIDTx(ctx, tx, input.ID); err != nil {
+			_ = tx.Rollback()
+			return nil, fmt.Errorf("failed to delete old verbatim: %w", err)
+		}
 		if err := uc.repo.StoreVerbatimTx(ctx, tx, verbatim); err != nil {
 			_ = tx.Rollback()
 			return nil, fmt.Errorf("failed to store verbatim: %w", err)
@@ -82,12 +84,17 @@ func (uc *UpdateMemory) Execute(ctx context.Context, input UpdateMemoryInput) (*
 			return nil, fmt.Errorf("failed to commit transaction: %w", err)
 		}
 	} else {
+		// Fallback path (no transaction support): keep original best-effort order.
+		if err := uc.repo.DeleteVerbatimByID(ctx, input.ID); err != nil {
+			return nil, fmt.Errorf("failed to delete old verbatim: %w", err)
+		}
 		_ = uc.repo.StoreVerbatim(ctx, verbatim)
 		_ = uc.repo.StoreFingerprint(ctx, fp)
 		_ = uc.repo.StoreEmbedding(ctx, emb)
 	}
 
-	// 6. Update vector store
+	// 5. Update vector store (outside the DB transaction — it is a separate store).
+	_ = uc.vectorStore.Delete(ctx, input.ID)
 	candidate := entities.NewCandidate(fp, verbatim, emb.Vector)
 	_ = uc.vectorStore.AddCandidate(ctx, candidate)
 

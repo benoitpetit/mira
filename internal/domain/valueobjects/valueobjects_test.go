@@ -108,7 +108,7 @@ func TestRenderModeString(t *testing.T) {
 func TestNewSelectedMemory(t *testing.T) {
 	id := uuid.New()
 	vid := uuid.New()
-	sm := NewSelectedMemory(id, vid, ModeFingerprint, 150, "rendered content")
+	sm := NewSelectedMemory(id, vid, ModeFingerprint, 150, "rendered content", 0.85)
 
 	if sm.CandidateID != id {
 		t.Error("CandidateID should match")
@@ -124,6 +124,9 @@ func TestNewSelectedMemory(t *testing.T) {
 	}
 	if sm.Rendered != "rendered content" {
 		t.Errorf("Rendered = %s, want 'rendered content'", sm.Rendered)
+	}
+	if sm.Confidence != 0.85 {
+		t.Errorf("Confidence = %f, want 0.85", sm.Confidence)
 	}
 	if time.Since(sm.SelectedAt) > time.Second {
 		t.Error("SelectedAt should be recent")

@@ -10,12 +10,30 @@ import (
 	"github.com/benoitpetit/mira/internal/usecases/ports"
 )
 
+// SoulAgentSummary is a brief identity snapshot for one SOUL agent.
+type SoulAgentSummary struct {
+	AgentID         string  `json:"agent_id"`
+	Version         int     `json:"version"`
+	ConfidenceScore float64 `json:"confidence_score"`
+	TraitCount      int     `json:"trait_count"`
+	LastCapture     string  `json:"last_capture"`
+	DriftScore      float64 `json:"drift_score"`
+}
+
+// SoulStatusSummary is included in GetStatusOutput when SOUL is enabled.
+type SoulStatusSummary struct {
+	Enabled    bool               `json:"enabled"`
+	AgentCount int                `json:"agent_count"`
+	Agents     []SoulAgentSummary `json:"agents"`
+}
+
 // GetStatusOutput contains the output of getting status
 type GetStatusOutput struct {
-	Stats   *valueobjects.Stats
-	Models  []string
-	Version string
-	Uptime  string
+	Stats   *valueobjects.Stats `json:"stats"`
+	Models  []string            `json:"models"`
+	Version string              `json:"version"`
+	Uptime  string              `json:"uptime"`
+	Soul    *SoulStatusSummary  `json:"soul,omitempty"`
 }
 
 // GetStatus implements the get status use case

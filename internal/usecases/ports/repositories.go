@@ -34,6 +34,16 @@ type VerbatimRepository interface {
 
 	// DeleteVerbatimByID deletes a verbatim and all associated data by ID.
 	DeleteVerbatimByID(ctx context.Context, id uuid.UUID) error
+
+	// DeleteVerbatimByIDTx deletes a verbatim and all associated data within an
+	// existing transaction. Use this when atomicity with surrounding operations
+	// (e.g., a subsequent re-insert with the same ID) is required.
+	DeleteVerbatimByIDTx(ctx context.Context, tx *sql.Tx, id uuid.UUID) error
+
+	// UpdateVerbatimSummary stores the rule-based compressed summary for a verbatim.
+	// summaryTokens is the estimated word/token count of the summary.
+	// This is a best-effort operation; callers should treat errors as non-fatal.
+	UpdateVerbatimSummary(ctx context.Context, id uuid.UUID, summary string, summaryTokens int) error
 }
 
 // FingerprintRepository defines the interface for fingerprint (T1) storage.
@@ -143,6 +153,11 @@ type TransactionManager interface {
 	// Begin starts a new database transaction.
 	// Returns nil for implementations that don't support transactions (e.g., some test mocks).
 	Begin() (*sql.Tx, error)
+
+	// DB returns the underlying *sql.DB instance.
+	// This is used by components that need direct database access
+	// (e.g., for building vector indexes or overlap caches).
+	DB() *sql.DB
 }
 
 // Repository combines all repository interfaces for atomic operations.
@@ -159,6 +174,15 @@ type Repository interface {
 	ModelRepository
 	StatsRepository
 	TagRepository
+	AuditRepository
+	PolicyRepository
+	EmbeddingSource
+	Closer
+}
+
+// Closer defines the interface for closing resources.
+type Closer interface {
+	Close() error
 }
 
 // EmbeddingSource provides access to embeddings for vector stores.
@@ -187,4 +211,18 @@ type TagRepository interface {
 
 	// GetTagsForVerbatim retrieves all tags associated with a verbatim.
 	GetTagsForVerbatim(ctx context.Context, verbatimID uuid.UUID) ([]string, error)
+}
+
+// AuditRepository manages system audit logs.
+type AuditRepository interface {
+	SaveAuditLog(ctx context.Context, log *entities.AuditLog) error
+	ListAuditLogs(ctx context.Context, limit, offset int) ([]*entities.AuditLog, error)
+}
+
+// PolicyRepository manages authentication tokens and access policies.
+type PolicyRepository interface {
+	GetPolicyByTokenHash(ctx context.Context, hash string) (*entities.AccessPolicy, error)
+	SavePolicy(ctx context.Context, policy *entities.AccessPolicy) error
+	DeletePolicy(ctx context.Context, hash string) error
+	ListPolicies(ctx context.Context) ([]*entities.AccessPolicy, error)
 }

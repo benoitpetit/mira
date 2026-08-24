@@ -93,3 +93,88 @@ func BenchmarkCosineSimilarity(b *testing.B) {
 		CosineSimilarity(a, vecB)
 	}
 }
+
+// ── CosineSimilarityNormalized ────────────────────────────────────────────────
+
+func TestCosineSimilarityNormalized(t *testing.T) {
+	tests := []struct {
+		name     string
+		a        []float32
+		b        []float32
+		expected float64
+	}{
+		{
+			name:     "identical unit vectors",
+			a:        []float32{1, 0, 0},
+			b:        []float32{1, 0, 0},
+			expected: 1.0,
+		},
+		{
+			name:     "orthogonal unit vectors",
+			a:        []float32{1, 0, 0},
+			b:        []float32{0, 1, 0},
+			expected: 0.0,
+		},
+		{
+			name:     "different length vectors",
+			a:        []float32{1, 0},
+			b:        []float32{1, 0, 0},
+			expected: 0.0,
+		},
+		{
+			name:     "45 degree pre-normalized",
+			a:        []float32{0.70710678, 0.70710678},
+			b:        []float32{1, 0},
+			expected: 0.70710678,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CosineSimilarityNormalized(tt.a, tt.b)
+			diff := math.Abs(result - tt.expected)
+			if diff > 0.0001 {
+				t.Errorf("CosineSimilarityNormalized() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+// ── CosineDistance ────────────────────────────────────────────────────────────
+
+func TestCosineDistance(t *testing.T) {
+	tests := []struct {
+		name     string
+		a        []float32
+		b        []float32
+		expected float32
+	}{
+		{
+			name:     "identical vectors",
+			a:        []float32{1, 0, 0},
+			b:        []float32{1, 0, 0},
+			expected: 0.0,
+		},
+		{
+			name:     "opposite vectors",
+			a:        []float32{1, 0, 0},
+			b:        []float32{-1, 0, 0},
+			expected: 2.0,
+		},
+		{
+			name:     "orthogonal vectors",
+			a:        []float32{1, 0, 0},
+			b:        []float32{0, 1, 0},
+			expected: 1.0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CosineDistance(tt.a, tt.b)
+			if math.Abs(float64(result-tt.expected)) > 0.0001 {
+				t.Errorf("CosineDistance() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}

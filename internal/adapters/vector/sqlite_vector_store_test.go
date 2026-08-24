@@ -364,3 +364,48 @@ func TestSQLiteVectorStoreSearchOrdering(t *testing.T) {
 		t.Errorf("Most similar result has wrong similarity: got %f, expected %f", mostSimilar, expectedMostSimilar)
 	}
 }
+
+// TestSQLiteVectorStore_NoopMethods verifies that ClearAll and ClearByRoom are
+// no-ops that always succeed (data lives in the repository layer).
+func TestSQLiteVectorStore_NoopMethods(t *testing.T) {
+	repo := setupTestDB(t)
+	store := NewSQLiteVectorStore(repo.DB())
+	ctx := context.Background()
+
+	if err := store.ClearAll(ctx); err != nil {
+		t.Errorf("ClearAll: %v", err)
+	}
+	room := "r"
+	if err := store.ClearByRoom(ctx, "wing", &room); err != nil {
+		t.Errorf("ClearByRoom: %v", err)
+	}
+}
+
+// TestSQLiteVectorStore_SearchLexical exercises the FTS5 code path.
+// The test is skipped if FTS5 is unavailable in this build.
+func TestSQLiteVectorStore_SearchLexical(t *testing.T) {
+	repo := setupTestDB(t)
+	store := NewSQLiteVectorStore(repo.DB())
+	ctx := context.Background()
+
+	// Try a search; if FTS5 is absent we get an "FTS5 not available" error — skip.
+	_, err := store.SearchLexical(ctx, "anything", 5, nil, nil)
+	if err != nil && err.Error() == "FTS5 not available" {
+		t.Skip("FTS5 not available in this build")
+	}
+	if err != nil {
+		t.Fatalf("SearchLexical (no rows): unexpected error: %v", err)
+	}
+
+	// Add a candidate and search for its content.
+	dim := 10
+	createAndStoreCandidate(t, repo, dim, "unique lexical content fox", "wing", nil, 0.5)
+
+	results, err := store.SearchLexical(ctx, "fox", 5, nil, nil)
+	if err != nil {
+		t.Fatalf("SearchLexical('fox'): %v", err)
+	}
+	if len(results) == 0 {
+		t.Error("SearchLexical('fox') expected ≥1 result")
+	}
+}
