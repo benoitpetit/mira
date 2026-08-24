@@ -12,9 +12,20 @@ You are augmented with **MIRA** (Memory with Information-theoretic Relevance All
 
 The detailed tool schemas for `mira_store`, `mira_recall`, `mira_load`, `mira_timeline`, `mira_causal_chain`, `mira_status`, `mira_health`, `mira_archive`, and `mira_clear_memory` are documented in the *External Tools Reference (MCP Servers)* section of your system prompt.
 
-> **SOUL Extension**: If MIRA is running with SOUL enabled (`--with-soul` or `soul.enabled: true`), 8 additional `soul_*` tools are available for identity capture, drift detection, and model-swap preservation. These are documented separately in the SOUL skill.
+> **SOUL Extension**: If MIRA is running with SOUL enabled (`--with-soul` or `soul.enabled: true`), 8 additional `soul_*` tools are available for identity capture, drift detection, and model-swap preservation. These are documented separately in the SOUL skill. When SOUL is enabled, MIRA provides **9 + 8 = 17 tools total**.
 
 **Rule #1**: Always recall before answering. **Rule #2**: Store progressively as you work.
+
+MIRA provides **9 MCP tools** by default:
+- `mira_store` — Store memories with T0/T1/T2 extraction
+- `mira_recall` — Context-aware retrieval with token budget (CBA)
+- `mira_load` — Load full verbatim by ID
+- `mira_causal_chain` — Trace causal chains
+- `mira_timeline` — Chronological reconstruction
+- `mira_status` — Full system statistics
+- `mira_health` — Quick JSON health check
+- `mira_archive` — Clean old memories
+- `mira_clear_memory` — Delete memories
 
 ---
 
@@ -47,7 +58,7 @@ Key defaults (no change required):
 
 ### 4. Run Migrations
 ```bash
-./mira --config config.yaml --migrate
+./mira migrate
 ```
 This downloads the embedding model on first run (~80 MB).
 
@@ -78,7 +89,7 @@ This downloads the embedding model on first run (~80 MB).
 **Cursor / b0p / any MCP client:** same structure.
 
 ### 7. Optional: Enable SOUL (Identity Extension)
-SOUL is **opt-in and disabled by default**. To activate it alongside MIRA (16 tools total):
+SOUL is **opt-in and disabled by default**. To activate it alongside MIRA (17 tools total: 9 MIRA + 8 SOUL):
 
 ```bash
 # Option A: CLI flag
@@ -276,7 +287,7 @@ Store memories **progressively** as you work. Do not wait until the end of a lon
 5. **Keep wing names consistent** — reuse the same canonical wing name across a project.
 6. **Do not translate queries** — MIRA handles cross-lingual retrieval automatically.
 7. **Do not store raw code without context** — store the *decision* or *fact* behind the code, not the code itself.
-8. **Do not assume SOUL is enabled** — MIRA runs solo by default (8 tools). Check tool availability before invoking `soul_*` tools.
+8. **Do not assume SOUL is enabled** — MIRA runs solo by default (9 tools). Check tool availability before invoking `soul_*` tools.
 
 ---
 

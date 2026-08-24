@@ -1,7 +1,11 @@
 // EmbeddingModel entity
 package entities
 
-import "time"
+import (
+	"time"
+
+	"github.com/benoitpetit/mira/internal/util"
+)
 
 // EmbeddingModel represents metadata about an embedding model
 type EmbeddingModel struct {
@@ -15,7 +19,7 @@ type EmbeddingModel struct {
 // NewEmbeddingModel creates a new model metadata
 func NewEmbeddingModel(modelName string, dimension int) *EmbeddingModel {
 	return &EmbeddingModel{
-		ModelHash: computeModelHash(modelName),
+		ModelHash: util.ComputeModelHash(modelName),
 		ModelName: modelName,
 		Dimension: dimension,
 		CreatedAt: time.Now(),
@@ -27,12 +31,4 @@ func NewEmbeddingModel(modelName string, dimension int) *EmbeddingModel {
 func (m *EmbeddingModel) WithMetadata(key string, value any) *EmbeddingModel {
 	m.Metadata[key] = value
 	return m
-}
-
-func computeModelHash(modelName string) string {
-	// Simple hash - first 16 chars of model name
-	if len(modelName) > 16 {
-		return modelName[:16]
-	}
-	return modelName
 }

@@ -123,3 +123,16 @@ func TestPrometheusCollector_Handler_ContainsAllMetrics(t *testing.T) {
 		}
 	}
 }
+
+func TestPrometheusCollector_RecordStoreResult(t *testing.T) {
+	pc := NewPrometheusCollector()
+	pc.RecordStoreResult(5)
+	pc.RecordStoreResult(3)
+	// smoke-test: no panic
+}
+
+func TestPrometheusCollector_RecordRecallResult(t *testing.T) {
+	pc := NewPrometheusCollector()
+	pc.RecordRecallResult(4, 0.75)
+	// smoke-test: no panic
+}

@@ -4,6 +4,8 @@ package config
 import (
 	"os"
 
+	"github.com/benoitpetit/mira/internal/util"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -18,11 +20,13 @@ type Config struct {
 	OverlapCache      OverlapCacheConfig `yaml:"overlap_cache"`
 	Extraction        ExtractionConfig   `yaml:"extraction"`
 	MCP               MCPConfig          `yaml:"mcp"`
+	API               APIConfig          `yaml:"api"`
 	HNSW              HNSWConfig         `yaml:"hnsw"`
 	Metrics           MetricsConfig      `yaml:"metrics"`
 	Webhooks          WebhooksConfig     `yaml:"webhooks"`
 	Recall            RecallConfig       `yaml:"recall"`
 	Soul              SoulConfig         `yaml:"soul"`
+	Compression       CompressionConfig  `yaml:"compression"`
 }
 
 // SoulConfig configures the optional SOUL identity subsystem.
@@ -45,6 +49,9 @@ type SoulConfig struct {
 
 	// Evolution controls versioned identity history tracking.
 	Evolution SoulEvolutionConfig `yaml:"evolution"`
+
+	// Memory controls SOUL↔MIRA memory enrichment.
+	Memory SoulMemoryConfig `yaml:"memory"`
 }
 
 // SoulExtractionConfig mirrors SOUL extraction settings.
@@ -74,6 +81,17 @@ type SoulModelSwapConfig struct {
 type SoulEvolutionConfig struct {
 	Enabled            bool `yaml:"enabled"`
 	MaxHistoryVersions int  `yaml:"max_history_versions"`
+}
+
+// SoulMemoryConfig controls how SOUL enriches identity context with MIRA memories.
+type SoulMemoryConfig struct {
+	// EnrichWithMiraMemories enables injecting MIRA verbatim memories into SOUL
+	// identity recall prompts, giving the AI richer personal history context.
+	EnrichWithMiraMemories bool `yaml:"enrich_with_mira_memories"`
+
+	// MaxMiraMemories caps the number of MIRA memories injected per identity
+	// recall. Has no effect when EnrichWithMiraMemories is false. Default: 5.
+	MaxMiraMemories int `yaml:"max_mira_memories"`
 }
 
 type QueryExpansionConfig struct {
@@ -109,6 +127,10 @@ type HNSWConfig struct {
 	Ml             float64 `yaml:"Ml"`
 	EfConstruction int     `yaml:"ef_construction"`
 	EfSearch       int     `yaml:"ef_search"`
+	// EncryptionKey is an optional passphrase used to encrypt vectors.bin at rest
+	// with AES-256-GCM.  Leave empty to disable encryption.
+	// Can also be set via the MIRA_HNSW_KEY environment variable (env takes precedence).
+	EncryptionKey string `yaml:"encryption_key,omitempty"`
 }
 
 type SystemConfig struct {
@@ -116,16 +138,27 @@ type SystemConfig struct {
 }
 
 type SQLiteSettingsConfig struct {
-	JournalMode string `yaml:"journal_mode"`
-	Synchronous string `yaml:"synchronous"`
-	CacheSize   int    `yaml:"cache_size"`
-	MmapSize    int    `yaml:"mmap_size"`
-	TempStore   string `yaml:"temp_store"`
+	JournalMode   string `yaml:"journal_mode"`
+	Synchronous   string `yaml:"synchronous"`
+	CacheSize     int    `yaml:"cache_size"`
+	MmapSize      int    `yaml:"mmap_size"`
+	TempStore     string `yaml:"temp_store"`
+	EncryptionKey string `yaml:"encryption_key,omitempty"`
+}
+
+type PostgreSQLSettingsConfig struct {
+	URL         string `yaml:"url"`
+	MaxConns    int    `yaml:"max_conns"`
+	MinConns    int    `yaml:"min_conns"`
+	MaxIdleTime int    `yaml:"max_idle_time_seconds"`
+	MaxConnTime int    `yaml:"max_conn_time_seconds"`
 }
 
 type StorageConfig struct {
-	Path   string               `yaml:"path"`
-	SQLite SQLiteSettingsConfig `yaml:"sqlite"`
+	Type     string                   `yaml:"type"` // "sqlite" or "postgres"
+	Path     string                   `yaml:"path"`
+	SQLite   SQLiteSettingsConfig     `yaml:"sqlite"`
+	Postgres PostgreSQLSettingsConfig `yaml:"postgres"`
 }
 
 type EmbeddingsConfig struct {
@@ -153,10 +186,23 @@ type DensitySigmoidConfig struct {
 	Mu float64 `yaml:"mu"`
 }
 
+// LLMExtractionConfig configures the optional Ollama-backed LLM fingerprint extractor.
+// When Enabled is true, MIRA calls the Ollama HTTP API to extract structured fingerprints.
+// On any error (timeout, parse failure, etc.) it falls back to NativeExtractor
+// if FallbackOnError is true (the default).
+type LLMExtractionConfig struct {
+	Enabled         bool   `yaml:"enabled"`
+	Endpoint        string `yaml:"endpoint"`          // default: "http://localhost:11434"
+	Model           string `yaml:"model"`             // default: "llama3.2:3b"
+	TimeoutSeconds  int    `yaml:"timeout_seconds"`   // default: 30
+	FallbackOnError bool   `yaml:"fallback_on_error"` // default: true
+}
+
 type ExtractionConfig struct {
-	MinEntityLength int `yaml:"min_entity_length"`
-	CausalLookback  int `yaml:"causal_lookback"`
-	CausalMaxDays   int `yaml:"causal_max_days"`
+	MinEntityLength int                 `yaml:"min_entity_length"`
+	CausalLookback  int                 `yaml:"causal_lookback"`
+	CausalMaxDays   int                 `yaml:"causal_max_days"`
+	LLM             LLMExtractionConfig `yaml:"llm"`
 }
 
 // OverlapCacheConfig configures the overlap cache for CBA
@@ -173,13 +219,43 @@ type MCPConfig struct {
 	Address        string `yaml:"address"`
 }
 
+// CompressionConfig controls rule-based context compression for session_notes.
+type CompressionConfig struct {
+	// AutoCompress enables automatic compression of session_notes at store time.
+	// Defaults to false.
+	AutoCompress bool `yaml:"auto_compress"`
+
+	// MinTokens is the minimum token count a verbatim must have before it is a
+	// candidate for auto-compression. Defaults to 100.
+	MinTokens int `yaml:"min_tokens"`
+}
+
+// APIConfig configures the optional REST API server.
+type APIConfig struct {
+	Enabled      bool   `yaml:"enabled"`
+	Address      string `yaml:"address"`               // listen address, default ":8080"
+	AuthToken    string `yaml:"auth_token"`            // optional bearer token; empty = no auth
+	ReadTimeout  int    `yaml:"read_timeout_seconds"`  // default 30
+	WriteTimeout int    `yaml:"write_timeout_seconds"` // default 30
+
+	// WingTokens maps bearer tokens to the list of wings they are allowed to access.
+	// Defined wings: "read", "write", "delete", "admin".
+	// The master AuthToken (above) bypasses wing checks and allows everything.
+	// Example:
+	//   wing_tokens:
+	//     "ro-token-abc": ["read"]
+	//     "rw-token-xyz": ["read", "write"]
+	WingTokens map[string][]string `yaml:"wing_tokens"`
+}
+
 // Default returns default configuration
 func Default() *Config {
 	return &Config{
 		System: SystemConfig{
-			Version:        "0.4.7",
+			Version: "0.4.7",
 		},
 		Storage: StorageConfig{
+			Type: "sqlite",
 			Path: ".mira",
 			SQLite: SQLiteSettingsConfig{
 				JournalMode: "WAL",
@@ -188,10 +264,17 @@ func Default() *Config {
 				MmapSize:    268435456,
 				TempStore:   "MEMORY",
 			},
+			Postgres: PostgreSQLSettingsConfig{
+				URL:         "postgres://postgres@localhost:5432/mira?sslmode=disable",
+				MaxConns:    10,
+				MinConns:    2,
+				MaxIdleTime: 300,
+				MaxConnTime: 1800,
+			},
 		},
 		Embeddings: EmbeddingsConfig{
 			CurrentModel: "sentence-transformers/all-MiniLM-L6-v2",
-			ModelHash:    "a2d8f3e9",
+			ModelHash:    util.ComputeModelHash("sentence-transformers/all-MiniLM-L6-v2"),
 			Dimension:    384,
 			BatchSize:    32,
 			CacheSize:    1000,
@@ -224,6 +307,13 @@ func Default() *Config {
 			MinEntityLength: 2,
 			CausalLookback:  50,
 			CausalMaxDays:   30,
+			LLM: LLMExtractionConfig{
+				Enabled:         false,
+				Endpoint:        "http://localhost:11434",
+				Model:           "llama3.2:3b",
+				TimeoutSeconds:  30,
+				FallbackOnError: true,
+			},
 		},
 		OverlapCache: OverlapCacheConfig{
 			TTLDays:    30,
@@ -257,6 +347,13 @@ func Default() *Config {
 			Workers:   3,
 			QueueSize: 1000,
 			Timeout:   30,
+		},
+		// API configuration - optional REST API
+		API: APIConfig{
+			Enabled:      false,
+			Address:      ":8080",
+			ReadTimeout:  30,
+			WriteTimeout: 30,
 		},
 		Recall: RecallConfig{
 			AdaptiveThresholdMethod:  "iqr",
@@ -353,11 +450,57 @@ type WebhooksConfig struct {
 // Validate checks if the configuration is valid and applies defaults for invalid values
 func (c *Config) Validate() error {
 	// Storage validation
+	if storageType := os.Getenv("MIRA_STORAGE_TYPE"); storageType != "" {
+		c.Storage.Type = storageType
+	}
+	if c.Storage.Type == "" {
+		c.Storage.Type = "sqlite"
+	}
+
 	if dataPath := os.Getenv("MIRA_DATA_PATH"); dataPath != "" {
 		c.Storage.Path = dataPath
 	}
 	if c.Storage.Path == "" {
 		c.Storage.Path = ".mira"
+	}
+
+	// SQLite validation
+	if c.Storage.SQLite.JournalMode == "" {
+		c.Storage.SQLite.JournalMode = "WAL"
+	}
+	if c.Storage.SQLite.Synchronous == "" {
+		c.Storage.SQLite.Synchronous = "NORMAL"
+	}
+	if c.Storage.SQLite.CacheSize == 0 {
+		c.Storage.SQLite.CacheSize = -64000
+	}
+	if c.Storage.SQLite.MmapSize <= 0 {
+		c.Storage.SQLite.MmapSize = 268435456
+	}
+	if c.Storage.SQLite.TempStore == "" {
+		c.Storage.SQLite.TempStore = "MEMORY"
+	}
+
+	// MIRA_SQLITE_KEY env var overrides config encryption key
+	if envKey := os.Getenv("MIRA_SQLITE_KEY"); envKey != "" {
+		c.Storage.SQLite.EncryptionKey = envKey
+	}
+
+	// PostgreSQL validation
+	if pgURL := os.Getenv("MIRA_POSTGRES_URL"); pgURL != "" {
+		c.Storage.Postgres.URL = pgURL
+	}
+	if c.Storage.Postgres.MaxConns <= 0 {
+		c.Storage.Postgres.MaxConns = 10
+	}
+	if c.Storage.Postgres.MinConns <= 0 {
+		c.Storage.Postgres.MinConns = 2
+	}
+	if c.Storage.Postgres.MaxIdleTime <= 0 {
+		c.Storage.Postgres.MaxIdleTime = 300
+	}
+	if c.Storage.Postgres.MaxConnTime <= 0 {
+		c.Storage.Postgres.MaxConnTime = 1800
 	}
 
 	// Embeddings validation
@@ -430,6 +573,10 @@ func (c *Config) Validate() error {
 	if c.HNSW.EfSearch <= 0 {
 		c.HNSW.EfSearch = 50
 	}
+	// MIRA_HNSW_KEY env var overrides config encryption key
+	if envKey := os.Getenv("MIRA_HNSW_KEY"); envKey != "" {
+		c.HNSW.EncryptionKey = envKey
+	}
 
 	// Metrics validation
 	if c.Metrics.Enabled {
@@ -454,6 +601,19 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	// API validation
+	if c.API.Enabled {
+		if c.API.Address == "" {
+			c.API.Address = ":8080"
+		}
+		if c.API.ReadTimeout <= 0 {
+			c.API.ReadTimeout = 30
+		}
+		if c.API.WriteTimeout <= 0 {
+			c.API.WriteTimeout = 30
+		}
+	}
+
 	// Extraction validation
 	if c.Extraction.MinEntityLength <= 0 {
 		c.Extraction.MinEntityLength = 2
@@ -463,6 +623,16 @@ func (c *Config) Validate() error {
 	}
 	if c.Extraction.CausalMaxDays <= 0 {
 		c.Extraction.CausalMaxDays = 30
+	}
+	// LLM extractor defaults
+	if c.Extraction.LLM.Endpoint == "" {
+		c.Extraction.LLM.Endpoint = "http://localhost:11434"
+	}
+	if c.Extraction.LLM.Model == "" {
+		c.Extraction.LLM.Model = "llama3.2:3b"
+	}
+	if c.Extraction.LLM.TimeoutSeconds <= 0 {
+		c.Extraction.LLM.TimeoutSeconds = 30
 	}
 
 	// Recall validation
@@ -512,9 +682,16 @@ func (c *Config) Validate() error {
 		c.MCP.Name = "mira"
 	}
 	if c.MCP.Version == "" {
-		c.MCP.Version = "0.4.5"
+		c.MCP.Version = "0.4.7"
 	}
 	if c.MCP.Transport == "" {
+		c.MCP.Transport = "stdio"
+	}
+	// Validate transport
+	switch c.MCP.Transport {
+	case "stdio", "sse", "http":
+		// valid
+	default:
 		c.MCP.Transport = "stdio"
 	}
 	if c.MCP.TimeoutSeconds <= 0 {
@@ -526,24 +703,7 @@ func (c *Config) Validate() error {
 
 	// Embeddings validation - ModelHash
 	if c.Embeddings.ModelHash == "" {
-		c.Embeddings.ModelHash = "a2d8f3e9"
-	}
-
-	// Storage SQLite validation
-	if c.Storage.SQLite.JournalMode == "" {
-		c.Storage.SQLite.JournalMode = "WAL"
-	}
-	if c.Storage.SQLite.Synchronous == "" {
-		c.Storage.SQLite.Synchronous = "NORMAL"
-	}
-	if c.Storage.SQLite.CacheSize == 0 {
-		c.Storage.SQLite.CacheSize = -64000
-	}
-	if c.Storage.SQLite.MmapSize <= 0 {
-		c.Storage.SQLite.MmapSize = 268435456
-	}
-	if c.Storage.SQLite.TempStore == "" {
-		c.Storage.SQLite.TempStore = "MEMORY"
+		c.Embeddings.ModelHash = util.ComputeModelHash("sentence-transformers/all-MiniLM-L6-v2")
 	}
 
 	// Soul validation — apply defaults for zero values so embedded SOUL

@@ -474,3 +474,78 @@ func TestCalculateDelay(t *testing.T) {
 		})
 	}
 }
+
+// ── RetryWithResult additional paths ─────────────────────────────────────────
+
+func TestRetryWithResult_ContextCancellation(t *testing.T) {
+	callCount := 0
+	fn := func() (int, error) {
+		callCount++
+		return 0, errors.New("error")
+	}
+
+	config := RetryConfig{
+		MaxAttempts:  10,
+		InitialDelay: 1 * time.Second, // long delay so cancel fires first
+		MaxDelay:     5 * time.Second,
+		Multiplier:   2.0,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	_, err := RetryWithResult(ctx, config, fn)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got: %v", err)
+	}
+	if callCount != 1 {
+		t.Fatalf("expected 1 call before cancel, got %d", callCount)
+	}
+}
+
+func TestRetryWithResult_NonRetryableError(t *testing.T) {
+	retryableErr := errors.New("retryable")
+	nonRetryableErr := errors.New("non-retryable")
+
+	callCount := 0
+	fn := func() (string, error) {
+		callCount++
+		return "", nonRetryableErr
+	}
+
+	config := RetryConfig{
+		MaxAttempts:     5,
+		InitialDelay:    10 * time.Millisecond,
+		MaxDelay:        100 * time.Millisecond,
+		Multiplier:      2.0,
+		RetryableErrors: []error{retryableErr},
+	}
+
+	_, err := RetryWithResult(context.Background(), config, fn)
+	if err != nonRetryableErr {
+		t.Fatalf("expected nonRetryableErr, got: %v", err)
+	}
+	if callCount != 1 {
+		t.Fatalf("expected 1 call (immediate stop on non-retryable), got %d", callCount)
+	}
+}
+
+func TestRetryWithResult_DefaultValues(t *testing.T) {
+	callCount := 0
+	fn := func() (string, error) {
+		callCount++
+		return "", errors.New("persistent")
+	}
+
+	config := RetryConfig{} // all zero — defaults should be applied
+	_, err := RetryWithResult(context.Background(), config, fn)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if callCount != 3 { // default MaxAttempts = 3
+		t.Fatalf("expected 3 calls (default MaxAttempts), got %d", callCount)
+	}
+}

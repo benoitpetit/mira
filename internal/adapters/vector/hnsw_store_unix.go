@@ -5,16 +5,22 @@
 package vector
 
 import (
+	"bytes"
 	"context"
-	"crypto/sha256"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"encoding/gob"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"crypto/sha256"
 
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
@@ -25,16 +31,17 @@ import (
 
 // HNSWStore implements VectorStore using HNSW algorithm for O(log n) ANN search
 type HNSWStore struct {
-	graph     *hnsw.Graph[node]
-	store     ports.EmbeddingSource
-	dimension int
-	modelHash string
-	indexPath string
-	mu        sync.RWMutex
-	idToUUID  map[string]uuid.UUID
-	uuidToID  map[uuid.UUID]string
-	nextID    int
-	ready     bool
+	graph         *hnsw.Graph[node]
+	store         ports.EmbeddingSource
+	dimension     int
+	modelHash     string
+	indexPath     string
+	encryptionKey []byte // 32-byte AES-256 key; nil = no encryption
+	mu            sync.RWMutex
+	idToUUID      map[string]uuid.UUID
+	uuidToID      map[uuid.UUID]string
+	nextID        int
+	ready         bool
 }
 
 // node wraps a candidate for HNSW
@@ -107,6 +114,64 @@ func (h *HNSWStore) SetModelHash(hash string) {
 	h.modelHash = hash
 }
 
+// SetEncryptionKey sets the AES-256-GCM key used to encrypt/decrypt vectors.bin.
+// key must be exactly 32 bytes (derived externally, e.g. via SHA-256 of a passphrase).
+// Passing nil disables encryption.
+func (h *HNSWStore) SetEncryptionKey(key []byte) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(key) == 32 {
+		h.encryptionKey = key
+	} else if len(key) == 0 {
+		h.encryptionKey = nil
+	} else {
+		// Normalise to 32 bytes via SHA-256 so callers don't have to
+		sum := sha256.Sum256(key)
+		h.encryptionKey = sum[:]
+	}
+}
+
+// encryptAESGCM encrypts plaintext with AES-256-GCM using the store's key.
+// Output format: random 12-byte nonce || ciphertext || 16-byte GCM tag.
+func (h *HNSWStore) encryptAESGCM(plaintext []byte) ([]byte, error) {
+	block, err := aes.NewCipher(h.encryptionKey)
+	if err != nil {
+		return nil, fmt.Errorf("aes cipher: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("aes gcm: %w", err)
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, fmt.Errorf("nonce generation: %w", err)
+	}
+	ciphertext := gcm.Seal(nonce, nonce, plaintext, nil) // nonce prepended
+	return ciphertext, nil
+}
+
+// decryptAESGCM decrypts data produced by encryptAESGCM.
+func (h *HNSWStore) decryptAESGCM(data []byte) ([]byte, error) {
+	block, err := aes.NewCipher(h.encryptionKey)
+	if err != nil {
+		return nil, fmt.Errorf("aes cipher: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("aes gcm: %w", err)
+	}
+	ns := gcm.NonceSize()
+	if len(data) < ns {
+		return nil, fmt.Errorf("ciphertext too short")
+	}
+	nonce, ciphertext := data[:ns], data[ns:]
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return nil, fmt.Errorf("aes gcm decrypt: %w", err)
+	}
+	return plaintext, nil
+}
+
 // SearchLexical implements VectorStore by delegating to the underlying EmbeddingSource.
 func (h *HNSWStore) SearchLexical(ctx context.Context, query string, limit int, wing, room *string) ([]*entities.Candidate, error) {
 	return h.store.SearchLexical(ctx, query, limit, wing, room)
@@ -138,22 +203,55 @@ func (h *HNSWStore) Search(ctx context.Context, queryVec []float32, limit int, w
 		return nil, fmt.Errorf("query vector dimension mismatch: got %d, expected %d", len(queryVec), h.dimension)
 	}
 
-	// Search in HNSW
 	queryEmbedding := floatsToEmbedding(queryVec)
-	results := h.graph.Search(queryEmbedding, limit*2) // Get more results to account for filtering
+	totalVectors := h.graph.Len()
 
-	// Collect UUIDs from results
-	var ids []uuid.UUID
-	for _, r := range results {
-		if id, ok := h.idToUUID[r.ID()]; ok {
-			ids = append(ids, id)
-		}
+	// When no wing/room filter is active a single pass at limit*2 is sufficient.
+	// When a filter IS active (sparse wings), the initial pass may miss vectors that
+	// belong to that wing but rank outside the top limit*2 globally.  We progressively
+	// widen the search — limit*2 → limit*8 → limit*32 → all — until we have at least
+	// one filtered result or we have exhausted the index.
+	wideSearch := wing != nil || room != nil
+
+	searchK := limit * 2
+	if searchK > totalVectors {
+		searchK = totalVectors
 	}
 
-	// Batch fetch candidates with single JOIN query
-	candidates, err := h.batchGetCandidates(ctx, ids, wing, room)
-	if err != nil {
-		return nil, err
+	var candidates []*entities.Candidate
+	for {
+		results := h.graph.Search(queryEmbedding, searchK)
+
+		// Collect UUIDs from results
+		var ids []uuid.UUID
+		for _, r := range results {
+			if id, ok := h.idToUUID[r.ID()]; ok {
+				ids = append(ids, id)
+			}
+		}
+
+		// Batch fetch candidates with single JOIN query
+		var err error
+		candidates, err = h.batchGetCandidates(ctx, ids, wing, room)
+		if err != nil {
+			return nil, err
+		}
+
+		// Stop when we have enough results, or when no filter is active (single pass),
+		// or when we have already searched the full index.
+		if len(candidates) >= limit || !wideSearch || searchK >= totalVectors {
+			break
+		}
+
+		// Expand: 4× each time until the whole index is covered.
+		next := searchK * 4
+		if next > totalVectors {
+			next = totalVectors
+		}
+		if next == searchK {
+			break // no progress possible
+		}
+		searchK = next
 	}
 
 	if len(candidates) > limit {
@@ -343,23 +441,27 @@ func (h *HNSWStore) Save() error {
 		SavedAt:   time.Now(),
 	}
 
-	// Créer un fichier temporaire pour une sauvegarde atomique
-	tmpPath := h.indexPath + ".tmp"
-	file, err := os.Create(tmpPath)
-	if err != nil {
-		return fmt.Errorf("failed to create temp index file: %w", err)
-	}
-
-	// Encoder avec gob
-	if err := gob.NewEncoder(file).Encode(data); err != nil {
-		file.Close()
-		os.Remove(tmpPath)
+	// Encoder en mémoire (nécessaire pour le chiffrement optionnel)
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(data); err != nil {
 		return fmt.Errorf("failed to encode index: %w", err)
 	}
+	payload := buf.Bytes()
 
-	if err := file.Close(); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("failed to close temp index file: %w", err)
+	// Chiffrement AES-256-GCM optionnel
+	if len(h.encryptionKey) == 32 {
+		encrypted, err := h.encryptAESGCM(payload)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt index: %w", err)
+		}
+		payload = encrypted
+		log.Printf("[Vector] HNSW index encrypted (AES-256-GCM)")
+	}
+
+	// Sauvegarde atomique : écriture dans .tmp puis rename
+	tmpPath := h.indexPath + ".tmp"
+	if err := os.WriteFile(tmpPath, payload, 0600); err != nil {
+		return fmt.Errorf("failed to write temp index file: %w", err)
 	}
 
 	// Remplacement atomique
@@ -368,18 +470,19 @@ func (h *HNSWStore) Save() error {
 		return fmt.Errorf("failed to rename index file: %w", err)
 	}
 
-	// Calculer et écrire le checksum dans un fichier séparé
-	payload, err := os.ReadFile(h.indexPath)
+	// Calculer et écrire le checksum sur le fichier final (chiffré ou non)
+	written, err := os.ReadFile(h.indexPath)
 	if err != nil {
 		return fmt.Errorf("failed to read saved index for checksum: %w", err)
 	}
-	hash := sha256.Sum256(payload)
+	hash := sha256.Sum256(written)
 	checksumPath := h.indexPath + ".sha256"
 	if err := os.WriteFile(checksumPath, []byte(hex.EncodeToString(hash[:])), 0644); err != nil {
 		return fmt.Errorf("failed to write checksum file: %w", err)
 	}
 
-	log.Printf("[Vector] HNSW index saved: %d vectors, %d mappings", data.NodeCount, len(data.UUIDToID))
+	encrypted := len(h.encryptionKey) == 32
+	log.Printf("[Vector] HNSW index saved: %d vectors, %d mappings, encrypted=%v", data.NodeCount, len(data.UUIDToID), encrypted)
 	return nil
 }
 
@@ -391,18 +494,20 @@ func (h *HNSWStore) Load() error {
 
 	// Vérifier si le fichier existe
 	if _, err := os.Stat(h.indexPath); os.IsNotExist(err) {
-		log.Println("[Vector] HNSW index file not found, will build from scratch")
+		log.Printf("[Vector] HNSW index file not found, will build from scratch")
 		return nil
 	}
 
-	// Vérifier le checksum si présent
+	// Lire les bytes bruts du fichier (chiffrés ou non)
+	raw, err := os.ReadFile(h.indexPath)
+	if err != nil {
+		return fmt.Errorf("failed to read index file: %w", err)
+	}
+
+	// Vérifier le checksum sur les bytes bruts (avant déchiffrement)
 	checksumPath := h.indexPath + ".sha256"
 	if checksumData, err := os.ReadFile(checksumPath); err == nil {
-		payload, err := os.ReadFile(h.indexPath)
-		if err != nil {
-			return fmt.Errorf("failed to read index file for checksum verification: %w", err)
-		}
-		hash := sha256.Sum256(payload)
+		hash := sha256.Sum256(raw)
 		expected := hex.EncodeToString(hash[:])
 		if expected != string(checksumData) {
 			log.Printf("[Vector] HNSW index checksum mismatch. Rebuild required.")
@@ -410,23 +515,29 @@ func (h *HNSWStore) Load() error {
 		}
 	}
 
-	// Ouvrir le fichier
-	file, err := os.Open(h.indexPath)
-	if err != nil {
-		return fmt.Errorf("failed to open index file: %w", err)
+	// Déchiffrement AES-256-GCM optionnel
+	payload := raw
+	if len(h.encryptionKey) == 32 {
+		decrypted, err := h.decryptAESGCM(raw)
+		if err != nil {
+			return fmt.Errorf("failed to decrypt index (wrong key?): %w", err)
+		}
+		payload = decrypted
+		log.Printf("[Vector] HNSW index decrypted (AES-256-GCM)")
 	}
-	defer file.Close()
 
 	// Décoder les données
 	var data hnswIndexData
-	if err := gob.NewDecoder(file).Decode(&data); err != nil {
-		// Essayer de charger l'ancien format (sans Nodes)
-		file.Seek(0, 0)
+	if err := gob.NewDecoder(bytes.NewReader(payload)).Decode(&data); err != nil {
+		// Essayer de charger l'ancien format (sans Nodes) — seulement si non chiffré
+		if len(h.encryptionKey) == 32 {
+			return fmt.Errorf("failed to decode encrypted index: %w", err)
+		}
 		var oldData struct {
 			UUIDToID map[string]string
 			NextID   int
 		}
-		if err := gob.NewDecoder(file).Decode(&oldData); err != nil {
+		if err := gob.NewDecoder(bytes.NewReader(payload)).Decode(&oldData); err != nil {
 			return fmt.Errorf("failed to decode index: %w", err)
 		}
 		// Migrer depuis l'ancien format
@@ -435,7 +546,7 @@ func (h *HNSWStore) Load() error {
 		data.NextID = oldData.NextID
 		data.Dimension = h.dimension
 		data.Nodes = nil
-		log.Println("[Vector] Loaded legacy index format, will rebuild graph from DB")
+		log.Printf("[Vector] Loaded legacy index format, will rebuild graph from DB")
 	}
 
 	// Vérifier la version

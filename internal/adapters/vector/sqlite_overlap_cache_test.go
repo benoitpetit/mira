@@ -55,10 +55,11 @@ func TestOverlapCacheTTL(t *testing.T) {
 	}
 
 	// Insert with TTL in the past (expired)
+	now := time.Now().Unix()
 	_, err := repo.DB().Exec(
 		`INSERT INTO overlap_cache (id_a, id_b, similarity, computed_at, ttl) 
-		 VALUES (?, ?, ?, unixepoch() - 100, unixepoch() - 1)`,
-		id1, id2, similarity,
+		 VALUES (?, ?, ?, ?, ?)`,
+		id1, id2, similarity, now-100, now-1,
 	)
 	if err != nil {
 		t.Fatalf("Failed to insert expired cache entry: %v", err)
@@ -266,7 +267,7 @@ func TestOverlapCacheTTLExpirationReal(t *testing.T) {
 
 	_, err := repo.DB().Exec(
 		`INSERT INTO overlap_cache (id_a, id_b, similarity, computed_at, ttl) 
-		 VALUES (?, ?, ?, unixepoch(), unixepoch() + 1)`,
+		 VALUES (?, ?, ?, strftime('%s','now'), strftime('%s','now') + 1)`,
 		id1, id2, similarity,
 	)
 	if err != nil {

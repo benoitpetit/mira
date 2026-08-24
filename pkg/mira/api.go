@@ -34,6 +34,33 @@ type MemoryType = valueobjects.MemoryType
 // SearchResult is a public alias for semantic search results.
 type SearchResult = interactors.SearchSemanticResult
 
+// StoreMemoryOutput is a public alias.
+type StoreMemoryOutput = interactors.StoreMemoryOutput
+
+// RecallMemoryOutput is a public alias.
+type RecallMemoryOutput = interactors.RecallMemoryOutput
+
+// LoadMemoryOutput is a public alias.
+type LoadMemoryOutput = interactors.LoadMemoryOutput
+
+// GetTimelineOutput is a public alias.
+type GetTimelineOutput = interactors.GetTimelineOutput
+
+// GetStatusOutput is a public alias.
+type GetStatusOutput = interactors.GetStatusOutput
+
+// GetCausalChainOutput is a public alias.
+type GetCausalChainOutput = interactors.GetCausalChainOutput
+
+// ArchiveMemoriesOutput is a public alias.
+type ArchiveMemoriesOutput = interactors.ArchiveMemoriesOutput
+
+// ClearMemoryOutput is a public alias.
+type ClearMemoryOutput = interactors.ClearMemoryOutput
+
+// UpdateMemoryOutput is a public alias.
+type UpdateMemoryOutput = interactors.UpdateMemoryOutput
+
 // LoadConfig loads a configuration from a YAML file.
 func LoadConfig(path string) (*Config, error) {
 	return config.LoadOrDefault(path)

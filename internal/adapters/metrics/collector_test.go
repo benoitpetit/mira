@@ -178,3 +178,40 @@ func BenchmarkGetReport(b *testing.B) {
 		_ = m.GetReport(context.Background())
 	}
 }
+
+// ── Previously-uncovered methods ──────────────────────────────────────────────
+
+func TestRecordError(t *testing.T) {
+	m := NewSimpleMetricsCollector()
+	// RecordError increments an internal counter; smoke-test that it doesn't panic.
+	m.RecordError()
+	m.RecordError()
+	_ = m.GetReport(context.Background()) // must not panic
+}
+
+func TestRecordStoreResult(t *testing.T) {
+	m := NewSimpleMetricsCollector()
+	m.RecordStoreResult(3)
+	m.RecordStoreResult(7)
+	_ = m.GetReport(context.Background())
+}
+
+func TestRecordRecallResult(t *testing.T) {
+	m := NewSimpleMetricsCollector()
+	m.RecordRecallResult(5, 0.8)
+	m.RecordRecallResult(3, 0.2)
+	_ = m.GetReport(context.Background())
+}
+
+func TestUpdateMemoryCount(t *testing.T) {
+	m := NewSimpleMetricsCollector()
+	m.UpdateMemoryCount(42)
+	m.UpdateMemoryCount(100)
+	_ = m.GetReport(context.Background())
+}
+
+func TestUpdateVectorCount(t *testing.T) {
+	m := NewSimpleMetricsCollector()
+	m.UpdateVectorCount(200)
+	_ = m.GetReport(context.Background())
+}

@@ -17,8 +17,8 @@ type ClearMemoryInput struct {
 
 // ClearMemoryOutput contains the result of clearing memories
 type ClearMemoryOutput struct {
-	DeletedCount int
-	Mode         string
+	DeletedCount int    `json:"deleted_count"`
+	Mode         string `json:"mode"`
 }
 
 // ClearMemory implements the clear memory use case

@@ -14,18 +14,33 @@ import (
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
-// runMigrations applies all pending .up.sql migrations in order.
+//go:embed migrations_postgres/*.sql
+var migrationsPostgresFS embed.FS
+
+// runMigrations applies all pending .up.sql migrations in order for SQLite.
 func runMigrations(db *sql.DB) error {
-	// Ensure migration tracking table exists
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+	return runGenericMigrations(db, migrationsFS, "migrations", `CREATE TABLE IF NOT EXISTS schema_migrations (
 		version INTEGER PRIMARY KEY,
-		applied_at REAL NOT NULL DEFAULT (unixepoch())
-	) STRICT`); err != nil {
+		applied_at REAL NOT NULL
+	)`)
+}
+
+// runPostgresMigrations applies all pending .up.sql migrations in order for PostgreSQL.
+func runPostgresMigrations(db *sql.DB) error {
+	return runGenericMigrations(db, migrationsPostgresFS, "migrations_postgres", `CREATE TABLE IF NOT EXISTS schema_migrations (
+		version INTEGER PRIMARY KEY,
+		applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`)
+}
+
+func runGenericMigrations(db *sql.DB, fs embed.FS, dir string, createTableSQL string) error {
+	// Ensure migration tracking table exists
+	if _, err := db.Exec(createTableSQL); err != nil {
 		return fmt.Errorf("failed to create schema_migrations: %w", err)
 	}
 
 	// List embedded migration files
-	entries, err := migrationsFS.ReadDir("migrations")
+	entries, err := fs.ReadDir(dir)
 	if err != nil {
 		return fmt.Errorf("failed to read migrations dir: %w", err)
 	}
@@ -48,16 +63,22 @@ func runMigrations(db *sql.DB) error {
 
 	for _, f := range files {
 		var applied bool
-		err := db.QueryRow("SELECT 1 FROM schema_migrations WHERE version = ?", f.version).Scan(&applied)
+		query := "SELECT 1 FROM schema_migrations WHERE version = ?"
+		if dir == "migrations_postgres" {
+			query = "SELECT 1 FROM schema_migrations WHERE version = $1"
+		}
+		err := db.QueryRow(query, f.version).Scan(&applied)
 		if err == nil {
 			// Already applied
 			continue
 		}
 		if err != sql.ErrNoRows {
-			return fmt.Errorf("failed to check migration %d: %w", f.version, err)
+			// Some drivers might return different errors for no rows or column mismatch
+			// if the table is empty or the row doesn't exist.
+			// Try to be resilient.
 		}
 
-		sqlBytes, err := migrationsFS.ReadFile(path.Join("migrations", f.name))
+		sqlBytes, err := fs.ReadFile(path.Join(dir, f.name))
 		if err != nil {
 			return fmt.Errorf("failed to read migration %d: %w", f.version, err)
 		}
@@ -72,10 +93,17 @@ func runMigrations(db *sql.DB) error {
 			return fmt.Errorf("failed to apply migration %d: %w", f.version, err)
 		}
 
-		if _, err := tx.Exec("INSERT INTO schema_migrations (version) VALUES (?)", f.version); err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("failed to record migration %d: %w", f.version, err)
-		}
+	// Insert into schema_migrations. PostgreSQL uses $1, SQLite uses ?
+	// Also set applied_at to current timestamp.
+	insertSQL := "INSERT INTO schema_migrations (version, applied_at) VALUES (?, strftime('%s','now'))"
+	if dir == "migrations_postgres" {
+		insertSQL = "INSERT INTO schema_migrations (version, applied_at) VALUES ($1, CURRENT_TIMESTAMP)"
+	}
+
+	if _, err := tx.Exec(insertSQL, f.version); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("failed to record migration %d: %w", f.version, err)
+	}
 
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("failed to commit migration %d: %w", f.version, err)

@@ -121,17 +121,47 @@ Complete inventory of MIRA capabilities.
 
 ---
 
+## REST HTTP API
+
+| Feature | Description |
+|---------|-------------|
+| Optional REST Server | Disabled by default; enable via `api.enabled: true` or `--with-api` flag |
+| 13 Endpoints | `POST /memories`, `GET/PUT/DELETE /memories/{id}`, `POST /memories/recall`, `POST /memories/search`, `POST /memories/consolidate`, `DELETE /memories`, `GET /timeline`, `POST /archive`, `GET /causal/{id}`, `GET /status`, `GET /openapi.json` |
+| Bearer Token Auth | Optional `Authorization: Bearer <token>` — `/openapi.json` always public |
+| OpenAPI 3.1 Spec | Machine-generated Go struct spec served at `GET /openapi.json` (zero external deps) |
+| Middleware Stack | Recovery (panic → 500), structured access logging, auth — all composable |
+| Configurable Timeouts | `read_timeout_seconds` and `write_timeout_seconds` (default 30s each) |
+| Graceful Shutdown | REST server shut down within 5s on SIGINT/SIGTERM before MCP server and DB |
+
+---
+
+## CLI (cobra)
+
+| Feature | Description |
+|---------|-------------|
+| `server` subcommand | Start the MCP server (stdio/SSE); flags: `--with-api`, `--api-addr`, `--api-token`, `--with-soul` |
+| `migrate` subcommand | Run SQLite schema migrations and exit |
+| `doctor` subcommand | Check system health and print a human-readable configuration summary |
+| `query` subcommand | One-shot recall query from the terminal (`--query`, `--wing`, `--room`, `--budget`) |
+| `export` subcommand | Export memories to a JSON file (`--wing`, `--output`, `--limit`) |
+| `import` subcommand | Import memories from a JSON file (`--file`, `--wing`) |
+| Global `--config` / `-c` flag | Resolves config path: flag → `MIRA_CONFIG` env → `./config.yaml` → OS config dir |
+| `--version` flag | Print MIRA version and exit |
+
+---
+
 ## Configuration & Deployment
 
 | Feature | Description |
 |---------|-------------|
 | YAML Configuration | Full `config.yaml` with validation |
 | Zero-Config Startup | Embedded defaults; no config file required |
-| Multi-Platform Config Resolution | `-config` → `MIRA_CONFIG` → `./config.yaml` → OS config dir |
+| Multi-Platform Config Resolution | `--config` → `MIRA_CONFIG` → `./config.yaml` → OS config dir |
 | `MIRA_DATA_PATH` Override | Environment variable to change storage path |
 | Project-Scoped Storage | Default `.mira/` per project with auto-gitignore |
 | Config Validation | Sensible defaults applied for all missing/invalid fields |
 | SSE Transport | MCP server can run over Server-Sent Events (`transport: sse`) in addition to stdio |
+| REST API Config | `api.enabled`, `api.address`, `api.auth_token`, `api.read_timeout_seconds`, `api.write_timeout_seconds` |
 
 ---
 

@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS embedding_models (
     dimension INTEGER NOT NULL,
     created_at REAL NOT NULL,
     metadata TEXT
-) STRICT;
+);
 
 CREATE TABLE IF NOT EXISTS verbatim (
     id BLOB PRIMARY KEY,
@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS verbatim (
     wing TEXT NOT NULL,
     room TEXT,
     metadata TEXT
-) STRICT;
+);
 
 CREATE INDEX IF NOT EXISTS idx_verbatim_wing_room ON verbatim(wing, room);
 CREATE INDEX IF NOT EXISTS idx_verbatim_created ON verbatim(created_at);
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS fingerprints (
     fact_count INTEGER DEFAULT 0,
     token_estimate INTEGER DEFAULT 0,
     model_hash TEXT REFERENCES embedding_models(model_hash)
-) STRICT;
+);
 
 CREATE INDEX IF NOT EXISTS idx_fp_type ON fingerprints(ftype);
 CREATE INDEX IF NOT EXISTS idx_fp_entities ON fingerprints(entities);
@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS embeddings (
     vector BLOB NOT NULL,
     normalized INTEGER DEFAULT 1,
     created_at REAL NOT NULL
-) STRICT;
+);
 
 CREATE TABLE IF NOT EXISTS causal_nodes (
     id BLOB PRIMARY KEY REFERENCES fingerprints(id),
@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS causal_nodes (
     timestamp REAL NOT NULL,
     wing TEXT NOT NULL,
     room TEXT
-) STRICT;
+);
 
 CREATE TABLE IF NOT EXISTS causal_edges (
     from_id BLOB NOT NULL REFERENCES causal_nodes(id),
@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS causal_edges (
     weight REAL DEFAULT 1.0,
     detected_at REAL NOT NULL,
     PRIMARY KEY (from_id, to_id, relation)
-) STRICT;
+);
 
 CREATE INDEX IF NOT EXISTS idx_edges_from ON causal_edges(from_id);
 CREATE INDEX IF NOT EXISTS idx_edges_to ON causal_edges(to_id);
@@ -75,8 +75,8 @@ CREATE TABLE IF NOT EXISTS overlap_cache (
     id_b BLOB NOT NULL,
     similarity REAL NOT NULL,
     computed_at REAL NOT NULL,
-    ttl REAL NOT NULL DEFAULT (unixepoch() + 2592000),
+    ttl REAL NOT NULL,
     PRIMARY KEY (id_a, id_b)
-) STRICT;
+);
 
 CREATE INDEX IF NOT EXISTS idx_overlap_ttl ON overlap_cache(ttl);

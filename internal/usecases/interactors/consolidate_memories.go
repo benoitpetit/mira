@@ -21,16 +21,16 @@ type ConsolidateMemoriesInput struct {
 
 // ConsolidateMemoriesOutput contains the output of memory consolidation
 type ConsolidateMemoriesOutput struct {
-	ConsolidatedCount int
-	RemovedCount      int
+	ConsolidatedCount int `json:"consolidated_count"`
+	RemovedCount      int `json:"removed_count"`
 }
 
 // ConsolidateMemories merges redundant session notes into synthesized facts.
 type ConsolidateMemories struct {
-	repository ports.Repository
+	repository  ports.Repository
 	vectorStore ports.VectorStore
-	embedder   ports.Embedder
-	extractor  ports.FingerprintExtractor
+	embedder    ports.Embedder
+	extractor   ports.Extractor
 }
 
 // NewConsolidateMemories creates a new consolidation interactor
@@ -38,7 +38,7 @@ func NewConsolidateMemories(
 	repository ports.Repository,
 	vectorStore ports.VectorStore,
 	embedder ports.Embedder,
-	extractor ports.FingerprintExtractor,
+	extractor ports.Extractor,
 ) *ConsolidateMemories {
 	return &ConsolidateMemories{
 		repository:  repository,
@@ -137,17 +137,18 @@ func (uc *ConsolidateMemories) Execute(ctx context.Context, input ConsolidateMem
 	// For each cluster, create a synthetic fact
 	for _, cluster := range clusters {
 		var contents []string
-		var subjects []string
 		for _, n := range cluster {
 			contents = append(contents, n.verbatim.Content)
-			if len(subjects) == 0 {
-				subjects = append(subjects, n.item.Summary)
-			}
 		}
 
-		syntheticContent := strings.Join(contents, "; ")
-		if len(syntheticContent) > 500 {
-			syntheticContent = syntheticContent[:500] + "..."
+		// Abstractive synthesis using LLM (if available) or basic join (fallback)
+		syntheticContent, err := uc.extractor.Summarize(ctx, contents)
+		if err != nil || syntheticContent == "" {
+			// Extreme fallback if summarization fails
+			syntheticContent = strings.Join(contents, "; ")
+			if len(syntheticContent) > 500 {
+				syntheticContent = syntheticContent[:500] + "..."
+			}
 		}
 
 		// Store as a fact

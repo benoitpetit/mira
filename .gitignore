@@ -50,11 +50,29 @@ tmp/
 config.yaml
 
 # Backup files
-backup/*.zip
-backup/*.tar.gz
+backup/
 docs/PLAN.md
 
 # Temporary/debug files (development only)
 debug_*.go
 test_mcp_*.go
 benchmark_results.json
+
+# Development task lists
+TODO.md
+
+# Documents non-source (rapports, plans générés)
+*.pdf
+
+# WIP features — not part of current release
+internal/interfaces/rest/
+internal/adapters/storage/migrations_postgres/
+internal/adapters/storage/postgres_repository.go
+internal/adapters/storage/migrations/005_audit_log.up.sql
+internal/adapters/storage/migrations/006_access_policies.up.sql
+internal/domain/entities/audit.go
+internal/domain/entities/policy.go
+internal/interfaces/mcp/http_transport.go
+internal/adapters/extraction/ollama_extractor.go
+internal/adapters/extraction/ollama_extractor_test.go
+internal/app/main_extra_test.go

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
+	"github.com/benoitpetit/mira/internal/util"
 	"github.com/google/uuid"
 )
 
@@ -401,18 +402,17 @@ func TestEmbeddingModelWithMetadata(t *testing.T) {
 
 func TestComputeModelHash(t *testing.T) {
 	tests := []struct {
-		input    string
-		expected string
+		input string
 	}{
-		{"short-model", "short-model"},
-		{"very-long-model-name-that-exceeds-sixteen-characters", "very-long-model-"},
-		{"exactly-sixteen", "exactly-sixteen"},
+		{"short-model"},
+		{"sentence-transformers/all-MiniLM-L6-v2"},
+		{"test-model"},
 	}
 
 	for _, tt := range tests {
-		result := computeModelHash(tt.input)
-		if result != tt.expected {
-			t.Errorf("computeModelHash(%s) = %s, want %s", tt.input, result, tt.expected)
+		result := util.ComputeModelHash(tt.input)
+		if len(result) != 16 {
+			t.Errorf("ComputeModelHash(%s) = %s, want 16 hex chars", tt.input, result)
 		}
 	}
 }

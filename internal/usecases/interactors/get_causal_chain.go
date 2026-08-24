@@ -19,8 +19,8 @@ type GetCausalChainInput struct {
 
 // GetCausalChainOutput contains the output of getting causal chain
 type GetCausalChainOutput struct {
-	Chain        []*entities.CausalNode
-	Consequences []*entities.CausalNode
+	Chain        []*entities.CausalNode `json:"chain"`
+	Consequences []*entities.CausalNode `json:"consequences,omitempty"`
 }
 
 // GetCausalChain implements the get causal chain use case

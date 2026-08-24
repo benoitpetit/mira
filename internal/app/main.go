@@ -3,12 +3,15 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -22,6 +25,7 @@ import (
 	"github.com/benoitpetit/mira/internal/config"
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	mcpserver "github.com/benoitpetit/mira/internal/interfaces/mcp"
+	restserver "github.com/benoitpetit/mira/internal/interfaces/rest"
 	"github.com/benoitpetit/mira/internal/usecases/interactors"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
 	soul "github.com/benoitpetit/soul"
@@ -31,151 +35,264 @@ import (
 
 // Application holds all dependencies
 type Application struct {
-	config           *config.Config
-	repository       *storage.SQLiteRepository
-	embedder         ports.Embedder
-	extractor        ports.Extractor
-	vectorStore      ports.VectorStore
-	overlapCache     *vector.SQLiteOverlapCache
-	hnswIndex        *vector.HNSWStore
-	storeMemory      *interactors.StoreMemory
-	recallMemory     *interactors.RecallMemory
-	loadMemory       *interactors.LoadMemory
-	getTimeline      *interactors.GetTimeline
-	getStatus        *interactors.GetStatus
-	getCausalChain   *interactors.GetCausalChain
-	archiveMemories  *interactors.ArchiveMemories
-	clearMemory      *interactors.ClearMemory
-	deleteMemory     *interactors.DeleteMemory
-	searchSemantic   *interactors.SearchSemantic
-	updateMemory     *interactors.UpdateMemory
+	config              *config.Config
+	repository          ports.Repository
+	embedder            ports.Embedder
+	extractor           ports.Extractor
+	vectorStore         ports.VectorStore
+	overlapCache        *vector.SQLiteOverlapCache
+	hnswIndex           *vector.HNSWStore
+	storeMemory         *interactors.StoreMemory
+	recallMemory        *interactors.RecallMemory
+	loadMemory          *interactors.LoadMemory
+	getTimeline         *interactors.GetTimeline
+	getStatus           *interactors.GetStatus
+	getCausalChain      *interactors.GetCausalChain
+	archiveMemories     *interactors.ArchiveMemories
+	clearMemory         *interactors.ClearMemory
+	deleteMemory        *interactors.DeleteMemory
+	searchSemantic      *interactors.SearchSemantic
+	updateMemory        *interactors.UpdateMemory
 	consolidateMemories *interactors.ConsolidateMemories
-	renderer         *interactors.DefaultFingerprintRenderer
-	controller       *mcpserver.Controller
-	webhookManager   ports.WebhookManager
-	metricsCollector ports.MetricsCollector
-	soulApp          *soul.Application
-	soulCtrl         *soul.Controller
-	startTime        time.Time
+	compressMemories   *interactors.CompressMemories
+	renderer            *interactors.DefaultFingerprintRenderer
+	controller          *mcpserver.Controller
+	webhookManager      ports.WebhookManager
+	metricsCollector    ports.MetricsCollector
+	soulApp             *soul.Application
+	soulCtrl            *soul.Controller
+	restServer          *http.Server
+	startTime           time.Time
+	closeOnce           sync.Once
 }
 
-// NewApplication creates and wires all dependencies
+// NewApplication creates and wires all dependencies.
+// Each sub-system is initialised by a dedicated private method so that this
+// function reads as a clear, ordered sequence of concerns.
 func NewApplication(cfg *config.Config) (*Application, error) {
 	app := &Application{config: cfg, startTime: time.Now()}
-
-	// 1. Create data directory
-	if err := os.MkdirAll(cfg.Storage.Path, 0o755); err != nil {
-		return nil, fmt.Errorf("failed to create data directory: %w", err)
-	}
-	if err := ensureGitignore(cfg.Storage.Path); err != nil {
-		slog.Info("could not ensure .gitignore", "error", err)
-	}
 
 	dbPath := cfg.Storage.Path + "/mira.db"
 	modelsDir := cfg.Storage.Path + "/models"
 
-	// 2. Initialize repository
+	if err := app.initStorage(dbPath); err != nil {
+		return nil, err
+	}
+	app.initMetrics()
+	if err := app.initEmbedder(modelsDir); err != nil {
+		return nil, err
+	}
+	if err := app.initExtractor(); err != nil {
+		return nil, err
+	}
+	if err := app.initVectorStore(dbPath); err != nil {
+		return nil, err
+	}
+	app.initWebhooks()
+	app.initUseCases()
+	// SOUL is initialized after use cases so storeMemory is available
+	app.initSoul()
+	app.initRestAPI()
+
+	return app, nil
+}
+
+// ── Private init helpers ─────────────────────────────────────────────────────
+
+// initStorage creates the data directory and opens the repository based on config type.
+func (a *Application) initStorage(dbPath string) error {
+	if a.config.Storage.Type == "postgres" {
+		return a.initPostgresStorage()
+	}
+
+	if err := os.MkdirAll(a.config.Storage.Path, 0o755); err != nil {
+		return fmt.Errorf("failed to create data directory: %w", err)
+	}
+	if err := ensureGitignore(a.config.Storage.Path); err != nil {
+		slog.Info("could not ensure .gitignore", "error", err)
+	}
+
 	repo, err := storage.NewSQLiteRepository(dbPath, storage.SQLiteOptions{
-		SessionNoteArchiveDays: int(cfg.ArchiveThresholds["session_note"]),
-		DebugLogArchiveDays:    int(cfg.ArchiveThresholds["debug_log"]),
+		SessionNoteArchiveDays: int(a.config.ArchiveThresholds["session_note"]),
+		DebugLogArchiveDays:    int(a.config.ArchiveThresholds["debug_log"]),
+		EncryptionKey:          a.config.Storage.SQLite.EncryptionKey,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize repository: %w", err)
+		return fmt.Errorf("failed to initialize repository: %w", err)
 	}
-	app.repository = repo
+	a.repository = repo
 
-	// 2.5. Initialize SOUL identity sub-system (shares MIRA's SQLite connection)
-	// SOUL is opt-in: must be explicitly enabled via config (soul.enabled: true) or --with-soul flag.
-	// When enabled, MIRA passes its own soul.* configuration block to SOUL so that
-	// embedded mode supports the same tuning options as standalone mode.
-	if cfg.Soul.Enabled {
-		soulCfg := soul.DefaultConfig()
-		soulCfg.MinTraitConfidence = cfg.Soul.Extraction.MinTraitConfidence
-		soulCfg.MinObservationsForTrait = cfg.Soul.Extraction.MinObservationsForTrait
-		soulCfg.MaxContextTokens = cfg.Soul.Recall.DefaultBudgetTokens
-		soulCfg.DriftThreshold = cfg.Soul.DriftDetection.Threshold
-		soulCfg.DriftWindowSize = cfg.Soul.DriftDetection.WindowSize
-		soulCfg.AutoCheckAfterCapture = cfg.Soul.DriftDetection.AutoCheckAfterCapture
-		soulCfg.AutoReinforce = cfg.Soul.ModelSwap.AutoReinforce
-		soulCfg.EvolutionEnabled = cfg.Soul.Evolution.Enabled
-		soulCfg.MaxHistoryVersions = cfg.Soul.Evolution.MaxHistoryVersions
-
-		if soulApp, err := soul.NewApplicationWithDBAndConfig(repo.DB(), soulCfg); err != nil {
-			slog.Warn("SOUL init failed, continuing without identity features", "error", err)
-		} else {
-			soulApp.SetMiraProvider(mirasoul.NewMiraProvider(repo.DB()))
-			app.soulApp = soulApp
-			app.soulCtrl = soul.NewController(soulApp)
-			slog.Info("SOUL identity sub-system initialized", "tools", len(app.soulCtrl.ToolDefinitions()))
-		}
-	} else {
-		slog.Info("SOUL is not enabled — running MIRA-only mode. Use --with-soul or set soul.enabled: true to activate identity features.")
-	}
-
-	// Log database stats
 	stats, err := repo.GetStats(context.Background())
 	if err == nil {
-		slog.Info("database connected", "verbatims", stats.VerbatimCount, "fingerprints", stats.FingerprintCount, "embeddings", stats.EmbeddingCount)
+		slog.Info("database connected",
+			"type", "sqlite",
+			"verbatims", stats.VerbatimCount,
+			"fingerprints", stats.FingerprintCount,
+			"embeddings", stats.EmbeddingCount)
+	}
+	return nil
+}
+
+// initPostgresStorage initializes a PostgreSQL repository.
+func (a *Application) initPostgresStorage() error {
+	opts := storage.PostgreSQLOptions{
+		URL:         a.config.Storage.Postgres.URL,
+		MaxConns:    a.config.Storage.Postgres.MaxConns,
+		MinConns:    a.config.Storage.Postgres.MinConns,
+		MaxIdleTime: time.Duration(a.config.Storage.Postgres.MaxIdleTime) * time.Second,
+		MaxConnTime: time.Duration(a.config.Storage.Postgres.MaxConnTime) * time.Second,
 	}
 
-	// 3. Initialize metrics if enabled
-	if cfg.Metrics.Enabled {
-		if cfg.Metrics.PrometheusAddr != "" {
-			// Use Prometheus collector with HTTP endpoint
-			promCollector := metrics.NewPrometheusCollector()
-			app.metricsCollector = promCollector
-			slog.Info("prometheus collector enabled")
+	repo, err := storage.NewPostgreSQLRepository(opts)
+	if err != nil {
+		return fmt.Errorf("failed to initialize postgres repository: %w", err)
+	}
+	a.repository = repo
 
-			// Start Prometheus HTTP server in background
-			go func() {
-				slog.Info("starting prometheus server", "addr", cfg.Metrics.PrometheusAddr+"/metrics")
-				if err := promCollector.StartServer(cfg.Metrics.PrometheusAddr); err != nil {
-					slog.Error("prometheus server error", "error", err)
-				}
-			}()
-		} else {
-			// Use simple collector (existing)
-			app.metricsCollector = metrics.NewSimpleMetricsCollector()
-			slog.Info("simple metrics collector enabled")
-		}
+	stats, err := repo.GetStats(context.Background())
+	if err == nil {
+		slog.Info("database connected",
+			"type", "postgres",
+			"verbatims", stats.VerbatimCount,
+			"fingerprints", stats.FingerprintCount,
+			"embeddings", stats.EmbeddingCount)
+	}
+	return nil
+}
+
+// initSoul wires the SOUL identity sub-system when enabled.
+// Failure is non-fatal: MIRA continues without identity features.
+func (a *Application) initSoul() {
+	cfg := a.config
+	if !cfg.Soul.Enabled {
+		slog.Info("SOUL is not enabled — running MIRA-only mode. Use --with-soul or set soul.enabled: true to activate identity features.")
+		return
 	}
 
-	// 4. Initialize embedder (Cybertron or Simple)
+	soulCfg := soul.DefaultConfig()
+	soulCfg.MinTraitConfidence = cfg.Soul.Extraction.MinTraitConfidence
+	soulCfg.MinObservationsForTrait = cfg.Soul.Extraction.MinObservationsForTrait
+	soulCfg.MaxContextTokens = cfg.Soul.Recall.DefaultBudgetTokens
+	soulCfg.DriftThreshold = cfg.Soul.DriftDetection.Threshold
+	soulCfg.DriftWindowSize = cfg.Soul.DriftDetection.WindowSize
+	soulCfg.AutoCheckAfterCapture = cfg.Soul.DriftDetection.AutoCheckAfterCapture
+	soulCfg.AutoReinforce = cfg.Soul.ModelSwap.AutoReinforce
+	soulCfg.EvolutionEnabled = cfg.Soul.Evolution.Enabled
+	soulCfg.MaxHistoryVersions = cfg.Soul.Evolution.MaxHistoryVersions
+	if cfg.Soul.Memory.EnrichWithMiraMemories {
+		soulCfg.EnrichWithMiraMemories = true
+	}
+	if cfg.Soul.Memory.MaxMiraMemories > 0 {
+		soulCfg.MaxMiraMemories = cfg.Soul.Memory.MaxMiraMemories
+	}
+
+	soulApp, err := soul.NewApplicationWithDBAndConfig(a.repository.DB(), soulCfg)
+	if err != nil {
+		slog.Warn("SOUL init failed, continuing without identity features", "error", err)
+		return
+	}
+	soulApp.SetMiraProvider(mirasoul.NewMiraProvider(a.repository.DB(), a.storeMemory))
+	a.soulApp = soulApp
+	a.soulCtrl = soul.NewController(soulApp)
+	slog.Info("SOUL identity sub-system initialized", "tools", len(a.soulCtrl.ToolDefinitions()))
+}
+
+// initMetrics starts the configured metrics back-end (Prometheus or simple).
+func (a *Application) initMetrics() {
+	if !a.config.Metrics.Enabled {
+		return
+	}
+	if a.config.Metrics.PrometheusAddr != "" {
+		promCollector := metrics.NewPrometheusCollector()
+		a.metricsCollector = promCollector
+		slog.Info("prometheus collector enabled")
+		go func() {
+			slog.Info("starting prometheus server", "addr", a.config.Metrics.PrometheusAddr+"/metrics")
+			if err := promCollector.StartServer(a.config.Metrics.PrometheusAddr); err != nil {
+				slog.Error("prometheus server error", "error", err)
+			}
+		}()
+	} else {
+		a.metricsCollector = metrics.NewSimpleMetricsCollector()
+		slog.Info("simple metrics collector enabled")
+	}
+}
+
+// initEmbedder loads the Cybertron model or falls back to the simple embedder.
+func (a *Application) initEmbedder(modelsDir string) error {
+	cfg := a.config
 	if cfg.Embeddings.UseSimpleEmbedder {
 		slog.Info("using simple embedder")
-		app.embedder = extraction.NewSimpleEmbedder(cfg.Embeddings.Dimension)
-	} else {
-		cybertronEmbedder, err := extraction.NewCybertronEmbedder(extraction.CybertronEmbedderOptions{
-			ModelName: cfg.Embeddings.CurrentModel,
-			ModelsDir: modelsDir,
-			Dimension: cfg.Embeddings.Dimension,
-		})
-		if err != nil {
-			slog.Warn("failed to load cybertron model, falling back to simple embedder", "error", err)
-			app.embedder = extraction.NewSimpleEmbedder(cfg.Embeddings.Dimension)
-		} else {
-			app.embedder = cybertronEmbedder
-		}
+		a.embedder = extraction.NewSimpleEmbedder(cfg.Embeddings.Dimension)
+		return nil
 	}
 
-	// 5. Initialize extractor (NativeExtractor replaces archived prose library)
-	app.extractor, err = extraction.NewNativeExtractor(app.embedder, extraction.NativeExtractorOptions{
-		ModelName:       cfg.Embeddings.CurrentModel,
-		MinEntityLength: cfg.Extraction.MinEntityLength,
+	cybertronEmbedder, err := extraction.NewCybertronEmbedder(extraction.CybertronEmbedderOptions{
+		ModelName: cfg.Embeddings.CurrentModel,
+		ModelsDir: modelsDir,
+		Dimension: cfg.Embeddings.Dimension,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize extractor: %w", err)
+		slog.Warn("failed to load cybertron model, falling back to simple embedder", "error", err)
+		a.embedder = extraction.NewSimpleEmbedder(cfg.Embeddings.Dimension)
+	} else {
+		a.embedder = cybertronEmbedder
+	}
+	return nil
+}
+
+// initExtractor creates the fingerprint extractor.
+// When cfg.Extraction.LLM.Enabled is true an OllamaExtractor is used (with NativeExtractor
+// as fallback). Otherwise the NativeExtractor is used directly.
+func (a *Application) initExtractor() error {
+	cfg := a.config
+	nativeOpts := extraction.NativeExtractorOptions{
+		ModelName:       cfg.Embeddings.CurrentModel,
+		MinEntityLength: cfg.Extraction.MinEntityLength,
 	}
 
-	// 6. Register embedding model
+	if cfg.Extraction.LLM.Enabled {
+		ollamaOpts := extraction.OllamaExtractorOptions{
+			Endpoint:        cfg.Extraction.LLM.Endpoint,
+			Model:           cfg.Extraction.LLM.Model,
+			Timeout:         time.Duration(cfg.Extraction.LLM.TimeoutSeconds) * time.Second,
+			FallbackOnError: cfg.Extraction.LLM.FallbackOnError,
+			NativeOptions:   nativeOpts,
+		}
+		ext, err := extraction.NewOllamaExtractor(a.embedder, ollamaOpts)
+		if err != nil {
+			return fmt.Errorf("failed to initialize ollama extractor: %w", err)
+		}
+		a.extractor = ext
+		slog.Info("extractor initialized", "backend", "ollama", "model", cfg.Extraction.LLM.Model, "endpoint", cfg.Extraction.LLM.Endpoint)
+		return nil
+	}
+
+	ext, err := extraction.NewNativeExtractor(a.embedder, nativeOpts)
+	if err != nil {
+		return fmt.Errorf("failed to initialize extractor: %w", err)
+	}
+	a.extractor = ext
+	slog.Info("extractor initialized", "backend", "native")
+	return nil
+}
+
+// initVectorStore registers the embedding model, then builds the HNSW index
+// (or falls back to the SQLite vector store when HNSW init fails).
+func (a *Application) initVectorStore(dbPath string) error {
+	cfg := a.config
+	repo := a.repository
+	ctx := context.Background()
+
+	// Register model
 	model := entities.NewEmbeddingModel(cfg.Embeddings.CurrentModel, cfg.Embeddings.Dimension)
 	model.WithMetadata("batch_size", cfg.Embeddings.BatchSize)
-	if err := repo.RegisterModel(context.Background(), model); err != nil {
+	if err := repo.RegisterModel(ctx, model); err != nil {
 		slog.Warn("failed to register embedding model", "error", err)
 	}
 
 	// Validate model hash consistency
-	registeredModels, _ := repo.GetAllModels(context.Background())
+	registeredModels, _ := repo.GetAllModels(ctx)
 	hasModelHash := false
 	for _, mh := range registeredModels {
 		if mh == cfg.Embeddings.ModelHash {
@@ -189,9 +306,10 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 			"action", "run mira_reindex or clear memory to rebuild embeddings")
 	}
 
-	// 7. Initialize vector store (HNSW with SQLite fallback)
-	app.overlapCache = vector.NewSQLiteOverlapCache(repo.DB())
+	// Overlap cache (shared between HNSW and RecallMemory)
+	a.overlapCache = vector.NewSQLiteOverlapCache(repo.DB())
 
+	// HNSW options
 	hnswOpts := vector.DefaultHNSWOptions()
 	if cfg.HNSW.M > 0 {
 		hnswOpts.M = cfg.HNSW.M
@@ -210,82 +328,93 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 	hnswIndex, err := vector.NewHNSWStore(repo, cfg.Embeddings.Dimension, indexPath, hnswOpts)
 	if err != nil {
 		slog.Warn("failed to initialize hnsw index, falling back to sqlite vector search", "error", err)
-		app.vectorStore = vector.NewSQLiteVectorStore(repo.DB())
-	} else {
-		// Set model hash for validation
-		hnswIndex.SetModelHash(cfg.Embeddings.ModelHash)
-
-		// Try to load existing index
-		if err := hnswIndex.Load(); err != nil {
-			slog.Warn("failed to load hnsw index, will build from scratch", "error", err)
-			// If mismatch (dimension or model hash), clear the stale index file
-			if strings.Contains(err.Error(), "mismatch") {
-				slog.Info("stale hnsw index detected, removing old index file")
-				_ = os.Remove(indexPath)
-				_ = os.Remove(indexPath + ".sha256")
-			}
-		} else if hnswIndex.IsReady() {
-			slog.Info("hnsw index loaded from disk", "vectors", hnswIndex.Stats())
-		}
-
-		// Build from DB if index is not ready (no file or error)
-		if !hnswIndex.IsReady() {
-			slog.Info("building hnsw index from sqlite")
-			go func() {
-				if err := hnswIndex.BuildFromStore(context.Background()); err != nil {
-					slog.Warn("failed to build hnsw index", "error", err)
-				}
-			}()
-		}
-
-		app.hnswIndex = hnswIndex
-		// Wrap HNSW with SQLite fallback so recall works while the index is building
-		app.vectorStore = vector.NewFallbackVectorStore(hnswIndex, vector.NewSQLiteVectorStore(repo.DB()))
+		a.vectorStore = vector.NewSQLiteVectorStore(repo.DB())
+		return nil
 	}
 
-	// 8. Initialize webhook manager if enabled
-	if cfg.Webhooks.Enabled {
-		slog.Info("initializing webhook manager")
+	hnswIndex.SetModelHash(cfg.Embeddings.ModelHash)
 
-		timeout := time.Duration(cfg.Webhooks.Timeout) * time.Second
-		webhookMgr := webhookadapter.NewSimpleWebhookManagerWithDB(
-			cfg.Webhooks.Workers,
-			cfg.Webhooks.QueueSize,
-			timeout,
-			repo.DB(),
-		)
-		app.webhookManager = webhookMgr
-
-		// Register default endpoints from config
-		for _, endpoint := range cfg.Webhooks.Endpoints {
-			if endpoint != "" {
-				app.webhookManager.Register(context.Background(), endpoint, []string{"*"}, "")
-				slog.Info("registered webhook endpoint", "url", endpoint)
-			}
-		}
-
-		slog.Info("webhooks enabled", "workers", cfg.Webhooks.Workers, "endpoints", len(cfg.Webhooks.Endpoints))
+	// AES-256-GCM encryption for vectors.bin (optional, opt-in via HNSW.EncryptionKey / MIRA_HNSW_KEY)
+	if key := cfg.HNSW.EncryptionKey; key != "" {
+		h := sha256.Sum256([]byte(key))
+		hnswIndex.SetEncryptionKey(h[:])
 	}
 
-	// 10. Initialize renderer
-	app.renderer = interactors.NewDefaultFingerprintRenderer()
+	if err := hnswIndex.Load(); err != nil {
+		slog.Warn("failed to load hnsw index, will build from scratch", "error", err)
+		if strings.Contains(err.Error(), "mismatch") {
+			slog.Info("stale hnsw index detected, removing old index file")
+			_ = os.Remove(indexPath)
+			_ = os.Remove(indexPath + ".sha256")
+		}
+	} else if hnswIndex.IsReady() {
+		slog.Info("hnsw index loaded from disk", "vectors", hnswIndex.Stats())
+	}
 
-	// 10.5 Initialize logger
-	logger := logging.NewSimpleLoggerWithPrefix("[StoreMemory]", false)
+	if !hnswIndex.IsReady() {
+		slog.Info("building hnsw index from sqlite")
+		go func() {
+			if err := hnswIndex.BuildFromStore(ctx); err != nil {
+				slog.Warn("failed to build hnsw index", "error", err)
+			}
+		}()
+	}
 
-	// 11. Initialize use cases (interactors)
-	app.storeMemory = interactors.NewStoreMemory(
-		repo, app.extractor, app.extractor, app.vectorStore, app.metricsCollector, logger,
+	a.hnswIndex = hnswIndex
+	// Wrap with SQLite fallback so recall works while the index is building
+	a.vectorStore = vector.NewFallbackVectorStore(hnswIndex, vector.NewSQLiteVectorStore(repo.DB()))
+	return nil
+}
+
+// initWebhooks starts the webhook manager and registers configured endpoints.
+func (a *Application) initWebhooks() {
+	cfg := a.config
+	if !cfg.Webhooks.Enabled {
+		return
+	}
+	slog.Info("initializing webhook manager")
+
+	timeout := time.Duration(cfg.Webhooks.Timeout) * time.Second
+	webhookMgr := webhookadapter.NewSimpleWebhookManagerWithDB(
+		cfg.Webhooks.Workers,
+		cfg.Webhooks.QueueSize,
+		timeout,
+		a.repository.DB(),
 	)
+	a.webhookManager = webhookMgr
+
+	ctx := context.Background()
+	for _, endpoint := range cfg.Webhooks.Endpoints {
+		if endpoint != "" {
+			a.webhookManager.Register(ctx, endpoint, []string{"*"}, "")
+			slog.Info("registered webhook endpoint", "url", endpoint)
+		}
+	}
+	slog.Info("webhooks enabled",
+		"workers", cfg.Webhooks.Workers,
+		"endpoints", len(cfg.Webhooks.Endpoints))
+}
+
+// initUseCases wires all interactors and the MCP controller.
+func (a *Application) initUseCases() {
+	cfg := a.config
+	repo := a.repository
+
+	a.renderer = interactors.NewDefaultFingerprintRenderer()
+
+	logger := logging.NewSimpleLoggerWithPrefix("[StoreMemory]", false)
+	a.storeMemory = interactors.NewStoreMemory(
+		repo, a.extractor, a.extractor, a.vectorStore, a.metricsCollector, logger,
+	)
+	a.storeMemory.WithCompression(cfg.Compression.AutoCompress, cfg.Compression.MinTokens)
 
 	recallLogger := logging.NewSimpleLoggerWithPrefix("[RecallMemory]", false)
-
-	app.recallMemory = interactors.NewRecallMemory(
-		app.vectorStore,
-		app.overlapCache,
+	a.recallMemory = interactors.NewRecallMemory(
+		a.vectorStore,
+		a.overlapCache,
 		repo,
-		app.extractor,
-		app.renderer,
+		a.extractor,
+		a.renderer,
 		interactors.RecallMemoryConfig{
 			DefaultBudget:                 cfg.Allocator.DefaultBudget,
 			MaxCandidates:                 cfg.Allocator.MaxCandidates,
@@ -312,76 +441,122 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 			TagRepo:                       repo,
 			DecayRates:                    cfg.DecayRates,
 		},
-		app.metricsCollector,
+		a.metricsCollector,
 		recallLogger,
 	)
 
-	app.loadMemory = interactors.NewLoadMemory(repo, repo)
-	app.getTimeline = interactors.NewGetTimeline(repo)
-	app.getStatus = interactors.NewGetStatus(repo, repo, app.startTime, "0.4.7")
-	app.getCausalChain = interactors.NewGetCausalChain(repo)
-	app.archiveMemories = interactors.NewArchiveMemories(repo)
-	app.clearMemory = interactors.NewClearMemory(repo, app.vectorStore)
-	app.deleteMemory = interactors.NewDeleteMemory(repo, app.vectorStore)
-	app.searchSemantic = interactors.NewSearchSemantic(app.vectorStore, app.embedder)
-	app.updateMemory = interactors.NewUpdateMemory(repo, app.extractor, app.vectorStore)
-	app.consolidateMemories = interactors.NewConsolidateMemories(repo, app.vectorStore, app.embedder, app.extractor)
+	a.loadMemory = interactors.NewLoadMemory(repo, repo)
+	a.getTimeline = interactors.NewGetTimeline(repo)
+	a.getStatus = interactors.NewGetStatus(repo, repo, a.startTime, "0.4.7")
+	a.getCausalChain = interactors.NewGetCausalChain(repo)
+	a.archiveMemories = interactors.NewArchiveMemories(repo)
+	a.clearMemory = interactors.NewClearMemory(repo, a.vectorStore)
+	a.deleteMemory = interactors.NewDeleteMemory(repo, a.vectorStore)
+	a.searchSemantic = interactors.NewSearchSemantic(a.vectorStore, a.embedder)
+	a.updateMemory = interactors.NewUpdateMemory(repo, a.extractor, a.vectorStore)
+	a.consolidateMemories = interactors.NewConsolidateMemories(repo, a.vectorStore, a.embedder, a.extractor)
+	a.compressMemories = interactors.NewCompressMemories(repo, repo)
 
-	// 12. Initialize controller
-	app.controller = mcpserver.NewController(
-		app.storeMemory,
-		app.recallMemory,
-		app.loadMemory,
-		app.getTimeline,
-		app.getStatus,
-		app.getCausalChain,
-		app.archiveMemories,
-		app.clearMemory,
+	a.controller = mcpserver.NewController(
+		a.storeMemory,
+		a.recallMemory,
+		a.loadMemory,
+		a.getTimeline,
+		a.getStatus,
+		a.getCausalChain,
+		a.archiveMemories,
+		a.clearMemory,
 		repo,
+		a.compressMemories,
 	)
-
-	return app, nil
 }
 
-// Close cleans up resources
-func (a *Application) Close() error {
-	// Save HNSW index to disk
-	if a.hnswIndex != nil {
-		slog.Info("saving hnsw index to disk")
-		if err := a.hnswIndex.Save(); err != nil {
-			slog.Warn("failed to save hnsw index", "error", err)
-		} else {
-			slog.Info("hnsw index saved", "vectors", a.hnswIndex.Stats())
-		}
+// initRestAPI builds the optional REST HTTP server if enabled in config.
+// The server is stored on the Application; it is started in Run() and shut
+// down gracefully in Close().
+func (a *Application) initRestAPI() {
+	if !a.config.API.Enabled {
+		return
 	}
-
-	// Stop webhook manager
-	if a.webhookManager != nil {
-		a.webhookManager.Stop()
+	// Only enable DB-based policy auth when static auth tokens are configured.
+	// Passing a non-nil PolicyRepository unconditionally would activate the auth
+	// middleware even with no token configured, causing 401 on all requests.
+	var policyRepo ports.PolicyRepository
+	if a.config.API.AuthToken != "" || len(a.config.API.WingTokens) > 0 {
+		policyRepo = a.repository
 	}
-
-	// Close SOUL (does not close the shared DB connection)
+	h := restserver.NewHandler(
+		a.storeMemory,
+		a.recallMemory,
+		a.loadMemory,
+		a.updateMemory,
+		a.deleteMemory,
+		a.searchSemantic,
+		a.consolidateMemories,
+		a.clearMemory,
+		a.getTimeline,
+		a.archiveMemories,
+		a.getCausalChain,
+		a.getStatus,
+		a.repository,
+		policyRepo,
+	)
+	readTimeout := time.Duration(a.config.API.ReadTimeout) * time.Second
+	writeTimeout := time.Duration(a.config.API.WriteTimeout) * time.Second
+	a.restServer = restserver.NewServer(h, a.config.API.Address, a.config.API.AuthToken, a.config.API.WingTokens, readTimeout, writeTimeout)
 	if a.soulApp != nil {
-		a.soulApp.Close()
+		h.SetSoulQuerier(mirasoul.NewStatusQuerier(a.soulApp))
 	}
+	slog.Info("rest api configured", "addr", a.config.API.Address)
+}
 
-	// Close repository
-	if a.repository != nil {
-		return a.repository.Close()
-	}
-	return nil
+// ── Lifecycle ────────────────────────────────────────────────────────────────
+
+// Close cleans up resources. It is safe to call multiple times; only the first
+// call performs actual cleanup (subsequent calls are no-ops).
+func (a *Application) Close() error {
+	var closeErr error
+	a.closeOnce.Do(func() {
+		if a.restServer != nil {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := a.restServer.Shutdown(shutdownCtx); err != nil {
+				slog.Warn("rest server shutdown error", "error", err)
+			}
+		}
+
+		if a.hnswIndex != nil {
+			slog.Info("saving hnsw index to disk")
+			if err := a.hnswIndex.Save(); err != nil {
+				slog.Warn("failed to save hnsw index", "error", err)
+			} else {
+				slog.Info("hnsw index saved", "vectors", a.hnswIndex.Stats())
+			}
+		}
+
+		if a.webhookManager != nil {
+			a.webhookManager.Stop()
+		}
+
+		if a.soulApp != nil {
+			a.soulApp.Close()
+		}
+
+		if a.repository != nil {
+			closeErr = a.repository.Close()
+		}
+	})
+	return closeErr
 }
 
 // Run starts the MCP server
 func (a *Application) Run() error {
 	defer a.Close()
 
-	// Start webhook manager if enabled
 	if a.webhookManager != nil {
 		a.webhookManager.Start()
 	}
 
-	// Create MCP server
 	s := server.NewDefaultServer(a.config.MCP.Name, a.config.MCP.Version)
 
 	// Advertise tools capability in the initialize handshake.
@@ -400,9 +575,7 @@ func (a *Application) Run() error {
 		}, nil
 	})
 
-	// Register combined MIRA + SOUL tools
 	if a.soulCtrl != nil {
-		// Combined mode: register all tools from both systems
 		miraTools := a.controller.ToolDefinitions()
 		soulTools := a.soulCtrl.ToolDefinitions()
 		allTools := append(miraTools, soulTools...)
@@ -418,23 +591,35 @@ func (a *Application) Run() error {
 			return a.controller.Call(ctx, name, arguments)
 		})
 	} else {
-		// MIRA-only mode
 		a.controller.RegisterTools(s)
 		slog.Info("MCP tools registered", "mira", len(a.controller.ToolDefinitions()))
 	}
 
-	// Setup graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Start server in goroutine
+	// Start the optional REST API server in a background goroutine.
+	if a.restServer != nil {
+		go func() {
+			slog.Info("rest api listening", "addr", a.restServer.Addr)
+			if err := a.restServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				slog.Error("rest server error", "error", err)
+			}
+		}()
+	}
+
 	errChan := make(chan error, 1)
 	var sseServer *server.SSEServer
+	var httpHandler *mcpserver.MCPServerHandler
 	go func() {
-		slog.Info("mcp server ready", "name", a.config.MCP.Name, "version", a.config.MCP.Version, "transport", a.config.MCP.Transport, "budget", a.config.Allocator.DefaultBudget)
+		slog.Info("mcp server ready",
+			"name", a.config.MCP.Name,
+			"version", a.config.MCP.Version,
+			"transport", a.config.MCP.Transport,
+			"budget", a.config.Allocator.DefaultBudget)
 
 		switch a.config.MCP.Transport {
 		case "stdio":
@@ -442,27 +627,31 @@ func (a *Application) Run() error {
 		case "sse":
 			sseServer = server.NewSSEServer(s, "http://"+a.config.MCP.Address)
 			errChan <- sseServer.Start(a.config.MCP.Address)
+		case "http":
+			httpHandler := mcpserver.NewMCPServerHandler(s, a.config.MCP.Address)
+			errChan <- httpHandler.Start(a.config.MCP.Address)
 		default:
-			errChan <- fmt.Errorf("unsupported transport: %s (stdio or sse supported)", a.config.MCP.Transport)
+			errChan <- fmt.Errorf("unsupported transport: %s (stdio, sse, or http supported)", a.config.MCP.Transport)
 		}
 	}()
 
-	// Wait for shutdown signal or error
 	select {
 	case sig := <-sigChan:
 		slog.Info("received shutdown signal", "signal", sig)
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()
-		// Shutdown SSE server first if running
 		if sseServer != nil {
 			if err := sseServer.Shutdown(shutdownCtx); err != nil {
 				slog.Warn("sse server shutdown error", "error", err)
 			}
 		}
+		if httpHandler != nil {
+			if err := httpHandler.Shutdown(shutdownCtx); err != nil {
+				slog.Warn("http server shutdown error", "error", err)
+			}
+		}
 		done := make(chan error, 1)
-		go func() {
-			done <- a.Close()
-		}()
+		go func() { done <- a.Close() }()
 		select {
 		case err := <-done:
 			if err != nil {
@@ -482,6 +671,8 @@ func (a *Application) Run() error {
 	}
 }
 
+// ── Constructor helpers ──────────────────────────────────────────────────────
+
 // NewApplicationFromConfig loads config and creates a new application
 func NewApplicationFromConfig(configPath string) (*Application, error) {
 	cfg, err := config.LoadOrDefault(configPath)
@@ -500,21 +691,28 @@ func RunWithConfig(configPath string) error {
 	return app.Run()
 }
 
-// Library accessors for external modules (e.g., Miracloud SaaS)
+// ── Library accessors (for external modules e.g. Miracloud SaaS) ─────────────
 
-func (a *Application) StoreMemoryUC() *interactors.StoreMemory     { return a.storeMemory }
-func (a *Application) RecallMemoryUC() *interactors.RecallMemory   { return a.recallMemory }
-func (a *Application) LoadMemoryUC() *interactors.LoadMemory       { return a.loadMemory }
-func (a *Application) GetTimelineUC() *interactors.GetTimeline     { return a.getTimeline }
-func (a *Application) GetStatusUC() *interactors.GetStatus         { return a.getStatus }
-func (a *Application) GetCausalChainUC() *interactors.GetCausalChain { return a.getCausalChain }
+func (a *Application) StoreMemoryUC() *interactors.StoreMemory         { return a.storeMemory }
+func (a *Application) RecallMemoryUC() *interactors.RecallMemory       { return a.recallMemory }
+func (a *Application) LoadMemoryUC() *interactors.LoadMemory           { return a.loadMemory }
+func (a *Application) GetTimelineUC() *interactors.GetTimeline         { return a.getTimeline }
+func (a *Application) GetStatusUC() *interactors.GetStatus             { return a.getStatus }
+func (a *Application) GetCausalChainUC() *interactors.GetCausalChain   { return a.getCausalChain }
 func (a *Application) ArchiveMemoriesUC() *interactors.ArchiveMemories { return a.archiveMemories }
-func (a *Application) ClearMemoryUC() *interactors.ClearMemory     { return a.clearMemory }
-func (a *Application) DeleteMemoryUC() *interactors.DeleteMemory   { return a.deleteMemory }
-func (a *Application) SearchSemanticUC() *interactors.SearchSemantic { return a.searchSemantic }
-func (a *Application) UpdateMemoryUC() *interactors.UpdateMemory     { return a.updateMemory }
-func (a *Application) ConsolidateMemoriesUC() *interactors.ConsolidateMemories { return a.consolidateMemories }
-func (a *Application) SoulApplication() *soul.Application          { return a.soulApp }
+func (a *Application) ClearMemoryUC() *interactors.ClearMemory         { return a.clearMemory }
+func (a *Application) DeleteMemoryUC() *interactors.DeleteMemory       { return a.deleteMemory }
+func (a *Application) SearchSemanticUC() *interactors.SearchSemantic   { return a.searchSemantic }
+func (a *Application) UpdateMemoryUC() *interactors.UpdateMemory       { return a.updateMemory }
+func (a *Application) ConsolidateMemoriesUC() *interactors.ConsolidateMemories {
+	return a.consolidateMemories
+}
+func (a *Application) CompressMemoriesUC() *interactors.CompressMemories {
+	return a.compressMemories
+}
+func (a *Application) SoulApplication() *soul.Application { return a.soulApp }
+
+// ── Internal helpers ─────────────────────────────────────────────────────────
 
 // ensureGitignore adds .mira/ to .gitignore if a .gitignore exists in the project root.
 func ensureGitignore(dataPath string) error {
@@ -526,7 +724,7 @@ func ensureGitignore(dataPath string) error {
 	gitignorePath := filepath.Join(projectDir, ".gitignore")
 
 	if _, err := os.Stat(gitignorePath); os.IsNotExist(err) {
-		return nil // no gitignore, nothing to do
+		return nil
 	}
 
 	content, err := os.ReadFile(gitignorePath)
@@ -536,7 +734,7 @@ func ensureGitignore(dataPath string) error {
 
 	s := string(content)
 	if strings.Contains(s, ".mira") {
-		return nil // already ignored
+		return nil
 	}
 
 	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_WRONLY, 0o644)
@@ -550,7 +748,6 @@ func ensureGitignore(dataPath string) error {
 			return err
 		}
 	}
-
 	_, err = f.WriteString("# MIRA project data\n.mira/\n")
 	return err
 }

@@ -9,11 +9,11 @@
   [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
   [![Version](https://img.shields.io/badge/Version-0.4.7-blue?style=flat-square)]()
-  [![Tests](https://img.shields.io/badge/Tests-~55%25-yellow?style=flat-square)]()
+  [![Tests](https://img.shields.io/badge/Tests-~70%25-yellow?style=flat-square)]()
 
   *100% Local • Deterministic (embedding variance < 1e-6) • Clean Architecture*
 
-  [API Reference](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [Francais](README_FR.md) • [SOUL Extension](https://github.com/benoitpetit/soul)
+  [API Reference](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [Français](README_FR.md) • [SOUL Extension](https://github.com/benoitpetit/soul)
 
 </div>
 
@@ -22,7 +22,6 @@
 ## Table of Contents
 
 - [What is MIRA?](#what-is-mira)
-- [The Memory Revolution for LLMs](#the-memory-revolution-for-llms)
 - [How It Works](#how-it-works)
 - [3-Level Architecture (T0/T1/T2)](#3-level-architecture-t0t1t2)
 - [The CBA Algorithm](#the-cba-algorithm)
@@ -32,6 +31,7 @@
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
 - [MCP API](#mcp-api)
+- [REST API](#rest-api)
 - [Performance](#performance)
 - [Technical Architecture](#technical-architecture)
 - [Development](#development)
@@ -41,353 +41,222 @@
 
 ## What is MIRA?
 
-**MIRA** is a sophisticated long-term memory system designed specifically for **Large Language Models (LLMs)**. Unlike traditional memory systems that simply store and retrieve, MIRA uses **information-theoretic allocation** to optimize every token in the context window.
+**MIRA** is a long-term memory system designed for **Large Language Models**. Instead of simple similarity retrieval, MIRA solves an optimization problem: maximize useful information within a fixed token budget.
 
-### SOUL Extension: Identity Preservation
+Each memory is stored in three forms — full text (T0), structured facts (T1), and a 384-dimensional embedding (T2) — enabling adaptive rendering that adjusts to the available budget.
 
-MIRA answers *"What does the agent know?"* But a complete agent needs more: it needs to know *"Who is it?"*
+**Traditional approaches fall short:**
 
-[**SOUL**](https://github.com/benoitpetit/soul) (System for Observed Unique Legacy) is an **optional identity extension** for MIRA that captures, stores, and recalls the personality, voice, and values of AI agents across sessions and model changes.
+- Simple RAG retrieves by similarity and ignores information density
+- Sliding window loses critical information from the beginning
+- Static summarization does not adapt to the current query
+- Basic vector DB has O(n) complexity with no budget management
 
-To embed SOUL in MIRA, start with `--with-soul` or set `soul.enabled: true` in config. When enabled, SOUL provides **8 additional MCP tools** (16 total) for:
-- Capturing identity from conversations
-- Recalling identity prompts for LLM context injection
-- Detecting identity drift after model changes
-- Generating reinforcement prompts after model swaps
+**MIRA provides:**
 
-SOUL is **opt-in and disabled by default**. MIRA works perfectly alone (8 tools). To activate SOUL, use `--with-soul` flag or set `soul.enabled: true` in `config.yaml`. When enabled, they share the same SQLite database.
+- **Context Budget Allocation (CBA)** — maximizes information across 6 scoring dimensions
+- **Triple representation (T0/T1/T2)** — adaptive rendering from full text down to a 5-token header
+- **Hybrid search** — HNSW O(log n) + SQLite FTS5, fused with Reciprocal Rank Fusion
+- **Causal graph** — automatic detection of cause-effect relationships between memories
+- **Clean architecture** — hexagonal, fully tested, extensible
 
-| Configuration | Tools | What it answers |
-|---------------|-------|-----------------|
-| MIRA only | 8 `mira_*` | "What does the agent know?" |
-| MIRA + SOUL | 16 `mira_*` + `soul_*` | "What does the agent know?" + "Who is the agent?" |
-
-### The Problem MIRA Solves
-
-Modern LLMs suffer from a fundamental problem: **the context window is limited** (4K-128K tokens), but conversations and projects span thousands of interactions. How do we decide what to keep in context?
-
-**Traditional approaches fail:**
-
-- [x] Simple RAG: Retrieval based only on similarity, ignores information density
-- [x] Sliding window: Loses critical information from the beginning
-- [x] Static summarization: Doesn't adapt to the current query
-- [x] Basic Vector DB: O(n) complexity, no budget management
-
-**MIRA provides the solution:**
-
-- [+] **Context Budget Allocation**: Optimizes every token across 6 dimensions
-- [+] **Information Density**: Prioritizes memory-rich facts
-- [+] **Temporal Coherence**: Maintains narrative continuity
-- [+] **Causal Graph**: Understands cause-effect relationships
-- [+] **O(log n) Search**: HNSW for millions of memories
-- [+] **Clean Architecture**: Maintainable, testable, extensible
-
----
-
-## The Memory Revolution for LLMs
-
-### What MIRA Brings New
-
-#### 1. **Information Allocation (CBA)**
-
-Instead of simply retrieving the "most similar", MIRA solves an **optimization problem under constraint**: maximize useful information within a fixed token budget.
-
-```
-Score(m) = Relevance × Density × Recency × (1-Overlap) × Coherence × CausalPenalty
-```
-
-#### 2. **Triple Representation (T0/T1/T2)**
-
-Each memory exists in 3 forms for different uses:
-
-- **T0 (Verbatim)**: Full original text
-- **T1 (Fingerprint)**: Structured extracted facts (~15% of tokens)
-- **T2 (Embedding)**: 384D semantic vector for search
-
-#### 3. **Integrated Causal Graph**
-
-Automatic detection of relations (BECAUSE, TRIGGERED, CONTRADICTS, UPDATES, RESOLVES) to trace reasoning chains.
-
-#### 4. **Adaptive Rendering**
-
-Based on remaining budget, MIRA intelligently chooses the detail level:
-
-- **Header** (5 tokens): Reference only
-- **Fingerprint** (~15% tokens): Essential facts
-- **Verbatim** (100% tokens): Full text
+> **Need identity persistence?** The optional [SOUL](https://github.com/benoitpetit/soul) extension adds 8 MCP tools for capturing and recalling an agent's personality across model changes — activated with a single `--with-soul` flag.
 
 ---
 
 ## How It Works
 
-### Overview Flow
+### Storage
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         MEMORY STORAGE                                  │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│   Input Text         T1,T2 Extraction        Atomic Storage             │
-│   ┌─────────┐       ┌──────────────┐          ┌─────────────────┐       │
-│   │"We      │──────→│  Fingerprint │─────────→│  SQLite + HNSW  │       │
-│   │ decided │       │  + Embedding │          │  (WAL Mode)     │       │
-│   │ to use  │       └──────────────┘          └─────────────────┘       │
-│   │PostgreSQL"            │                       │                     │
-│   └─────────┘             ↓                       ↓                     │
-│                        T1: {                 Vector Index               │
-│                          - decision: "PostgreSQL"  ℝ³⁸⁴                 │
-│                          - rejected: ["MySQL",     HNSW O(log n)        │
-│                                      "MongoDB"]                         │
-│                          - reason: ["ACID", "Exp"]                      │
-│                          - type: DECISION                               │
-│                                                                         │
-│                         T2: [0.23, -0.15, 0.89, ...] 384D               │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         RETRIEVAL (RECALL)                              │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│   Query "Why PostgreSQL?"                                               │
-│       │                                                                 │
-│       ▼                                                                 │
-│   ┌─────────────┐    ┌─────────────────┐    ┌──────────────────────┐    │
-│   │ Embedding   │───→│  HNSW Search    │───→│  Composite Scoring   │    │
-│   │ Query       │    │  Top 100        │    │  CBA Algorithm       │    │
-│   │ ℝ³⁸⁴        │    │  O(log n)       │    │  O(n log n)          │    │
-│   └─────────────┘    └─────────────────┘    └──────────────────────┘    │
-│                                                        │                │
-│                                                        ▼                │
-│                                              Greedy Selection           │
-│                                              with 4000 token budget     │
-│                                                        │                │
-│       ┌────────────────────────────────────────────────┘                │
-│       ▼                                                                 │
-│   Optimized Result:                                                     │
-│   ┌───────────────────────────────────────────────────────────────┐     │
-│   │ [1] Fingerprint: "PostgreSQL Decision (ACID, expertise)" 45tk │     │
-│   │ [2] Verbatim: "Meeting 04/15 - DB discussion..."         120tk│     │
-│   │ [3] Header: "Sprint 5 deadline"                           5tk │     │
-│   │ ...                                                           │     │
-│   │ Total: 3987/4000 tokens (99.7% utilization)                   │     │
-│   └───────────────────────────────────────────────────────────────┘     │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
+Text input  →  T1/T2 extraction  →  SQLite (T0 + T1) + HNSW index (T2)
 ```
 
-### The CBA Composite Score
+When a memory is stored, the native extractor produces:
 
-For each candidate memory, MIRA calculates a **multidimensional score**:
+- **T1** — a structured JSON fingerprint (~15% of original tokens)
+- **T2** — a 384-dimensional embedding for semantic search
+
+Both are derived atomically and stored alongside the original verbatim (T0).
+
+### Recall
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                     CBA SCORE FORMULA                               │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│   S(m) = ρ × δ × η × (1-σ) × τ × χ × 𝟙[ρ>θ]                         │
-│                                                                     │
-│   where:                                                            │
-│   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━    │
-│   ρ (rho)    = Semantic Relevance      cos(embedding_m, embedding_q)│
-│   δ (delta)  = Information Density     sigmoid(facts/√tokens)       │
-│   η (eta)    = Temporal Weight         exp(-λ × age)                │
-│   σ (sigma)  = Max Overlap             sim(m, already_selected)     │
-│   τ (tau)    = Session Boost           +20% if same session         │
-│   χ (chi)    = Causal Penalty          avoids long chains           │
-│   𝟙[ρ>θ]     = Relevance Threshold     eliminates if ρ < 0.6        │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
+Query  →  Embed  →  HNSW top-100 (+ FTS5)  →  RRF fusion  →  CBA scoring  →  Greedy selection
 ```
+
+The CBA algorithm selects memories greedily against a token budget, adjusting each memory's render mode (Verbatim / Fingerprint / Header) based on remaining tokens.
+
+### CBA Composite Score
+
+**S(m) = ρ × δ × η × (1−σ) × τ × χ × 𝟙[ρ>θ]**
+
+| Symbol | Dimension | Formula |
+|--------|-----------|---------|
+| ρ | Semantic relevance | cos(embedding_m, query) |
+| δ | Information density | sigmoid(facts / √tokens) |
+| η | Temporal weight | exp(−λ × age) |
+| σ | Max overlap | max similarity with already-selected memories |
+| τ | Session boost | +20% if within the same 2-hour window |
+| χ | Causal penalty | exp(−0.15 × causal links to current selection) |
+| 𝟙[ρ>θ] | Threshold gate | discard if ρ < 0.6 |
 
 ---
 
 ## 3-Level Architecture (T0/T1/T2)
 
-### Why 3 Levels?
+The human brain does not record everything with the same fidelity. MIRA mimics this hierarchy.
 
-The human brain doesn't record everything with the same fidelity. MIRA mimics this hierarchy:
+### T0 — Verbatim (Episodic Memory)
 
+The complete original text, stored as UTF-8 (max 64 KB). Used when the budget allows full context.
+
+- **Storage:** full UTF-8 text
+- **Cost:** ~200 tokens
+
+### T1 — Fingerprint (Semantic Memory)
+
+A structured canonical JSON with extracted facts, entities, decisions, and relationships.
+
+```json
+{
+  "type": "decision",
+  "decision": "PostgreSQL Migration",
+  "rejected": ["MySQL", "MongoDB"],
+  "reason": ["ACID robustness", "team expertise"],
+  "assignee": "Jean",
+  "deadline": "Sprint 5",
+  "validated_by": "Sophie (PO)"
+}
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        T0/T1/T2 HIERARCHY                           │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│   LEVEL T0 - VERBATIM (Episodic Memory)                             │
-│   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━   │
-│   "Meeting April 15, 2024 at 14:30.                                 │
-│    Participants: Marie (Tech Lead), Jean (DevOps), Sophie (PO)      │
-│    Marie: 'I propose we migrate to PostgreSQL for v2'               │
-│    Jean: 'It requires training, but it's more robust'               │
-│    Sophie: 'Client approves for Sprint 5'                           │
-│    Final decision: PostgreSQL migration approved"                   │
-│                                                                     │
-│    • Storage: Full UTF-8 text (max 64KB)                            │
-│    • Usage: Rich context when budget allows                         │
-│    • Cost: ~200 tokens                                              │
-│                                                                     │
-│                              ↓ NLP Extraction                       │
-│                                                                     │
-│   LEVEL T1 - FINGERPRINT (Semantic Memory)                          │
-│   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━   │
-│   {                                                                 │
-│     "type": "decision",                                             │
-│     "decision": "PostgreSQL Migration",                             │
-│     "rejected": ["MySQL", "MongoDB"],                               │
-│     "reason": ["ACID Robustness", "Client validation"],             │
-│     "assignee": "Jean",                                             │
-│     "deadline": "Sprint 5",                                         │
-│     "validated_by": "Sophie (PO)"                                   │
-│   }                                                                 │
-│                                                                     │
-│    • Storage: Structured canonical JSON                             │
-│    • Usage: Dense context when budget is medium                     │
-│    • Cost: ~30 tokens (15% of T0)                                   │
-│                                                                     │
-│                              ↓ Embedding                            │
-│                                                                     │
-│   LEVEL T2 - EMBEDDING (Procedural Memory)                          │
-│   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━   │
-│   [0.23, -0.15, 0.89, -0.42, 0.67, ...]  // 384 dimensions          │
-│                                                                     │
-│    • Storage: float32[384] vector                                   │
-│    • Usage: O(log n) vector search                                  │
-│    • Cost: 0 tokens (search only)                                   │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
+
+- **Storage:** canonical JSON
+- **Cost:** ~30 tokens (15% of T0)
+
+### T2 — Embedding (Search Index)
+
+A 384-dimensional float32 vector used exclusively for HNSW similarity search. Never rendered into the context.
+
+- **Storage:** float32[384]
+- **Cost:** 0 tokens (search only)
 
 ### Memory Types and Decay
 
-| Type           | λ (day⁻¹) | Half-life | Auto-Archive | Usage                   |
-| -------------- | --------- | --------- | ------------ | ----------------------- |
-| `decision`     | 0.001     | ~693 days | No           | Architectural decisions  |
-| `fact`         | 0.005     | ~139 days | No           | Knowledge, facts         |
-| `preference`   | 0.01      | ~69 days  | No           | User preferences         |
-| `session_note` | 0.1       | ~7 days   | 30 days      | Session notes           |
-| `debug_log`    | 0.5       | ~1.4 days | 7 days       | Debug logs              |
+| Type | λ (day⁻¹) | Half-life | Auto-archive | Usage |
+|------|-----------|-----------|--------------|-------|
+| `decision` | 0.001 | ~693 days | No | Architectural decisions |
+| `fact` | 0.005 | ~139 days | No | Knowledge, facts |
+| `preference` | 0.01 | ~69 days | No | User preferences |
+| `session_note` | 0.1 | ~7 days | 30 days | Session notes |
+| `debug_log` | 0.5 | ~1.4 days | 7 days | Debug logs |
 
 ---
 
 ## The CBA Algorithm
 
-### Context Budget Allocator v2
+### Algorithm (O(n²))
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    CBA ALGORITHM - O(n²)                            │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  INPUT:  Query q, Budget B (tokens), Wing w, Room r                 │
-│  OUTPUT: List of memories with render mode                          │
-│                                                                     │
-│  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━   │
-│                                                                     │
-│  1. EMBEDDING                                                       │
-│     e_q ← Embed(q) with LRU cache (1000 entries)                    │
-│                                                                     │
-│  2. VECTOR SEARCH                                                   │
-│     C ← HNSW_Search(e_q, N=100, w, r)        # O(log n)             │
-│     If HNSW not ready: C ← SQLite_Search(e_q, N=100)  # Fallback    │
-│                                                                     │
-│  3. EARLY PRUNING                                                   │
-│     C' ← {c ∈ C : ρ(c,q) > 0.6}                                     │
-│     If C' = ∅: C' ← top-5(C) by ρ                                  │
-│                                                                     │
-│  4. INITIAL SCORING                                                 │
-│     For each c ∈ C':                                                │
-│        c.score ← ρ(c) × δ_sigmoid(c) × η_recency(c)                 │
-│                                                                     │
-│  5. GREEDY SELECTION WITH DYNAMIC RENORMALIZATION                   │
-│     S ← ∅, tokens_used ← 0                                         │
-│     PQ ← MaxHeap(C')  # by initial score                            │
-│                                                                     │
-│     WHILE PQ ≠ ∅ AND tokens_used < B:                              │
-│        c ← Pop(PQ)                                                  │
-│                                                                     │
-│        # Dynamic recalculation (depends on already selected S)      │
-│        c.σ_max ← max_{s∈S} similarity(c,s)                          │
-│        c.χ ← exp(-0.15 × |causal_links(c,S)|)                       │
-│        c.τ ← 1.2 if |time(c) - time(S)| < 2h else 1.0               │
-│                                                                     │
-│        adjusted_score ← c.score × (1-c.σ_max) × c.χ × c.τ           │
-│                                                                     │
-│        # Check if next has better score                             │
-│        If PQ[0].score × 0.8 > adjusted_score:                       │
-│           Push(PQ, c) with adjusted_score                           │
-│           continue                                                  │
-│                                                                     │
-│        # Determine mode based on REMAINING BUDGET                   │
-│        remaining ← B - tokens_used                                  │
-│        mode ← ChooseMode(c, remaining)                              │
-│        cost ← CalculateCost(c, mode)                                │
-│                                                                     │
-│        # Downgrade if necessary                                     │
-│        If tokens_used + cost > B:                                   │
-│           mode ← Downgrade(mode)  # Verbatim → Fingerprint → Header │
-│           cost ← Recalculate(mode)                                  │
-│           If tokens_used + cost > B: continue                       │
-│                                                                     │
-│        S ← S ∪ {c}, tokens_used ← tokens_used + cost                │
-│                                                                     │
-│  6. RETURN S sorted by descending score                             │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
+INPUT:  Query q, Budget B (tokens), Wing w, Room r
+OUTPUT: List of memories with render mode
+
+1. EMBEDDING
+   e_q ← Embed(q)  — with LRU cache (1000 entries)
+
+2. VECTOR SEARCH
+   C ← HNSW_Search(e_q, N=100, w, r)          // O(log n)
+   If HNSW not ready: C ← SQLite_Search(...)    // Fallback
+
+3. EARLY PRUNING
+   C' ← { c ∈ C : ρ(c,q) > 0.6 }
+   If C' = ∅: C' ← top-5(C) by ρ
+
+4. INITIAL SCORING
+   For each c ∈ C':
+      c.score ← ρ(c) × δ_sigmoid(c) × η_recency(c)
+
+5. GREEDY SELECTION with dynamic renormalization
+   S ← ∅, used ← 0
+   PQ ← MaxHeap(C')
+
+   While PQ ≠ ∅ and used < B:
+      c ← Pop(PQ)
+      c.σ ← max_{s∈S} sim(c, s)
+      c.χ ← exp(−0.15 × |causal_links(c, S)|)
+      c.τ ← 1.2 if |time(c) − time(S)| < 2h else 1.0
+      adjusted ← c.score × (1−c.σ) × c.χ × c.τ
+
+      If PQ[0].score × 0.8 > adjusted:
+         Push(PQ, c) with adjusted score; continue
+
+      mode ← ChooseMode(c, B − used)
+      cost ← Cost(c, mode)
+      If used + cost > B: Downgrade(mode); Recalculate; skip if still over
+
+      S ← S ∪ {c}, used ← used + cost
+
+6. RETURN S sorted by descending score
 ```
 
 ### Adaptive Render Modes
 
-| Remaining Budget | Mode        | Tokens | Content              |
-| ---------------- | ----------- | ------ | -------------------- |
-| < 100            | Header      | 2-5    | `[type\|date\|wing]` |
-| < 1000           | Fingerprint | ~15%   | Essential facts T1   |
-| ≥ 1000           | Verbatim    | 100%   | Original text T0     |
+| Remaining budget | Mode | Tokens | Content |
+|-----------------|------|--------|---------|
+| < 100 | Header | 2–5 | `[type\|date\|wing]` |
+| < 1000 | Fingerprint | ~15% | Essential T1 facts |
+| ≥ 1000 | Verbatim | 100% | Full T0 text |
 
 ---
 
 ## Enhanced Recall Pipeline
-
-MIRA's recall uses a **multi-stage retrieval pipeline** that goes far beyond simple vector similarity:
 
 ```
 Query → Expansion → Dense (HNSW) + Lexical (FTS5) → RRF Fusion → Clustering → Tag Boost → Adaptive Threshold → CBA Greedy Selection
 ```
 
 ### 1. Query Expansion
-Before embedding, MIRA generates semantically-close variants of the query (cleaned, without stop-words, top keywords) and **averages their embeddings**. This improves cross-lingual retrieval and robustness against vocabulary mismatch.
+
+MIRA generates semantically close variants of the query (cleaned, without stopwords, top keywords) and **averages their embeddings**. This improves cross-lingual retrieval and robustness against vocabulary mismatch.
 
 ### 2. Hybrid Search (Dense + Lexical)
-- **Dense**: HNSW O(log n) vector search
-- **Lexical**: SQLite FTS5 full-text search (auto-enabled if available)
-- **Fusion**: Reciprocal Rank Fusion (`k=60`) merges both rankings into a single candidate list
+
+- **Dense:** HNSW O(log n) vector search
+- **Lexical:** SQLite FTS5 full-text search (auto-enabled if available)
+- **Fusion:** Reciprocal Rank Fusion (`k=60`) merges both rankings into a single candidate list
 
 ### 3. Search-Time Clustering
-Candidates are grouped by cosine similarity ≥ 0.88. Near-duplicates are collapsed, and only the best representative per cluster proceeds to scoring. This prevents budget waste on redundant memories.
+
+Candidates are grouped by cosine similarity ≥ 0.88. Near-duplicates collapse to their best representative, preventing budget waste on redundant memories.
 
 ### 4. Tag-Based Retrieval
-A new `memory_tags` table indexes extracted entities, subjects, and keywords. Candidates matching query tags receive a small additive relevance boost.
 
-### 5. Adaptive Threshold Methods
-Instead of a fixed 0.6 relevance floor, MIRA now supports three dynamic methods:
+The `memory_tags` table indexes extracted entities, subjects, and keywords. Candidates matching query tags receive a small additive relevance boost.
+
+### 5. Adaptive Threshold
+
+Instead of a fixed 0.6 floor, MIRA supports three dynamic methods:
 
 | Method | Description | Default |
 |--------|-------------|---------|
 | `iqr` | First quartile of score distribution | Yes |
-| `elbow` | Largest derivative drop (elbow method) | |
-| `mean_stddev` | mean - stddev | |
+| `elbow` | Largest derivative drop | |
+| `mean_stddev` | mean − stddev | |
 
-The threshold is clamped between `0.15` (floor) and `0.75` (ceiling).
+Threshold is clamped between 0.15 (floor) and 0.75 (ceiling).
 
 ### 6. Heuristic Reranker (Optional)
-A lightweight pure-Go reranker scores top-k candidates using:
+
+A lightweight pure-Go reranker blends semantic and lexical signals:
+
 - Jaccard-like token overlap
 - Exact phrase presence bonus
 - Length balance preference
 
-Blended with semantic relevance: `0.7*semantic + 0.3*rerank`.
+Blend: `0.7 × semantic + 0.3 × rerank`
 
 ### 7. Fallback Vector Store
-If HNSW is not yet ready (e.g., building from scratch), a transparent fallback wrapper automatically routes searches to the SQLite vector store. Recall never fails.
+
+If HNSW is not ready (e.g., rebuilding from scratch), a transparent fallback wrapper routes searches to the SQLite vector store. Recall never fails.
 
 ---
 
@@ -395,37 +264,15 @@ If HNSW is not yet ready (e.g., building from scratch), a transparent fallback w
 
 ### Supported Relations
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                      CAUSAL RELATIONS                               │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│   BECAUSE                    A ←────────── B                        │
-│   "B explains why A"         Bug understood  Because we analyzed    │
-│                              ───────────→   the logs                │
-│                                                                     │
-│   TRIGGERED                  A ←────────── B                        │
-│   "B triggered A"            Migration    After the decision        │
-│                              ───────────→  meeting                  │
-│                                                                     │
-│   CONTRADICTS                A ←────────→ B                         │
-│   "A and B contradict"       Option A     Option B                  │
-│                              ───────────→  incompatible             │
-│                                                                     │
-│   UPDATES                    A ←────────── B                        │
-│   "B replaces/updates A"     Spec v1      Spec v2                   │
-│                              ───────────→  (new version)            │
-│                                                                     │
-│   RESOLVES                   A ←────────── B                        │
-│   "B resolves problem A"     Bug #123     Fix #124                  │
-│                              ───────────→  (correction)             │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
+| Relation | Meaning | Triggered by |
+|----------|---------|--------------|
+| `BECAUSE` | B explains why A | "because", "since", "due to" |
+| `TRIGGERED` | B triggered A | "following", "after", "in response to" |
+| `CONTRADICTS` | A and B are incompatible | "contradicts", "however" |
+| `UPDATES` | B replaces A | "updates", "replaces" |
+| `RESOLVES` | B fixes problem A | "resolves", "solves", "fixes" |
 
 ### Automatic Detection
-
-Relations are automatically detected via linguistic patterns:
 
 ```go
 causalPatterns := map[RelationType]*regexp.Regexp{
@@ -445,19 +292,14 @@ causalPatterns := map[RelationType]*regexp.Regexp{
 
 - Go 1.23+ (if building from source)
 - SQLite3 (included)
-- ~100MB disk space for embedding model
+- ~100 MB disk space for the embedding model
 
-### From Sources
+### From Source
 
 ```bash
-# Clone the repository
 git clone https://github.com/benoitpetit/mira.git
 cd mira
-
-# Build
 go build -o mira ./cmd/mira
-
-# Verify
 ./mira --version
 ```
 
@@ -486,30 +328,82 @@ unzip mira-windows-amd64.zip
 
 ## Quick Start
 
-### 1. Initialization
+### 1. Initialize
 
 ```bash
-# Copy example configuration
 cp config.example.yaml config.yaml
-
-# Edit to your needs
 nano config.yaml
 ```
 
 ### 2. Start the MCP Server
 
 ```bash
-# stdio mode (for Claude Desktop, Cursor, etc.)
-./mira
+# Stdio mode — for Claude Desktop, Cursor, etc.
+./mira server
 
-# With custom config file
-./mira -config ./config.yaml
+# With a custom config file
+./mira --config ./config.yaml server
 
-# Run database migrations only
-./mira -migrate
+# With a custom storage path (also: MIRA_DATA_PATH env var)
+./mira --storage-path /data/mira server
+
+# MCP transport modes: stdio (default), sse
+./mira server --transport sse --mcp-addr localhost:3001
+
+# Enable the optional REST API
+./mira server --with-api --api-addr :8080 --api-token my-secret
+
+# Enable the SOUL identity extension
+./mira server --with-soul
+
+# Prometheus metrics (default: :9090)
+./mira server --prometheus-addr :9091
+
+# Disable Prometheus metrics
+./mira server --no-metrics
+
+# Ollama-backed extraction (requires a running Ollama instance)
+./mira server --with-llm --llm-endpoint http://localhost:11434
 ```
 
-### 3. Use MCP Tools
+### 3. Utility Commands
+
+```bash
+# Run database migrations and exit
+./mira migrate
+
+# System health check (human-readable or JSON)
+./mira doctor
+./mira doctor --json
+
+# System status (for scripting/monitoring)
+./mira status
+./mira status --json
+
+# One-shot recall from CLI
+./mira query --query "Why did we choose PostgreSQL?" --wing backend-team
+./mira query -q "API decisions" --json
+
+# Store a single memory from CLI
+./mira store --content "PostgreSQL chosen for primary DB" --wing backend-team --type decision
+
+# Delete a memory by UUID
+./mira delete 5a159ddf-bc11-46a6-8a0d-f39f25853cb4
+
+# Export memories to JSON
+./mira export --wing backend-team --output memories.json
+
+# Import memories from JSON (with optional dry-run)
+./mira import --file memories.json
+./mira import --file memories.json --dry-run
+
+# Config validation and inspection
+./mira config validate
+./mira config show
+./mira config show --json
+```
+
+### 4. Use MCP Tools
 
 #### Store a Memory
 
@@ -553,7 +447,6 @@ Assigned: Jean
 
 --- [2] VERBATIM (120 tokens) ---
 We decided to migrate to PostgreSQL for v2...
-[full content]
 
 === Total: 165/2000 tokens (8.3%) ===
 ```
@@ -575,7 +468,7 @@ We decided to migrate to PostgreSQL for v2...
 
 ## Configuration
 
-### config.yaml File
+### config.yaml
 
 ```yaml
 system:
@@ -597,12 +490,11 @@ embeddings:
   batch_size: 32
   cache_size: 1000
 
-# HNSW Vector Index Configuration
 hnsw:
-  M: 32 # Max neighbors per node (tuned for better recall, see v0.4.2)
-  Ml: 0.25 # Level generation factor
-  ef_construction: 0 # Inactive — not supported by underlying hnsw library
-  ef_search: 100 # Dynamic candidate list for search (tuned, see v0.4.2)
+  M: 32
+  Ml: 0.25
+  ef_construction: 0   # inactive — not supported by underlying library
+  ef_search: 100
 
 allocator:
   default_budget: 4000
@@ -636,7 +528,6 @@ extraction:
   causal_lookback: 50
   causal_max_days: 30
 
-# Enhanced recall configuration
 recall:
   adaptive_threshold_method: "iqr"
   adaptive_threshold_floor: 0.15
@@ -662,11 +553,19 @@ soul:
 mcp:
   name: "mira"
   version: "0.4.7"
-  transport: "stdio"  # "stdio" for Claude Desktop/Cursor, "sse" for HTTP Server-Sent Events
-  address: "localhost:3001"  # Bind address when transport is "sse"
+  transport: "stdio"   # "stdio" for Claude Desktop/Cursor, "sse" for HTTP SSE
+  address: "localhost:3001"
   timeout_seconds: 30
 
-# Prometheus metrics export
+# Optional REST HTTP API
+api:
+  enabled: false
+  address: ":8080"
+  auth_token: ""
+  read_timeout_seconds: 30
+  write_timeout_seconds: 30
+
+# Prometheus metrics
 metrics:
   enabled: true
   prometheus_addr: ":9090"
@@ -687,17 +586,17 @@ webhooks:
 
 ### Available Tools
 
-| Tool                | Description                           |
-| ------------------- | ------------------------------------- |
-| `mira_store`        | Store memory with T0/T1/T2 extraction |
-| `mira_recall`       | Retrieve optimal context with budget (supports `session_id`) |
-| `mira_load`         | Load full verbatim by ID              |
-| `mira_causal_chain` | Trace causal chain                    |
-| `mira_status`       | System statistics, version, and uptime |
-| `mira_health`       | Quick health check (JSON)             |
-| `mira_timeline`     | Filtered chronological reconstruction |
-| `mira_archive`      | Archive and clean old memories        |
-| `mira_clear_memory` | Permanently delete all or room-scoped memories |
+| Tool | Description |
+|------|-------------|
+| `mira_store` | Store a memory with T0/T1/T2 extraction |
+| `mira_recall` | Retrieve optimal context within a token budget |
+| `mira_load` | Load the full verbatim by UUID |
+| `mira_causal_chain` | Trace causal chain from a memory |
+| `mira_status` | System statistics and health |
+| `mira_health` | Quick JSON health check |
+| `mira_timeline` | Chronological memory reconstruction |
+| `mira_archive` | Archive and clean old memories |
+| `mira_clear_memory` | Permanently delete memories (global or room-scoped) |
 
 ### Fallback Wings
 
@@ -715,11 +614,9 @@ When recalling from a specific wing yields no results, `mira_recall` supports co
 }
 ```
 
-If the primary wing has no matching memories, MIRA will automatically search the fallback wings in order.
+### Multilingual Search
 
-### Multilingual & Broad Search
-
-`mira_recall` supports queries in any language (English, French, Spanish, Italian, German, etc.) thanks to cross-lingual embeddings. If the initial semantic search yields sparse results — for example, when a query in one language searches against memories stored in another — MIRA automatically broadens the search with relaxed thresholds and merges the results. You do not need to translate queries or adjust parameters.
+`mira_recall` accepts queries in any language thanks to cross-lingual embeddings. When a query in one language searches memories stored in another, MIRA automatically broadens the search with relaxed thresholds.
 
 ```json
 {
@@ -732,155 +629,190 @@ If the primary wing has no matching memories, MIRA will automatically search the
 }
 ```
 
-See [API_REFERENCES.md](docs/API_REFERENCES.md) for detailed API reference and usage examples.
+See [API_REFERENCES.md](docs/API_REFERENCES.md) for the full reference.
 
-### Health Check Endpoints
+### Health Endpoints
 
 When metrics are enabled, MIRA exposes health endpoints:
 
 ```bash
-# Full health check (includes DB, Vector Store, Embedder)
-curl http://localhost:9090/health
-
-# Liveness probe (Kubernetes)
-curl http://localhost:9090/health/live
-
-# Readiness probe (Kubernetes)
-curl http://localhost:9090/health/ready
-
-# Prometheus metrics
-curl http://localhost:9090/metrics
+curl http://localhost:9090/health        # Full check (DB, Vector Store, Embedder)
+curl http://localhost:9090/health/live   # Liveness probe (Kubernetes)
+curl http://localhost:9090/health/ready  # Readiness probe (Kubernetes)
+curl http://localhost:9090/metrics       # Prometheus metrics
 ```
+
+---
+
+## REST API
+
+MIRA ships an optional REST HTTP API for scripting, dashboards, or non-MCP integrations. Disabled by default.
+
+### Enable
+
+```bash
+# Via CLI flag
+./mira server --with-api --api-addr :8080 --api-token my-secret
+
+# Via config.yaml
+api:
+  enabled: true
+  address: ":8080"
+  auth_token: "my-secret"
+```
+
+### Authentication
+
+When `auth_token` is set, every request must carry:
+
+```
+Authorization: Bearer my-secret
+```
+
+The `/openapi.json` endpoint is always public.
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/memories` | Store a memory |
+| `GET` | `/api/v1/memories/{id}` | Load full verbatim by UUID |
+| `PUT` | `/api/v1/memories/{id}` | Update memory content |
+| `DELETE` | `/api/v1/memories/{id}` | Delete a single memory |
+| `POST` | `/api/v1/memories/recall` | Recall context (full CBA pipeline) |
+| `POST` | `/api/v1/memories/search` | Semantic vector search |
+| `POST` | `/api/v1/memories/consolidate` | Consolidate redundant memories |
+| `DELETE` | `/api/v1/memories` | Clear memories (global or scoped) |
+| `GET` | `/api/v1/timeline` | Chronological memory timeline |
+| `POST` | `/api/v1/archive` | Archive old memories |
+| `GET` | `/api/v1/causal/{id}` | Causal chain for a memory |
+| `GET` | `/api/v1/status` | System status (JSON) |
+| `GET` | `/openapi.json` | OpenAPI 3.1 specification |
+
+### Quick Examples
+
+```bash
+# Store a memory
+curl -s -X POST http://localhost:8080/api/v1/memories \
+  -H "Authorization: Bearer my-secret" \
+  -H "Content-Type: application/json" \
+  -d '{"content":"We chose PostgreSQL for v2","wing":"backend","type":"decision"}'
+
+# Recall context
+curl -s -X POST http://localhost:8080/api/v1/memories/recall \
+  -H "Authorization: Bearer my-secret" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"Why PostgreSQL?","budget":2000,"wing":"backend"}'
+
+# Get OpenAPI spec (no auth required)
+curl -s http://localhost:8080/openapi.json | jq .info
+```
+
+See [docs/API_REFERENCES.md](docs/API_REFERENCES.md) for full request/response schemas.
 
 ---
 
 ## Performance
 
-### Algorithmic Complexities
+### Algorithmic Complexity
 
-| Operation        | Complexity | Notes            |
-| ---------------- | ---------- | ---------------- |
-| Store T0,T1,T2   | O(1)       | Atomic insertion |
-| Vector Search    | O(log n)   | HNSW ANN         |
-| CBA Scoring      | O(n)       | n = candidates   |
-| Allocation       | O(n²)      | Greedy selection |
-| Causal Graph BFS | O(V+E)     | V=nodes, E=edges |
+| Operation | Complexity | Notes |
+|-----------|------------|-------|
+| Store T0, T1, T2 | O(1) | Atomic insertion |
+| Vector search | O(log n) | HNSW ANN |
+| CBA scoring | O(n) | n = candidates |
+| Greedy allocation | O(n²) | With dynamic renormalization |
+| Causal graph BFS | O(V+E) | V = nodes, E = edges |
 
-### Real-World Performance
+### Benchmarks
 
-| Metric            | Value                 |
-| ----------------- | --------------------- |
-| HNSW Search       | ~0.14 ms for 10K vectors (benchmarked, O(log n)) |
-| SQLite Search     | ~50 ms for 10K vectors (estimated) |
-| Full Allocation   | ~35 ms for 100 candidates (estimated) |
-| Cosine Similarity | ~3.3M ops/sec         |
+| Metric | Value |
+|--------|-------|
+| HNSW search | ~0.14 ms for 10K vectors (benchmarked) |
+| SQLite fallback search | ~50 ms for 10K vectors (estimated) |
+| Full allocation | ~35 ms for 100 candidates (estimated) |
+| Cosine similarity | ~3.3M ops/sec |
 
 ### Optimizations in v0.3.3
 
-- **Query Expansion**: Multi-variant embedding averaging for robust cross-lingual retrieval
-- **FTS5 Lexical Search**: SQLite full-text search integrated with auto-triggers and backfill
-- **RRF Hybrid Fusion**: Reciprocal Rank Fusion (`k=60`) combining dense HNSW and lexical FTS5 results
-- **Search-Time Clustering**: Real-time deduplication with cosine-similarity clustering (threshold 0.88)
-- **Tag-Based Retrieval**: `memory_tags` table with automatic tag boosting in CBA scoring
-- **Heuristic Reranker**: Optional lightweight lexical reranker for precision improvement
-- **Adaptive Threshold Methods**: Dynamic relevance pruning with `iqr`, `elbow`, and `mean_stddev` strategies
-- **Fallback Vector Store**: Transparent HNSW → SQLite fallback when the index is not ready
-- **Clear Memory Tool**: New `mira_clear_memory` MCP tool for global or room-scoped memory deletion
-- **Causal Chain T0 Resolution**: `mira_causal_chain` now correctly resolves `T0:` verbatim references to fingerprint IDs
-- **ID Visibility in Outputs**: `mira_recall` and `mira_timeline` now include memory IDs for downstream tool chaining
-- **LLM-Self-Correction Errors**: Invalid ID errors are now actionable, telling LLMs exactly where to get valid IDs
+- **Query Expansion** — multi-variant embedding averaging for robust cross-lingual retrieval
+- **FTS5 Lexical Search** — SQLite full-text search with auto-triggers and backfill
+- **RRF Hybrid Fusion** — Reciprocal Rank Fusion (`k=60`) combining HNSW and FTS5
+- **Search-Time Clustering** — real-time deduplication at cosine similarity ≥ 0.88
+- **Tag-Based Retrieval** — `memory_tags` table with automatic tag boosting in CBA
+- **Heuristic Reranker** — optional lightweight lexical reranker
+- **Adaptive Threshold Methods** — dynamic pruning with `iqr`, `elbow`, `mean_stddev`
+- **Fallback Vector Store** — transparent HNSW → SQLite fallback when index not ready
+- **Clear Memory Tool** — `mira_clear_memory` for global or room-scoped deletion
+- **Causal Chain T0 Resolution** — `mira_causal_chain` resolves `T0:` verbatim references
+- **ID Visibility in Outputs** — `mira_recall` and `mira_timeline` include memory IDs
 
 ### Optimizations in v0.3.1
 
-- **Lazy Evaluation**: Overlap calculation only for promising candidates
-- **LRU Cache**: 1000 entries for query embeddings
-- **HNSW Persistence**: Fast index reload on restart
-- **SQLite WAL Mode**: Concurrent read/write performance
-- **Adaptive Threshold**: Lowered relevance threshold for small corpora (<10 memories)
-- **Default Room Mapping**: Auto-assigns standard rooms based on memory type
+- **Lazy Evaluation** — overlap calculation only for promising candidates
+- **LRU Cache** — 1000 entries for query embeddings
+- **HNSW Persistence** — fast index reload on restart
+- **SQLite WAL Mode** — concurrent read/write performance
+- **Adaptive Threshold** — lowered relevance floor for small corpora (< 10 memories)
+- **Default Room Mapping** — auto-assigns standard rooms based on memory type
 
 ---
 
 ## Technical Architecture
 
-### Clean Architecture (Uncle Bob)
+### Hexagonal Architecture (Clean Architecture)
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    CLEAN ARCHITECTURE                               │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│   ┌─────────────────────────────────────────────────────────────┐   │
-│   │  DOMAIN (Enterprise Rules)                                  │   │
-│   │  • entities: Verbatim, Fingerprint, Embedding, Candidate    │   │
-│   │  • valueobjects: MemoryType, RenderMode, RelationType       │   │
-│   │  ✓ No external dependencies                                 │   │
-│   └─────────────────────────────────────────────────────────────┘   │
-│                              ▲                                      │
-│                              │ Dependency                           │
-│   ┌─────────────────────────────────────────────────────────────┐   │
-│   │  USE CASES (Application Rules)                              │   │
-│   │  • StoreMemory, RecallMemory (CBA), LoadMemory              │   │
-│   │  • GetTimeline, GetStatus, GetCausalChain, Archive          │   │
-│   │  • ports: Repository interfaces                             │   │
-│   │  ✓ Depends only on Domain                                   │   │
-│   └─────────────────────────────────────────────────────────────┘   │
-│                              ▲                                      │
-│                              │                                      │
-│   ┌─────────────────────────────────────────────────────────────┐   │
-│   │  INTERFACE ADAPTERS                                         │   │
-│   │  • storage: SQLiteRepository                                │   │
-│   │  • vector: HNSWStore, SQLiteVectorStore                     │   │
-│   │  • extraction: NativeExtractor, CybertronEmbedder           │   │
-│   │  • webhook, metrics                                         │   │
-│   │  ✓ Implements ports                                         │   │
-│   └─────────────────────────────────────────────────────────────┘   │
-│                              ▲                                      │
-│                              │                                      │
-│   ┌─────────────────────────────────────────────────────────────┐   │
-│   │  FRAMEWORKS & DRIVERS                                       │   │
-│   │  • SQLite3, HNSW lib, Cybertron, MCP Server                 │   │
-│   │  ✓ External technical details                               │   │
-│   └─────────────────────────────────────────────────────────────┘   │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
+**Domain** — enterprise rules, no external dependencies
+- `entities`: Verbatim, Fingerprint, Embedding, Candidate
+- `valueobjects`: MemoryType, RenderMode, RelationType
+
+**Use Cases** — application rules, depends only on Domain
+- StoreMemory, RecallMemory (CBA), LoadMemory
+- GetTimeline, GetStatus, GetCausalChain, Archive
+- `ports`: Repository and service interfaces
+
+**Interface Adapters** — implements ports
+- `storage`: SQLiteRepository
+- `vector`: HNSWStore, SQLiteVectorStore, overlap cache
+- `extraction`: NativeExtractor, CybertronEmbedder
+- `webhook`, `metrics`
+
+**Frameworks & Drivers** — external technical details
+- SQLite3, HNSW lib, Cybertron, MCP Server
 
 ### Project Structure
 
 ```
 mira/
-├── cmd/mira/              # Entry point
+├── cmd/mira/              # Entry point (cobra CLI)
+│   └── main.go            # Subcommands: server, migrate, doctor, query, export, import
 ├── internal/
-│   ├── domain/            # Domain Layer
+│   ├── domain/
 │   │   ├── entities/      # Business entities
 │   │   └── valueobjects/  # Value objects
-│   ├── usecases/          # Use Cases Layer
+│   ├── usecases/
 │   │   ├── ports/         # Interfaces (Repository, Services)
 │   │   └── interactors/   # Use case implementations
-│   ├── adapters/          # Adapters Layer
+│   ├── adapters/
 │   │   ├── storage/       # SQLite repository
 │   │   ├── vector/        # HNSW, SQLite vector store, overlap cache
 │   │   ├── extraction/    # NLP, embeddings
 │   │   ├── logging/       # Structured logging
 │   │   ├── webhook/       # HTTP notifications
 │   │   └── metrics/       # Prometheus metrics
-│   ├── interfaces/        # Interfaces Layer
-│   │   └── mcp/           # MCP controller
-│   ├── config/            # Configuration
-│   └── app/               # Composition root (DI)
-│       ├── main.go        # Dependency injection
-│       ├── health.go      # Health checks
-│       ├── health_test.go # Health check tests
-│       └── main_test.go   # Application tests
-├── docs/                  # Documentation
-│   ├── INDEX.md           # Documentation entry point
-│   ├── ARCHITECTURE.md    # Technical deep-dive
-│   ├── FEATURES.md        # Complete feature catalog
-│   └── API_REFERENCES.md  # API reference
-├── SKILL.md               # Agent skill and memory loop guidelines
-├── config.example.yaml    # Example configuration
-└── README.md              # This file
+│   ├── interfaces/
+│   │   ├── mcp/           # MCP controller (stdio / SSE)
+│   │   └── rest/          # Optional REST HTTP API (:8080)
+│   ├── config/
+│   └── app/               # Composition root (dependency injection)
+├── docs/
+│   ├── INDEX.md
+│   ├── ARCHITECTURE.md
+│   ├── FEATURES.md
+│   └── API_REFERENCES.md
+├── SKILL.md
+├── config.example.yaml
+└── README.md
 ```
 
 ---
@@ -890,75 +822,29 @@ mira/
 ### Testing
 
 ```bash
-# Unit tests
-go test -v ./...
-
-# With race detector
-go test -race ./...
-
-# Benchmarks
-go test -bench=. -benchmem ./...
-
-# Coverage
-go test -cover ./...
+go test -v ./...            # Unit tests
+go test -race ./...         # With race detector
+go test -bench=. -benchmem ./...  # Benchmarks
+go test -cover ./...        # Coverage
 ```
 
 ### Make Commands
 
 ```bash
-make build       # Build
-make test        # Tests (with race detector)
-make test-short  # Quick tests
-make bench       # Benchmarks
-make bench-full  # Full benchmarks
-make run         # Build and run with config.yaml
-make clean       # Clean build artifacts and data
-make lint        # Run linters
-make fmt         # Format code
-make install     # Install to GOPATH/bin
+make build        # Build
+make test         # Tests (with race detector)
+make test-short   # Quick tests
+make bench        # Benchmarks
+make bench-full   # Full benchmarks
+make run          # Build and run with config.yaml
+make clean        # Clean build artifacts and data
+make lint         # Run linters
+make fmt          # Format code
+make install      # Install to GOPATH/bin
 make prepublish VERSION=x.y.z  # Prepare a release
 ```
 
 ## Changelog
-
-### v0.4.7 (2026-04-30)
-
-- **SSE Transport**: MCP server now supports `transport: sse` for Server-Sent Events over HTTP.
-- **Multi-turn Memory Injection**: `mira_recall` accepts `session_id` for cross-turn memory boosting.
-- **Dynamic Budget Adjustment**: Recall budget scales ±20% based on query token count.
-- **Diversity Boost**: CBA greedy selection favors candidates with new subjects.
-- **Exact Deduplication**: `SearchExact` prevents storing identical verbatims twice.
-- **T0/T1 Validation**: Soft coherence checks with `validation_alerts` in fingerprint data.
-- **Negation Detection**: EN/FR patterns set `negated=true` on fingerprints.
-- **Causal Graph Semantics**: Relations require shared subjects/entities.
-- **Health Check Tool**: New `mira_health` MCP tool.
-- **Graceful Shutdown**: 5s timeout with SSE server shutdown.
-- **Metrics Enrichment**: Counters for store facts and recall selected.
-
-### v0.4.6 (2026-04-24)
-
-- 🚀 Maintenance release
-
-### v0.4.5 (2026-04-24)
-
-- **Unified SOUL configuration**: Configure all SOUL settings directly inside MIRA's `config.yaml` — no separate process or config file needed for embedded mode. Supports drift threshold, recall budget, extraction confidence, model-swap reinforcement, and evolution history tuning.
-- Uses new `soul.NewApplicationWithDBAndConfig` API for seamless config passthrough.
-
-### v0.4.4 (2026-04-23)
-
-- **SOUL opt-in integration**: MIRA now runs standalone (8 tools) by default. SOUL identity extension must be explicitly enabled via `--with-soul` CLI flag or `soul.enabled: true` in config.
-- SOUL init failures are non-fatal — MIRA gracefully falls back to 8-tool mode.
-
-### v0.4.3 (2026-04-23)
-
-- **Fixed SOUL MCP parameter names**: `agent` → `agent_id`, `model` → `model_id`, `from` → `from_model`, `to` → `to_model`.
-
-### v0.4.2 (2026-04-17)
-
-- **HNSW tuned defaults**: `M` 16 → 32, `ef_search` 50 → 100 for better recall.
-- **Concurrent embedding pool**: Replaced global mutex with model instance pool.
-- **Parallel recall pipeline**: Dense HNSW + lexical FTS5 now execute concurrently.
-- `ef_construction` documented as inactive (not supported by underlying library).
 
 See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
@@ -968,24 +854,24 @@ See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
 ### Key Libraries
 
-- [tiktoken-go](https://github.com/pkoukk/tiktoken-go) - OpenAI tokenization
-- Native Go implementation - Rule-based NLP/NER (replaces archived prose)
-- [cybertron](https://github.com/nlpodyssey/cybertron) - Transformer embeddings
-- [hnsw](https://github.com/coder/hnsw) - HNSW graphs
-- [mcp-go](https://github.com/mark3labs/mcp-go) - MCP protocol
+- [tiktoken-go](https://github.com/pkoukk/tiktoken-go) — OpenAI tokenization
+- Native Go implementation — rule-based NLP/NER
+- [cybertron](https://github.com/nlpodyssey/cybertron) — Transformer embeddings
+- [hnsw](https://github.com/coder/hnsw) — HNSW graphs
+- [mcp-go](https://github.com/mark3labs/mcp-go) — MCP protocol
 
 ### Embedding Model
 
 - **Model:** sentence-transformers/all-MiniLM-L6-v2
 - **Dimensions:** 384
-- **Size:** ~80MB
+- **Size:** ~80 MB
 - **Performance:** ~1000 texts/sec on CPU
 
 ---
 
 <div align="center">
 
-**MIRA** - _Memory with Information-theoretic Relevance Allocation_
+**MIRA** — _Memory with Information-theoretic Relevance Allocation_
 
 _"Memory is the sap of artificial intelligence."_
 
