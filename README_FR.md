@@ -1,36 +1,315 @@
-# MIRA - Memory with Information-theoretic Relevance Allocation
+<div align="center">
+  <img src="./logo.png" alt="MIRA Logo" width="800">
 
-**Version:** 0.1.0 | **Langage:** Go 1.21+ | **License:** MIT
+  # MIRA
+  ### Memory with Information-theoretic Relevance Allocation
 
-Système de mémoire longue durée pour LLM avec allocation optimale de budget contextuel, garanties d'approximation et cohérence temporelle. 100% local, déterministe, O(n log n).
+  **Système de Mémoire Long-Terme pour LLMs avec Allocation Optimale de Budget Contextuel**
+
+  [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
+  [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
+  [![Version](https://img.shields.io/badge/Version-0.4.7-blue?style=flat-square)]()
+  [![Tests](https://img.shields.io/badge/Tests-~70%25-yellow?style=flat-square)]()
+
+  *100% Local • Déterministe (variance embedding < 1e-6) • Clean Architecture*
+
+  [Référence API](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [English](README.md) • [Extension SOUL](https://github.com/benoitpetit/soul)
+
+</div>
 
 ---
 
-## Table des Matières
+## Table des matières
 
-1. [Installation](#installation)
-2. [Architecture Système](#architecture-système)
-3. [Modèle de Données](#modèle-de-données)
-4. [Mathématiques du Scoring](#mathématiques-du-scoring)
-5. [Pipeline d'Extraction](#pipeline-dextraction)
-6. [Algorithme d'Allocation](#algorithme-dallocation)
-7. [Graphe Causal](#graphe-causal)
-8. [Performance & Complexité](#performance--complexité)
-9. [Configuration](#configuration)
-10. [API MCP](#api-mcp)
-11. [Développement](#développement)
+- [Qu'est-ce que MIRA ?](#quest-ce-que-mira-)
+- [Fonctionnement](#fonctionnement)
+- [Architecture à 3 niveaux (T0/T1/T2)](#architecture-à-3-niveaux-t0t1t2)
+- [L'algorithme CBA](#lalgorithme-cba)
+- [Pipeline de recall amélioré](#pipeline-de-recall-amélioré)
+- [Graphe causal](#graphe-causal)
+- [Installation](#installation)
+- [Démarrage rapide](#démarrage-rapide)
+- [Configuration](#configuration)
+- [API MCP](#api-mcp)
+- [API REST](#api-rest)
+- [Performance](#performance)
+- [Architecture technique](#architecture-technique)
+- [Développement](#développement)
+- [Changelog](#changelog)
+
+---
+
+## Qu'est-ce que MIRA ?
+
+**MIRA** est un système de mémoire long-terme conçu pour les **Large Language Models**. Au lieu d'une simple récupération par similarité, MIRA résout un problème d'optimisation : maximiser l'information utile dans un budget de tokens fixe.
+
+Chaque mémoire est stockée sous trois formes — texte complet (T0), faits structurés (T1) et embedding 384 dimensions (T2) — permettant un rendu adaptatif selon le budget disponible.
+
+**Les approches traditionnelles sont insuffisantes :**
+
+- Le RAG simple récupère par similarité et ignore la densité d'information
+- La fenêtre glissante perd les informations critiques du début
+- Le résumé statique ne s'adapte pas à la requête courante
+- La Vector DB basique a une complexité O(n) sans gestion de budget
+
+**MIRA apporte :**
+
+- **Allocation de Budget Contextuel (CBA)** — maximise l'information sur 6 dimensions de scoring
+- **Triple représentation (T0/T1/T2)** — rendu adaptatif du texte complet jusqu'à un en-tête de 5 tokens
+- **Recherche hybride** — HNSW O(log n) + SQLite FTS5, fusionné avec Reciprocal Rank Fusion
+- **Graphe causal** — détection automatique des relations cause-effet entre les mémoires
+- **Clean architecture** — hexagonale, testée, extensible
+
+> **Besoin de persistance d'identité ?** L'extension optionnelle [SOUL](https://github.com/benoitpetit/soul) ajoute 8 outils MCP pour capturer et rappeler la personnalité d'un agent à travers les changements de modèle — activée par un simple flag `--with-soul`.
+
+---
+
+## Fonctionnement
+
+### Stockage
+
+```
+Texte input  →  Extraction T1/T2  →  SQLite (T0 + T1) + Index HNSW (T2)
+```
+
+À la sauvegarde d'une mémoire, l'extracteur natif produit :
+
+- **T1** — un fingerprint JSON structuré (~15% des tokens d'origine)
+- **T2** — un embedding 384 dimensions pour la recherche sémantique
+
+Les deux sont dérivés atomiquement et stockés aux côtés du verbatim original (T0).
+
+### Recall
+
+```
+Requête  →  Embed  →  HNSW top-100 (+ FTS5)  →  Fusion RRF  →  Scoring CBA  →  Sélection gloutonne
+```
+
+L'algorithme CBA sélectionne les mémoires de façon gloutonne dans un budget de tokens, ajustant le mode de rendu de chaque mémoire (Verbatim / Fingerprint / Header) selon les tokens restants.
+
+### Score composite CBA
+
+**S(m) = ρ × δ × η × (1−σ) × τ × χ × 𝟙[ρ>θ]**
+
+| Symbole | Dimension | Formule |
+|---------|-----------|---------|
+| ρ | Pertinence sémantique | cos(embedding_m, requête) |
+| δ | Densité informationnelle | sigmoïde(faits / √tokens) |
+| η | Poids temporel | exp(−λ × âge) |
+| σ | Chevauchement max | similarité max avec mémoires déjà sélectionnées |
+| τ | Boost session | +20% si dans la même fenêtre de 2h |
+| χ | Pénalité causale | exp(−0.15 × liens causaux vers la sélection) |
+| 𝟙[ρ>θ] | Seuil | exclure si ρ < 0.6 |
+
+---
+
+## Architecture à 3 niveaux (T0/T1/T2)
+
+Le cerveau humain n'enregistre pas tout avec la même fidélité. MIRA imite cette hiérarchie.
+
+### T0 — Verbatim (Mémoire épisodique)
+
+Le texte original complet, stocké en UTF-8 (max 64 Ko). Utilisé quand le budget permet un contexte riche.
+
+- **Stockage :** texte UTF-8 complet
+- **Coût :** ~200 tokens
+
+### T1 — Fingerprint (Mémoire sémantique)
+
+Un JSON canonique structuré avec les faits, entités, décisions et relations extraits.
+
+```json
+{
+  "type": "decision",
+  "decision": "Migration vers PostgreSQL",
+  "rejected": ["MySQL", "MongoDB"],
+  "reason": ["robustesse ACID", "expertise équipe"],
+  "assignee": "Jean",
+  "deadline": "Sprint 5",
+  "validated_by": "Sophie (PO)"
+}
+```
+
+- **Stockage :** JSON canonique
+- **Coût :** ~30 tokens (15% de T0)
+
+### T2 — Embedding (Index de recherche)
+
+Un vecteur float32 de 384 dimensions utilisé exclusivement pour la recherche HNSW. Jamais rendu dans le contexte.
+
+- **Stockage :** float32[384]
+- **Coût :** 0 token (recherche uniquement)
+
+### Types de mémoire et décroissance
+
+| Type | λ (jour⁻¹) | Demi-vie | Auto-archive | Usage |
+|------|-----------|----------|--------------|-------|
+| `decision` | 0.001 | ~693 jours | Non | Décisions architecturales |
+| `fact` | 0.005 | ~139 jours | Non | Connaissances, faits |
+| `preference` | 0.01 | ~69 jours | Non | Préférences utilisateur |
+| `session_note` | 0.1 | ~7 jours | 30 jours | Notes de session |
+| `debug_log` | 0.5 | ~1.4 jours | 7 jours | Logs de debug |
+
+---
+
+## L'algorithme CBA
+
+### Algorithme (O(n²))
+
+```
+ENTRÉE :  Requête q, Budget B (tokens), Wing w, Room r
+SORTIE :  Liste de mémoires avec mode de rendu
+
+1. EMBEDDING
+   e_q ← Embed(q)  — avec cache LRU (1000 entrées)
+
+2. RECHERCHE VECTORIELLE
+   C ← HNSW_Search(e_q, N=100, w, r)           // O(log n)
+   Si HNSW non prêt : C ← SQLite_Search(...)    // Fallback
+
+3. ÉLAGAGE PRÉCOCE
+   C' ← { c ∈ C : ρ(c,q) > 0.6 }
+   Si C' = ∅ : C' ← top-5(C) par ρ
+
+4. SCORING INITIAL
+   Pour chaque c ∈ C' :
+      c.score ← ρ(c) × δ_sigmoïde(c) × η_récence(c)
+
+5. SÉLECTION GLOUTONNE avec renormalisation dynamique
+   S ← ∅, utilisé ← 0
+   PQ ← MaxHeap(C')
+
+   Tant que PQ ≠ ∅ et utilisé < B :
+      c ← Pop(PQ)
+      c.σ ← max_{s∈S} sim(c, s)
+      c.χ ← exp(−0.15 × |liens_causaux(c, S)|)
+      c.τ ← 1.2 si |temps(c) − temps(S)| < 2h sinon 1.0
+      ajusté ← c.score × (1−c.σ) × c.χ × c.τ
+
+      Si PQ[0].score × 0.8 > ajusté :
+         Push(PQ, c) avec score ajusté ; continuer
+
+      mode ← ChoisirMode(c, B − utilisé)
+      coût ← Coût(c, mode)
+      Si utilisé + coût > B : Dégrader(mode) ; Recalculer ; ignorer si toujours dépassé
+
+      S ← S ∪ {c}, utilisé ← utilisé + coût
+
+6. RETOURNER S trié par score décroissant
+```
+
+### Modes de rendu adaptatif
+
+| Budget restant | Mode | Tokens | Contenu |
+|---------------|------|--------|---------|
+| < 100 | Header | 2–5 | `[type\|date\|wing]` |
+| < 1000 | Fingerprint | ~15% | Faits essentiels T1 |
+| ≥ 1000 | Verbatim | 100% | Texte complet T0 |
+
+---
+
+## Pipeline de recall amélioré
+
+```
+Requête → Expansion → Dense (HNSW) + Lexical (FTS5) → Fusion RRF → Clustering → Boost Tags → Seuil Adaptatif → Sélection Gloutonne CBA
+```
+
+### 1. Expansion de requête
+
+MIRA génère des variantes sémantiquement proches de la requête (nettoyée, sans mots vides, mots-clés principaux) et **moyenne leurs embeddings**. Cela améliore la récupération cross-lingue et la robustesse aux variations de vocabulaire.
+
+### 2. Recherche hybride (Dense + Lexicale)
+
+- **Dense :** recherche vectorielle HNSW en O(log n)
+- **Lexicale :** recherche full-text SQLite FTS5 (auto-activée si disponible)
+- **Fusion :** Reciprocal Rank Fusion (`k=60`) fusionne les deux classements
+
+### 3. Clustering à la recherche
+
+Les candidats sont regroupés par cosine similarity ≥ 0.88. Les quasi-doublons sont fusionnés vers leur meilleur représentant, évitant de gaspiller le budget sur des mémoires redondantes.
+
+### 4. Récupération par tags
+
+La table `memory_tags` indexe les entités, sujets et mots-clés extraits. Les candidats correspondant aux tags de la requête reçoivent un petit boost de pertinence additif.
+
+### 5. Seuil adaptatif
+
+Au lieu d'un seuil fixe à 0.6, MIRA supporte trois méthodes dynamiques :
+
+| Méthode | Description | Défaut |
+|---------|-------------|--------|
+| `iqr` | Premier quartile de la distribution des scores | Oui |
+| `elbow` | Plus forte chute de dérivée | |
+| `mean_stddev` | moyenne − écart-type | |
+
+Le seuil est borné entre 0.15 (plancher) et 0.75 (plafond).
+
+### 6. Reranker heuristique (optionnel)
+
+Un reranker léger 100% Go combine signaux sémantiques et lexicaux :
+
+- Chevauchement lexical de type Jaccard
+- Bonus de présence de phrase exacte
+- Préférence d'équilibre de longueur
+
+Mélange : `0.7 × sémantique + 0.3 × rerank`
+
+### 7. Vector Store de fallback
+
+Si HNSW n'est pas encore prêt (ex. reconstruction depuis zéro), un wrapper transparent redirige automatiquement vers le vector store SQLite. Le recall ne tombe jamais en panne.
+
+---
+
+## Graphe causal
+
+### Relations supportées
+
+| Relation | Signification | Déclenchée par |
+|----------|--------------|----------------|
+| `BECAUSE` | B explique pourquoi A | "because", "since", "due to" |
+| `TRIGGERED` | B a déclenché A | "following", "after", "in response to" |
+| `CONTRADICTS` | A et B sont incompatibles | "contradicts", "however" |
+| `UPDATES` | B remplace A | "updates", "replaces" |
+| `RESOLVES` | B résout le problème A | "resolves", "solves", "fixes" |
+
+### Détection automatique
+
+```go
+causalPatterns := map[RelationType]*regexp.Regexp{
+    RelTriggered:   regexp.MustCompile(`(?i)(?:following|after|in response to)`),
+    RelBecause:     regexp.MustCompile(`(?i)(?:because|since|due to|in reason of)`),
+    RelContradicts: regexp.MustCompile(`(?i)(?:contradicts|in contradiction|however)`),
+    RelUpdates:     regexp.MustCompile(`(?i)(?:updates|replaces)`),
+    RelResolves:    regexp.MustCompile(`(?i)(?:resolves|solves|fixes)`),
+}
+```
 
 ---
 
 ## Installation
 
-### Depuis les sources (Go 1.21+)
+### Prérequis
+
+- Go 1.23+ (si compilation depuis les sources)
+- SQLite3 (inclus)
+- ~100 Mo d'espace disque pour le modèle d'embedding
+
+### Depuis les sources
+
+```bash
+git clone https://github.com/benoitpetit/mira.git
+cd mira
+go build -o mira ./cmd/mira
+./mira --version
+```
+
+### Via Go Install
 
 ```bash
 go install github.com/benoitpetit/mira/cmd/mira@latest
 ```
 
-### Depuis les releases binaires
+### Releases binaires
 
 Téléchargez les binaires pré-compilés depuis la page [Releases](https://github.com/benoitpetit/mira/releases) :
 
@@ -45,713 +324,557 @@ unzip mira-windows-amd64.zip
 .\mira.exe --version
 ```
 
-### Démarrage rapide
+---
+
+## Démarrage rapide
+
+### 1. Initialisation
 
 ```bash
-# 1. Copier et éditer la configuration
 cp config.example.yaml config.yaml
-# Éditer config.yaml selon votre environnement
-
-# 2. Lancer le serveur MCP
-mira
+nano config.yaml
 ```
 
----
+### 2. Démarrer le serveur MCP
 
-## Architecture Système
+```bash
+# Mode stdio — pour Claude Desktop, Cursor, etc.
+./mira server
 
-### Vue d'Ensemble
+# Avec un fichier de config personnalisé
+./mira --config ./config.yaml server
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                              MCP Server                                 │
-│  ┌──────────┐ ┌───────────┐ ┌──────────┐ ┌─────────────────────────┐    │
-│  │mira_store│ │mira_recall│ │mira_load │ │   mira_causal_chain     │    │
-│  └────┬─────┘ └─────┬──────┘└───┬──────┘ └────────────┬────────────┘    │
-│       └─────────────┴───────────┴─────────────────────┘                 │
-│                                 │                                       │
-└─────────────────────────────────┼───────────────────────────────────────┘
-                                  │
-                    ┌─────────────┴───────┐
-                    │  Budget Allocator   │
-                    │   (CBA Algorithm)   │
-                    │   O(n log n)        │
-                    └──────────┬──────────┘
-                               │
-        ┌──────────────────────┼────────────────────┐
-        │                      │                    │
-   ┌────┴────┐           ┌─────┴──────┐        ┌────┴──────┐
-   │ Extract │           │   Store    │        │  Causal   │
-   │ Pipeline│           │  (SQLite)  │        │   Graph   │
-   │T0→T1,T2 │           │            │        │   (BFS)   │
-   └────┬────┘           └────────────┘        └───────────┘
-        │
-   ┌────┴────────────────────────┐
-   │  NLP Stack                  │
-   │  • tiktoken (tokenization)  │
-   │  • prose (NER/entities)     │
-   │  • cybertron (embeddings)   │
-   └─────────────────────────────┘
+# Avec un chemin de stockage personnalisé (aussi : MIRA_DATA_PATH)
+./mira --storage-path /data/mira server
+
+# Modes de transport MCP : stdio (défaut), sse
+./mira server --transport sse --mcp-addr localhost:3001
+
+# Activer l'API REST optionnelle
+./mira server --with-api --api-addr :8080 --api-token mon-secret
+
+# Activer l'extension SOUL
+./mira server --with-soul
+
+# Métriques Prometheus (défaut : :9090)
+./mira server --prometheus-addr :9091
+
+# Désactiver les métriques Prometheus
+./mira server --no-metrics
+
+# Extraction via Ollama (nécessite une instance Ollama en cours)
+./mira server --with-llm --llm-endpoint http://localhost:11434
 ```
 
-### Flux de Données
+### 3. Commandes utilitaires
 
-```
-┌─────────┐  Extraction   ┌─────────────┐  Stockage   ┌──────────┐
-│  Input  │ ─────────────→│  Triple T   │ ───────────→│  SQLite  │
-│  Texte  │   T0→T1→T2    │  (3 niveaux)│  WAL Mode   │  + WAL   │
-└─────────┘               └─────────────┘             └──────────┘
-                                   │                         │
-                                   │ Requête                 │
-                                   ↓                         ↓
-┌─────────┐  Scoring       ┌─────────────┐  Allocation ┌──────────┐
-│Requête  │ ←───────────── │  CBA Score  │ ←───────────│  Budget  │
-│Vecteur  │   ρ×δ×η×τ×σ×χ  │  Composite  │  Greedy     │  4000tk  │
-└─────────┘                └─────────────┘             └──────────┘
-```
+```bash
+# Migrations de base de données
+./mira migrate
 
----
+# Santé du système (lisible ou JSON)
+./mira doctor
+./mira doctor --json
 
-## Modèle de Données
+# Statut système (pour scripting/monitoring)
+./mira status
+./mira status --json
 
-### Espace de Représentation
+# Requête one-shot depuis le CLI
+./mira query --query "Pourquoi avons-nous choisi PostgreSQL ?" --wing backend-team
+./mira query -q "décisions API" --json
 
-Chaque mémoire `m ∈ ℳ` est un tuple:
+# Stocker une mémoire depuis le CLI
+./mira store --content "PostgreSQL choisi pour la DB primaire" --wing backend-team --type decision
 
-```
-m = (id, t₀, t₁, t₂, c, τ, ω, γ, δ, ν)
-```
+# Supprimer une mémoire par UUID
+./mira delete 5a159ddf-bc11-46a6-8a0d-f39f25853cb4
 
-| Champ | Type                  | Description                         |
-| ----- | --------------------- | ----------------------------------- |
-| `id`  | UUIDv4 (128 bits)     | Identifiant unique                  |
-| `t₀`  | Σ\* (UTF-8, max 64KB) | Verbatim - texte original           |
-| `t₁`  | JSON canonique        | Fingerprint structuré               |
-| `t₂`  | ℝ³⁸⁴                  | Embedding vector (all-MiniLM-L6-v2) |
-| `c`   | ℕ                     | Token count (tiktoken cl100k_base)  |
-| `τ`   | ℝ⁺                    | Timestamp UNIX (secondes)           |
-| `ω`   | Ω                     | Type de mémoire (enum)              |
-| `γ`   | Γ                     | Graphe causal (nœud + arêtes)       |
-| `δ`   | ℝ⁺                    | Decay rate λ_ω selon le type        |
-| `ν`   | {0,1}³²               | Hash du modèle d'embedding          |
+# Exporter les mémoires en JSON
+./mira export --wing backend-team --output memories.json
 
-### Types de Mémoire et Decay Rates
+# Importer des mémoires depuis JSON (avec aperçu dry-run)
+./mira import --file memories.json
+./mira import --file memories.json --dry-run
 
-| Type ω         | λ_ω (jour⁻¹) | Demi-vie  | Archive auto | Usage                     |
-| -------------- | ------------ | --------- | ------------ | ------------------------- |
-| `decision`     | 0.001        | 693 jours | Non          | Décisions architecturales |
-| `fact`         | 0.005        | 139 jours | Non          | Faits, connaissances      |
-| `preference`   | 0.01         | 69 jours  | Non          | Préférences utilisateur   |
-| `session_note` | 0.1          | 7 jours   | 30 jours     | Notes de session          |
-| `debug_log`    | 0.5          | 1.4 jours | 7 jours      | Logs de debug             |
-
-### Schéma SQL (SQLite)
-
-```sql
--- Métadonnées des modèles (versioning embeddings)
-CREATE TABLE embedding_models (
-    model_hash TEXT PRIMARY KEY,  -- SHA256 truncated
-    model_name TEXT NOT NULL,     -- "all-MiniLM-L6-v2"
-    dimension INTEGER NOT NULL,
-    created_at REAL NOT NULL,
-    metadata BLOB                 -- JSON config
-);
-
--- T0: Verbatim Store (append-only, WAL mode)
-CREATE TABLE verbatim (
-    id BLOB PRIMARY KEY,          -- 16 bytes UUID
-    content TEXT NOT NULL,        -- UTF-8, max 64KB
-    token_count INTEGER NOT NULL, -- tiktoken cl100k_base
-    created_at REAL NOT NULL,     -- UNIX timestamp
-    wing TEXT NOT NULL,           -- namespace/project
-    room TEXT,                    -- sous-catégorie
-    metadata BLOB                 -- msgpack compressé
-);
-
--- T1: Fingerprint Index (JSON canonique)
-CREATE TABLE fingerprints (
-    id BLOB PRIMARY KEY,
-    verbatim_id BLOB NOT NULL REFERENCES verbatim(id),
-    ftype TEXT NOT NULL,          -- decision|fact|preference|...
-    extracted_at REAL NOT NULL,
-    entities TEXT,                -- JSON array
-    subjects TEXT,                -- JSON array
-    decision TEXT,
-    related_to TEXT,              -- JSON array d'IDs
-    data BLOB NOT NULL,           -- JSON minifié
-    fact_count INTEGER DEFAULT 0,
-    token_estimate INTEGER DEFAULT 0,
-    model_hash TEXT
-);
-
--- T2: Vector Index avec versioning
-CREATE TABLE embeddings (
-    id BLOB PRIMARY KEY,
-    model_hash TEXT NOT NULL,
-    dim INTEGER NOT NULL,         -- 384
-    vector BLOB NOT NULL,         -- 384 * 4 = 1536 bytes
-    normalized BOOLEAN DEFAULT 1,
-    created_at REAL NOT NULL
-);
-
--- Causal Graph (DAG)
-CREATE TABLE causal_nodes (
-    id BLOB PRIMARY KEY,
-    node_type TEXT NOT NULL,
-    summary TEXT NOT NULL,
-    timestamp REAL NOT NULL,
-    wing TEXT NOT NULL,
-    room TEXT
-);
-
-CREATE TABLE causal_edges (
-    from_id BLOB NOT NULL,
-    to_id BLOB NOT NULL,
-    relation TEXT NOT NULL,       -- BECAUSE|TRIGGERED|CONTRADICTS|UPDATES|RESOLVES
-    weight REAL DEFAULT 1.0,
-    detected_at REAL NOT NULL,
-    PRIMARY KEY (from_id, to_id, relation)
-);
-
--- Cache d'overlap avec TTL (30 jours)
-CREATE TABLE overlap_cache (
-    id_a BLOB NOT NULL,
-    id_b BLOB NOT NULL,
-    similarity REAL NOT NULL,
-    computed_at REAL NOT NULL,
-    ttl REAL NOT NULL DEFAULT (unixepoch() + 2592000),
-    PRIMARY KEY (id_a, id_b)
-);
+# Validation et inspection de la configuration
+./mira config validate
+./mira config show
+./mira config show --json
 ```
 
----
+### 4. Utiliser les outils MCP
 
-## Mathématiques du Scoring
-
-### Fonction de Score Composite
-
-Pour une requête `q` avec embedding `e_q ∈ ℝ³⁸⁴`, le score d'un candidat `m` étant donné l'ensemble déjà sélectionné `S`:
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                                                                         │
-│   S(m|q,S,θ) = ρ(m,q) × δ_sig(m) × η(m) × τ_session(m,S)                │
-│                × (1 - max_s∈S σ(m,s)) × χ_penalty(m,S)                  │
-│                × 𝟙[ρ > θ_min]                                           │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-### 1. Pertinence Sémantique ρ
-
-```
-              e_m · e_q
-ρ(m,q) = ───────────────── ∈ [0, 1]
-          ‖e_m‖ ‖e_q‖
-
-Avec normalisation L2 préalable:
-ρ(m,q) = (1 + cosim(e_m, e_q)) / 2
-```
-
-**Early pruning:** Seuls les m avec `ρ > θ_min = 0.6` sont considérés.
-
-### 2. Densité Informationnelle δ_sig
-
-```
-               |facts(t₁(m))|
-δ_raw(m) = ─────────────────
-               √c(m)
-
-δ_sig(m) = 2/(1 + e^(-2(δ_raw - 0.3))) - 1 ∈ [0, 1]
-```
-
-Paramètres sigmoïde:
-
-- `μ = 0.3` : centre (5 facts/100 tokens = neutre)
-- `k = 2.0` : pente
-
-**Objectif:** Éviter la sur-valorisation des micro-mémoires.
-
-### 3. Poids Temporel (Recency) η
-
-```
-η(m) = exp(-λ_ω · (t_now - τ(m)))
-
-Où:
-- λ_ω : decay rate selon le type
-- t_now - τ(m) : âge en jours
-```
-
-### 4. Boost de Cohérence Temporelle τ_session
-
-```
-τ_session(m,S) = 1 + β · 𝟙[∃s ∈ S : |τ(m) - τ(s)| < θ_session]
-
-Paramètres:
-- β = 0.2 (20% boost)
-- θ_session = 7200s (2 heures)
-```
-
-**Objectif:** Favoriser la cohérence narrative dans une session.
-
-### 5. Pénalité d'Overlap σ
-
-```
-              e_m · e_s
-σ(m,s) = ───────────────── ∈ [-1, 1]
-          ‖e_m‖ ‖e_s‖
-
-Pénalité appliquée: (1 - max_s∈S σ(m,s))
-```
-
-### 6. Pénalité Causale χ_penalty
-
-```
-χ_penalty(m,S) = exp(-α · |{s ∈ S : causal_link(s,m)}|)
-
-Paramètre:
-- α = 0.15
-
-Objectif: Éviter la sur-sélection de chaînes causales longues.
-```
-
----
-
-## Pipeline d'Extraction
-
-### T0 → T1: Extraction Structurée
-
-```go
-// Patterns regex UTF-8 aware
-var decisionPatterns = []*regexp.Regexp{
-    regexp.MustCompile(`(?i)([\p{L}\p{N}]+)\s+a\s+(?:décidé|choisi|sélectionné)...`),
-    regexp.MustCompile(`(?i)(?:décision|choice)\s*:\s*(.+?)(?:\.|\n|$)`),
-    regexp.MustCompile(`(?i)on\s+(?:va|vais|allons)\s+(?:utiliser|prendre|adopter)...`),
-}
-
-// Extraction NER avec prose
-entities := extractEntities(doc)  // PERSON, ORG, GPE
-
-// Détection type avec priorité stricte
-if matchDecision(content) → TypeDecision
-else if matchPreference(content) → TypePreference
-else if matchFact(content) → TypeFact
-else → TypeSessionNote
-```
-
-### Structure T1 (Fingerprint)
+#### Stocker une mémoire
 
 ```json
 {
-  "id": "uuid",
-  "type": "decision|fact|preference|session_note|debug_log",
-  "date": "2026-04-08T09:18:01Z",
-  "entities": ["PostgreSQL", "API", "Auth"],
-  "subject": ["database-migration"],
-  "decision": "Use PostgreSQL",
-  "rejected": ["MySQL", "MongoDB"],
-  "reason": ["Better ACID", "Team expertise"],
-  "validated_by": "CTO",
-  "assignee": "John",
-  "deadline": "Sprint 5",
-  "causal_parent": null,
-  "verbatim_ref": "T0:uuid"
+  "tool": "mira_store",
+  "arguments": {
+    "content": "Nous avons décidé de migrer vers PostgreSQL pour la v2. Rejeté : MySQL (pas ACID), MongoDB (pas relationnel). Raison : ACID et expertise équipe. Validé par le CTO. Assigné à Jean.",
+    "wing": "backend-team",
+    "room": "database-migration"
+  }
 }
 ```
 
-### T0 → T2: Génération d'Embedding
+#### Récupérer du contexte
 
-```python
-# Modèle: sentence-transformers/all-MiniLM-L6-v2
-Dimension: 384
-Normalization: L2 préalable
-
-vector = model.encode(text)  # ℝ³⁸⁴
-vector = normalize_L2(vector)
+```json
+{
+  "tool": "mira_recall",
+  "arguments": {
+    "query": "Pourquoi avons-nous choisi PostgreSQL ?",
+    "budget": 2000,
+    "wing": "backend-team"
+  }
+}
 ```
 
----
-
-## Algorithme d'Allocation
-
-### Context Budget Allocator (CBA) v2
+**Réponse :**
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         CBA Algorithm                                   │
-│                         O(n log n)                                      │
-├─────────────────────────────────────────────────────────────────────────┤
-│  Input: query q, budget B, wing w, room r                               │
-│  Output: liste de mémoires sélectionnées avec mode de rendu             │
-├─────────────────────────────────────────────────────────────────────────┤
-│  1. Embedding avec cache LRU                                            │
-│     e_q ← Embed(q)                                                      │
-│                                                                         │
-│  2. Recherche vectorielle                                               │
-│     C ← VectorSearch(e_q, N=100, w, r)                                  │
-│                                                                         │
-│  3. Early Pruning                                                       │
-│     C' ← {c ∈ C : ρ(c,q) > 0.6}                                         │
-│     if C' = ∅: C' ← top-5(C)                                           │
-│                                                                         │
-│  4. Scoring initial                                                     │
-│     ∀c ∈ C':                                                            │
-│       c.score ← ρ(c) × δ_sig(c) × η(c)                                  │
-│                                                                         │
-│  5. Sélection Greedy avec renormalisation dynamique                     │
-│     S ← ∅, tokens_used ← 0                                             │
-│     PQ ← MaxHeap(C')  # par score initial                               │
-│                                                                         │
-│     while PQ ≠ ∅ AND tokens_used < B:                                  │
-│       c ← Pop(PQ)                                                       │
-│                                                                         │
-│       # Recalcul dynamique                                              │
-│       c.max_overlap ← max_{s∈S} σ(c,s)                                  │
-│       c.causal_penalty ← exp(-0.15 × |links(c,S)|)                      │
-│       c.session_boost ← 1.2 if |τ(c)-τ(S)| < 2h else 1.0                │
-│                                                                         │
-│       adjusted_score ← c.score × (1-c.max_overlap)                      │
-│                           × c.causal_penalty                            │
-│                           × c.session_boost                             │
-│                                                                         │
-│       # Vérifier si prochain a meilleur score                           │
-│       if PQ[0].score × 0.8 > adjusted_score:                            │
-│          Push(PQ, c) with adjusted_score                                │
-│          continue                                                       │
-│                                                                         │
-│       # Déterminer mode de rendu selon budget RESTANT                   │
-│       remaining ← B - tokens_used                                       │
-│       mode ← DetermineRenderMode(c, remaining)                          │
-│       cost ← CalculateTokenCost(c, mode)                                │
-│                                                                         │
-│       # Downgrade si nécessaire                                         │
-│       if tokens_used + cost > B:                                        │
-│          mode ← downgrade(mode)                                         │
-│          cost ← recalculate(mode)                                       │
-│          if tokens_used + cost > B: continue                            │
-│                                                                         │
-│       S ← S ∪ {c}, tokens_used ← tokens_used + cost                     │
-│                                                                         │
-│  6. Return S                                                            │
-└─────────────────────────────────────────────────────────────────────────┘
+=== MIRA CONTEXT ===
+Requête : Pourquoi avons-nous choisi PostgreSQL ? | Budget : 2000
+Wing : backend-team
+
+--- [1] FINGERPRINT (45 tokens) ---
+Décision : Migration vers PostgreSQL
+Rejeté : MySQL, MongoDB
+Raison : ACID, expertise équipe
+Validé par : CTO
+Assigné : Jean
+
+--- [2] VERBATIM (120 tokens) ---
+Nous avons décidé de migrer vers PostgreSQL pour la v2...
+
+=== Total : 165/2000 tokens (8.3%) ===
 ```
 
-### Modes de Rendu
+#### Chaîne causale
 
-Le mode dépend uniquement du **budget restant**, pas de l'overlap:
-
-| Budget Restant | Mode        | Tokens | Contenu             |
-| -------------- | ----------- | ------ | ------------------- | ---- | -------------- |
-| < 100          | Header      | 2-5    | `[type              | date | wing] → T0:id` |
-| < 1000         | Fingerprint | ~15%   | Faits essentiels T1 |
-| ≥ 1000         | Verbatim    | 100%   | Texte original T0   |
-
----
-
-## Graphe Causal
-
-### Relations Supportées
-
-| Relation      | Direction | Sémantique              |
-| ------------- | --------- | ----------------------- |
-| `BECAUSE`     | A ← B     | B explique A            |
-| `TRIGGERED`   | A ← B     | B a déclenché A         |
-| `CONTRADICTS` | A ↔ B     | A et B en contradiction |
-| `UPDATES`     | A ← B     | B remplace/actualise A  |
-| `RESOLVES`    | A ← B     | B résout le problème A  |
-
-### Détection de Relations Causales
-
-```
-Input: new_fp, recent_fps[50], verbatim_content
-Output: liste d'arêtes causales
-
-for each existing in recent_fps:
-    if time_diff > 30 days: continue
-
-    for each (relation, pattern) in causal_patterns:
-        if pattern.match(verbatim_content):
-            # Vérifier référence implicite
-            if hasOverlap(new_fp.entities, existing.entities) OR
-               hasOverlap(new_fp.subjects, existing.subjects) OR
-               content.contains(existing.id[:8]):
-
-               edge ← CausalEdge{
-                   from: existing.id,
-                   to: new_fp.id,
-                   relation: relation,
-                   weight: 0.7
-               }
-               edges.add(edge)
-```
-
-### Navigation BFS
-
-```go
-// GetChain: remonter les causes (parents)
-func (g *Graph) GetChain(nodeID UUID, maxDepth int) []*CausalNode
-
-// GetConsequences: descendre les effets (enfants)
-func (g *Graph) GetConsequences(nodeID UUID, maxDepth int) []*CausalNode
-```
-
----
-
-## Performance & Complexité
-
-### Complexités Algorithmiques
-
-| Opération             | Complexité | Notes                               |
-| --------------------- | ---------- | ----------------------------------- |
-| Stockage (T0→T1,T2)   | O(1)       | Amorti, insertion unique            |
-| Recherche vectorielle | O(n)       | SQLite linear scan (HNSW: O(log n)) |
-| Scoring               | O(n)       | n = nombre de candidats             |
-| Allocation Greedy     | O(n log n) | Max-heap operations                 |
-| BFS Graphe causal     | O(V + E)   | V=nœuds, E=arêtes                   |
-| Total Recall          | O(n log n) | Bottleneck: heap operations         |
-
-### Constantes de Performance
-
-| Paramètre         | Valeur         | Justification                |
-| ----------------- | -------------- | ---------------------------- |
-| `MaxCandidates`   | 100            | Early pruning inclus         |
-| `EmbeddingCache`  | 1000 entrées   | LRU pour query embeddings    |
-| `CausalLookback`  | 50 derniers FP | Fenêtre temporelle: 30 jours |
-| `OverlapCacheTTL` | 30 jours       | Éviter explosion O(n²)       |
-| `SessionWindow`   | 2 heures       | Cohérence conversationnelle  |
-
-### Benchmarks (estimés)
-
-```
-BenchmarkCosineSimilarity-384      50M ops/sec
-BenchmarkNormalizeL2-384           20M ops/sec
-BenchmarkAllocateWithCache-1000    ~5ms/query
-BenchmarkAllocateNoCache-1000      ~50ms/query
+```json
+{
+  "tool": "mira_causal_chain",
+  "arguments": {
+    "id": "uuid-de-la-decision",
+    "max_depth": 3,
+    "include_consequences": true
+  }
+}
 ```
 
 ---
 
 ## Configuration
 
-### Fichier de Configuration
-
-Copiez le fichier d'exemple :
-
-```bash
-cp config.example.yaml config.yaml
-```
-
-Puis modifiez `config.yaml` selon votre environnement.
+### config.yaml
 
 ```yaml
 system:
-  version: "0.1.0"
-  max_concurrent_queries: 10
+  version: "0.4.7"
 
 storage:
-  path: "./mira_data"
+  path: ".mira"
   sqlite:
-    journal_mode: WAL # Write-Ahead Logging
-    synchronous: NORMAL # Équilibre perf/sécurité
-    cache_size: -64000 # 64MB
-    mmap_size: 268435456 # 256MB
+    journal_mode: WAL
+    synchronous: NORMAL
+    cache_size: -64000
+    mmap_size: 268435456
     temp_store: MEMORY
 
 embeddings:
   current_model: "sentence-transformers/all-MiniLM-L6-v2"
-  model_hash: "a2d8f3e9" # SHA256 truncated
+  model_hash: "a2d8f3e9"
   dimension: 384
   batch_size: 32
-  cache_size: 1000 # LRU cache
+  cache_size: 1000
+
+hnsw:
+  M: 32
+  Ml: 0.25
+  ef_construction: 0   # inactif — non supporté par la librairie sous-jacente
+  ef_search: 100
 
 allocator:
-  default_budget: 4000 # tokens
+  default_budget: 4000
   max_candidates: 100
-  early_pruning_threshold: 0.6 # ρ_min
-  session_window_seconds: 7200 # 2h
-  session_boost_beta: 0.2 # 20%
+  early_pruning_threshold: 0.6
+  session_window_seconds: 7200
+  session_boost_beta: 0.2
+  session_boost_max: 1.2
   causal_penalty_alpha: 0.15
   density_sigmoid:
     k: 2.0
     mu: 0.3
 
 decay_rates:
-  decision: 0.001 # ~2 ans demi-vie
-  fact: 0.005 # ~5 mois
-  preference: 0.01 # ~2 mois
-  session_note: 0.1 # ~1 semaine
-  debug_log: 0.5 # ~1.4 jour
+  decision: 0.001
+  fact: 0.005
+  preference: 0.01
+  session_note: 0.1
+  debug_log: 0.5
 
 archive_thresholds:
-  session_note: 30 # jours
-  debug_log: 7 # jours
+  session_note: 30
+  debug_log: 7
+
+overlap_cache:
+  ttl_days: 30
+  max_entries: 1000000
 
 extraction:
-  max_verbatim_size: 65536 # 64KB
-  max_sentence_length: 500
   min_entity_length: 2
   causal_lookback: 50
   causal_max_days: 30
+
+recall:
+  adaptive_threshold_method: "iqr"
+  adaptive_threshold_floor: 0.15
+  adaptive_threshold_ceiling: 0.75
+  enable_fts5: true
+  fts5_limit: 100
+  rrf_k: 60
+  query_expansion:
+    enabled: true
+    num_variants: 3
+    temperature: 0.3
+  search_time_clustering:
+    enabled: true
+    similarity_threshold: 0.88
+  reranker:
+    enabled: false
+    top_k: 30
+
+# Extension d'identité SOUL (désactivée par défaut)
+soul:
+  enabled: false
+
+mcp:
+  name: "mira"
+  version: "0.4.7"
+  transport: "stdio"   # "stdio" pour Claude Desktop/Cursor, "sse" pour HTTP SSE
+  address: "localhost:3001"
+  timeout_seconds: 30
+
+# API REST HTTP optionnelle
+api:
+  enabled: false
+  address: ":8080"
+  auth_token: ""
+  read_timeout_seconds: 30
+  write_timeout_seconds: 30
+
+# Métriques Prometheus
+metrics:
+  enabled: true
+  prometheus_addr: ":9090"
+  report_interval_seconds: 60
+
+# Notifications webhook
+webhooks:
+  enabled: false
+  workers: 3
+  queue_size: 1000
+  timeout_seconds: 30
+  endpoints: []
 ```
 
 ---
 
 ## API MCP
 
-### Outils Disponibles
+### Outils disponibles
 
-#### `mira_store`
+| Outil | Description |
+|-------|-------------|
+| `mira_store` | Stocker une mémoire avec extraction T0/T1/T2 |
+| `mira_recall` | Récupérer le contexte optimal dans un budget de tokens |
+| `mira_load` | Charger le verbatim complet par UUID |
+| `mira_causal_chain` | Remonter la chaîne causale depuis une mémoire |
+| `mira_status` | Statistiques système et santé |
+| `mira_health` | Health check rapide (JSON) |
+| `mira_timeline` | Reconstruction chronologique des mémoires |
+| `mira_archive` | Archiver et nettoyer les vieilles mémoires |
+| `mira_clear_memory` | Suppression permanente (globale ou par room) |
 
-Stocke une mémoire avec extraction automatique T0→T1,T2.
+### Wings de secours (Fallback Wings)
 
-```json
-{
-  "content": "On a décidé d'utiliser PostgreSQL pour la DB",
-  "wing": "backend-service",
-  "room": "database-migration"
-}
-```
-
-**Réponse:**
-
-```
-Stored: 550e8400-e29b-41d4-a716-446655440000
-Type: decision
-Facts: 3
-Tokens: 42
-Model: a2d8f3e9
-```
-
-#### `mira_recall`
-
-Récupère contexte optimal avec budget.
+Quand un recall dans un wing principal ne retourne rien, `mira_recall` supporte des wings de secours séparés par des virgules :
 
 ```json
 {
-  "query": "Quelle base de données?",
-  "budget": 4000,
-  "wing": "backend-service"
+  "tool": "mira_recall",
+  "arguments": {
+    "query": "stratégie de migration base de données",
+    "budget": 2000,
+    "wing": "backend-team",
+    "fallback_wings": "platform-team,dba-team"
+  }
 }
 ```
 
-**Réponse:**
+### Recherche multilingue
 
-```
-=== MIRA CONTEXT ===
-Query: Quelle base de données? | Budget: 4000
-Wing: backend-service
-
---- [1] VERBATIM (42 tokens) ---
-On a décidé d'utiliser PostgreSQL pour la DB
-
-=== Total: 42/4000 tokens (1.1%) ===
-```
-
-#### `mira_causal_chain`
-
-Remonte chaîne causale.
+`mira_recall` accepte les requêtes dans n'importe quelle langue grâce aux embeddings cross-lingues. Lorsqu'une requête dans une langue cherche des mémoires dans une autre, MIRA élargit automatiquement la recherche avec des seuils relaxés.
 
 ```json
 {
-  "id": "550e8400...",
-  "max_depth": 5,
-  "include_consequences": true
+  "tool": "mira_recall",
+  "arguments": {
+    "query": "règles de langue français anglais",
+    "budget": 2000,
+    "wing": "general"
+  }
 }
 ```
 
-**Réponse:**
+Voir [API_REFERENCES.md](docs/API_REFERENCES.md) pour la référence complète.
+
+### Endpoints de health check
+
+Quand les métriques sont activées, MIRA expose des endpoints de santé :
+
+```bash
+curl http://localhost:9090/health        # Vérification complète (DB, Vector Store, Embedder)
+curl http://localhost:9090/health/live   # Liveness probe (Kubernetes)
+curl http://localhost:9090/health/ready  # Readiness probe (Kubernetes)
+curl http://localhost:9090/metrics       # Métriques Prometheus
+```
+
+---
+
+## API REST
+
+MIRA embarque une API REST HTTP optionnelle pour les scripts, tableaux de bord ou intégrations non-MCP. Désactivée par défaut.
+
+### Activation
+
+```bash
+# Via flag CLI
+./mira server --with-api --api-addr :8080 --api-token mon-secret
+
+# Via config.yaml
+api:
+  enabled: true
+  address: ":8080"
+  auth_token: "mon-secret"
+```
+
+### Authentification
+
+Quand `auth_token` est défini, chaque requête doit porter :
 
 ```
-=== CAUSAL CHAIN (Upstream) ===
- → [decision] Évaluer options DB (2026-04-01)
-  → [fact] Benchmark PostgreSQL vs MySQL (2026-03-28)
+Authorization: Bearer mon-secret
+```
 
-=== CONSEQUENCES (Downstream) ===
-→ [decision] Configurer connexion pool (2026-04-09)
+L'endpoint `/openapi.json` est toujours public.
+
+### Endpoints
+
+| Méthode | Chemin | Description |
+|---------|--------|-------------|
+| `POST` | `/api/v1/memories` | Stocker une mémoire |
+| `GET` | `/api/v1/memories/{id}` | Charger le verbatim complet par UUID |
+| `PUT` | `/api/v1/memories/{id}` | Mettre à jour le contenu |
+| `DELETE` | `/api/v1/memories/{id}` | Supprimer une mémoire |
+| `POST` | `/api/v1/memories/recall` | Recall de contexte (pipeline CBA complet) |
+| `POST` | `/api/v1/memories/search` | Recherche sémantique vectorielle |
+| `POST` | `/api/v1/memories/consolidate` | Consolider les mémoires redondantes |
+| `DELETE` | `/api/v1/memories` | Effacer les mémoires (global ou scopé) |
+| `GET` | `/api/v1/timeline` | Timeline chronologique |
+| `POST` | `/api/v1/archive` | Archiver les vieilles mémoires |
+| `GET` | `/api/v1/causal/{id}` | Chaîne causale d'une mémoire |
+| `GET` | `/api/v1/status` | Statut système (JSON) |
+| `GET` | `/openapi.json` | Spécification OpenAPI 3.1 |
+
+### Exemples rapides
+
+```bash
+# Stocker une mémoire
+curl -s -X POST http://localhost:8080/api/v1/memories \
+  -H "Authorization: Bearer mon-secret" \
+  -H "Content-Type: application/json" \
+  -d '{"content":"Nous avons choisi PostgreSQL pour v2","wing":"backend","type":"decision"}'
+
+# Recall de contexte
+curl -s -X POST http://localhost:8080/api/v1/memories/recall \
+  -H "Authorization: Bearer mon-secret" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"Pourquoi PostgreSQL ?","budget":2000,"wing":"backend"}'
+
+# Obtenir la spec OpenAPI (sans auth)
+curl -s http://localhost:8080/openapi.json | jq .info
+```
+
+Voir [docs/API_REFERENCES.md](docs/API_REFERENCES.md) pour la référence complète avec tous les schémas.
+
+---
+
+## Performance
+
+### Complexité algorithmique
+
+| Opération | Complexité | Notes |
+|-----------|------------|-------|
+| Stockage T0, T1, T2 | O(1) | Insertion atomique |
+| Recherche vectorielle | O(log n) | HNSW ANN |
+| Scoring CBA | O(n) | n = candidats |
+| Allocation gloutonne | O(n²) | Avec renormalisation dynamique |
+| BFS graphe causal | O(V+E) | V = nœuds, E = arêtes |
+
+### Benchmarks
+
+| Métrique | Valeur |
+|----------|--------|
+| Recherche HNSW | ~0.14 ms pour 10K vecteurs (benchmarké) |
+| Recherche SQLite fallback | ~50 ms pour 10K vecteurs (estimation) |
+| Allocation complète | ~35 ms pour 100 candidats (estimation) |
+| Cosine similarity | ~3.3M ops/sec |
+
+### Optimisations en v0.3.3
+
+- **Expansion de requête** — moyenne d'embeddings de variantes pour une récupération cross-lingue robuste
+- **Recherche lexicale FTS5** — recherche full-text SQLite avec triggers auto et backfill
+- **Fusion hybride RRF** — Reciprocal Rank Fusion (`k=60`) combinant HNSW et FTS5
+- **Clustering à la recherche** — déduplication en temps réel à cosine similarity ≥ 0.88
+- **Récupération par tags** — table `memory_tags` avec boost automatique dans le scoring CBA
+- **Reranker heuristique** — reranker lexical léger optionnel
+- **Méthodes de seuil adaptatif** — élagage dynamique avec `iqr`, `elbow`, `mean_stddev`
+- **Vector Store de fallback** — fallback transparent HNSW → SQLite quand l'index n'est pas prêt
+- **Outil Clear Memory** — `mira_clear_memory` pour suppression globale ou par room
+- **Résolution T0 chaîne causale** — `mira_causal_chain` résout les références `T0:` en IDs fingerprint
+- **Visibilité des IDs** — `mira_recall` et `mira_timeline` incluent les IDs mémoire pour chaîner les outils
+
+### Optimisations en v0.3.1
+
+- **Lazy Evaluation** — calcul d'overlap uniquement pour les candidats prometteurs
+- **Cache LRU** — 1000 entrées pour les embeddings de requête
+- **Persistance HNSW** — rechargement rapide de l'index au redémarrage
+- **SQLite WAL Mode** — performance lecture/écriture concurrente
+- **Seuil adaptatif** — abaissement du seuil de pertinence pour les petits corpus (< 10 mémoires)
+- **Mapping room par défaut** — assignation automatique des rooms standards selon le type
+
+---
+
+## Architecture technique
+
+### Architecture hexagonale (Clean Architecture)
+
+**Domain** — règles enterprise, aucune dépendance externe
+- `entities` : Verbatim, Fingerprint, Embedding, Candidate
+- `valueobjects` : MemoryType, RenderMode, RelationType
+
+**Use Cases** — règles applicatives, dépend uniquement du Domain
+- StoreMemory, RecallMemory (CBA), LoadMemory
+- GetTimeline, GetStatus, GetCausalChain, Archive
+- `ports` : interfaces Repository et services
+
+**Interface Adapters** — implémente les ports
+- `storage` : SQLiteRepository
+- `vector` : HNSWStore, SQLiteVectorStore, overlap cache
+- `extraction` : NativeExtractor, CybertronEmbedder
+- `webhook`, `metrics`
+
+**Frameworks & Drivers** — détails techniques extérieurs
+- SQLite3, HNSW lib, Cybertron, MCP Server
+
+### Structure du projet
+
+```
+mira/
+├── cmd/mira/              # Point d'entrée (CLI cobra)
+│   └── main.go            # Sous-commandes : server, migrate, doctor, query, export, import
+├── internal/
+│   ├── domain/
+│   │   ├── entities/      # Entités métier
+│   │   └── valueobjects/  # Objets valeur
+│   ├── usecases/
+│   │   ├── ports/         # Interfaces (Repository, Services)
+│   │   └── interactors/   # Implémentations use cases
+│   ├── adapters/
+│   │   ├── storage/       # SQLite repository
+│   │   ├── vector/        # HNSW, SQLite vector store, overlap cache
+│   │   ├── extraction/    # NLP, embeddings
+│   │   ├── logging/       # Logging structuré
+│   │   ├── webhook/       # Notifications HTTP
+│   │   └── metrics/       # Métriques Prometheus
+│   ├── interfaces/
+│   │   ├── mcp/           # Contrôleur MCP (stdio / SSE)
+│   │   └── rest/          # API REST HTTP optionnelle (:8080)
+│   ├── config/
+│   └── app/               # Racine de composition (injection de dépendances)
+├── docs/
+│   ├── INDEX.md
+│   ├── ARCHITECTURE.md
+│   ├── FEATURES.md
+│   └── API_REFERENCES.md
+├── SKILL.md
+├── config.example.yaml
+└── README_FR.md
 ```
 
 ---
 
 ## Développement
 
-### Structure du Code
+### Tests
 
-```
-mira/
-├── cmd/mira/           # Entry point
-├── types/              # Domain models
-├── store/              # SQLite persistence
-├── extract/            # T0→T1,T2 pipeline
-├── budget/             # CBA algorithm
-├── causal/             # Graph operations
-├── mcp/                # MCP server
-├── config/             # Configuration
-└── vector/             # Vector search adapter
+```bash
+go test -v ./...                       # Tests unitaires
+go test -race ./...                    # Avec détection de race
+go test -bench=. -benchmem ./...      # Benchmarks
+go test -cover ./...                   # Couverture
 ```
 
 ### Commandes Make
 
 ```bash
-make build      # Compiler
-make test       # Tests unitaires
-make bench      # Benchmarks
-make migrate    # Migrations DB
-make clean      # Nettoyer
+make build        # Compiler
+make test         # Tests (avec race detector)
+make test-short   # Tests rapides
+make bench        # Benchmarks
+make bench-full   # Benchmarks complets
+make run          # Compiler et lancer avec config.yaml
+make clean        # Nettoyer les artefacts et données
+make lint         # Linters
+make fmt          # Formater le code
+make install      # Installer dans GOPATH/bin
+make prepublish VERSION=x.y.z  # Préparer une release
 ```
 
-### Tests
+## Changelog
 
-```bash
-# Tests unitaires
-go test -v ./...
-
-# Avec race detector
-go test -race ./...
-
-# Benchmarks
-go test -bench=. -benchmem ./budget
-```
+Voir [CHANGELOG.md](CHANGELOG.md) pour l'historique complet des releases.
 
 ---
 
 ## Références
 
-### Librairies Clés
+### Bibliothèques clés
 
-- [tiktoken-go](https://github.com/pkoukk/tiktoken-go) - Tokenization OpenAI
-- [prose](https://github.com/jdkato/prose) - NLP/NER en Go
-- [cybertron](https://github.com/nlpodyssey/cybertron) - Embeddings transformers
-- [mcp-go](https://github.com/mark3labs/mcp-go) - Protocole MCP
+- [tiktoken-go](https://github.com/pkoukk/tiktoken-go) — tokenisation OpenAI
+- Implémentation Go native — NLP/NER à base de règles
+- [cybertron](https://github.com/nlpodyssey/cybertron) — embeddings Transformer
+- [hnsw](https://github.com/coder/hnsw) — graphes HNSW
+- [mcp-go](https://github.com/mark3labs/mcp-go) — protocole MCP
 
-### Modèle d'Embedding
+### Modèle d'embedding
 
-- **Modèle:** sentence-transformers/all-MiniLM-L6-v2
-- **Dimensions:** 384
-- **Taille:** ~80MB
-- **Performance:** ~1000 textes/sec sur CPU
-
----
-
-## Changelog
-
-### v0.1.0 (2026-04-08)
-
-- ✅ Version initiale
-- ✅ Architecture mémoire T0/T1/T2
-- ✅ Algorithme CBA (Context Budget Allocator)
-- ✅ Stockage SQLite avec WAL mode
-- ✅ Serveur MCP avec 7 outils
-- ✅ Graphe causal avec 5 types de relations
-- ✅ Extraction UTF-8 avec reconnaissance d'entités
-- ✅ Scoring par densité sigmoïde
-- ✅ Boost de session et pénalité causale
-- ✅ Allocation gloutonne avec renormalisation dynamique
-- ✅ Versioning des modèles d'embedding
-- ✅ Rendu selon budget restant uniquement
-- ✅ Versioning des modèles d'embedding
+- **Modèle :** sentence-transformers/all-MiniLM-L6-v2
+- **Dimensions :** 384
+- **Taille :** ~80 Mo
+- **Performance :** ~1000 textes/sec sur CPU
 
 ---
 
-**MIRA** - _Memory with Information-theoretic Relevance Allocation_
+<div align="center">
 
-_"La mémoire est la sève de l'intelligence artificielle."_
+**MIRA** — _Memory with Information-theoretic Relevance Allocation_
+
+_« La mémoire est la sève de l'intelligence artificielle. »_
+
+[Référence API](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md)
+
+</div>

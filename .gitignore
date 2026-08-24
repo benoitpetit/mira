@@ -1,46 +1,27 @@
-# Binaries
+# Development/internal documentation (not for public release)
+docs/adr/
+docs/dev/
+
+# Build artifacts
+/mira
 bin/
-dist/
 *.exe
 *.dll
 *.so
 *.dylib
-mira
-mira-cli
-!cmd/mira/
 
 # Test binary
 *.test
-*_test_output.txt
-test-results/
-.jest/
-.nyc_output/
 
 # Output of the go coverage tool
 *.out
 coverage.html
 
-# Profiling files
-*.prof
-cpu.prof
-mem.prof
-*.pprof
-
-# Go workspace files
-go.work
-go.work.sum
-
 # Dependency directories
 vendor/
 
-# Data directories
-mira_data/
-data/
-*.db
-*.db-shm
-*.db-wal
-*.sqlite
-*.sqlite3
+# Go workspace file
+go.work
 
 # IDE
 .idea/
@@ -48,30 +29,50 @@ data/
 *.swp
 *.swo
 *~
-.DS_Store
-
-# Environment files
-.env
-.env.local
-.env.*.local
-
-# Config (keep example but ignore local)
-config.yaml
-config.local.yaml
-
-# Logs
-*.log
-logs/
-
-# Temporary files
-tmp/
-temp/
-*.tmp
-*.bak
-*.backup
-.cache/
-__pycache__/
-.pytest_cache/
 
 # OS
+.DS_Store
 Thumbs.db
+
+# Data directories (runtime)
+.mira/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Temporary files
+/tmp/
+tmp/
+*.tmp
+
+# Local configuration (contains sensitive data)
+config.yaml
+
+# Backup files
+backup/
+docs/PLAN.md
+
+# Temporary/debug files (development only)
+debug_*.go
+test_mcp_*.go
+benchmark_results.json
+
+# Development task lists
+TODO.md
+
+# Documents non-source (rapports, plans générés)
+*.pdf
+
+# WIP features — not part of current release
+internal/interfaces/rest/
+internal/adapters/storage/migrations_postgres/
+internal/adapters/storage/postgres_repository.go
+internal/adapters/storage/migrations/005_audit_log.up.sql
+internal/adapters/storage/migrations/006_access_policies.up.sql
+internal/domain/entities/audit.go
+internal/domain/entities/policy.go
+internal/interfaces/mcp/http_transport.go
+internal/adapters/extraction/ollama_extractor.go
+internal/adapters/extraction/ollama_extractor_test.go
+internal/app/main_extra_test.go

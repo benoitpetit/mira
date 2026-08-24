@@ -1,0 +1,2 @@
+ALTER TABLE verbatim ADD COLUMN summary TEXT;
+ALTER TABLE verbatim ADD COLUMN summary_tokens INTEGER NOT NULL DEFAULT 0;

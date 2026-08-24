@@ -1,4 +1,4 @@
-.PHONY: build test clean run migrate deps lint install
+.PHONY: build test clean run deps lint install bench bench-full
 
 BINARY=mira
 GO=go
@@ -21,13 +21,10 @@ bench-full:
 	$(GO) test -bench=. -benchmem ./...
 
 clean:
-	rm -rf bin/ ./mira_data/
+	rm -rf bin/ ./.mira/
 
 run: build
-	./bin/$(BINARY) --config config.yaml
-
-migrate: build
-	./bin/$(BINARY) --config config.yaml --migrate
+	./bin/$(BINARY) -config config.yaml
 
 deps:
 	$(GO) mod download

@@ -1,9 +1,8 @@
 system:
-  version: "0.1.0"
-  max_concurrent_queries: 10
+  version: "0.4.7"
 
 storage:
-  path: "./mira_data"
+  path: ".mira"
   sqlite:
     journal_mode: WAL
     synchronous: NORMAL
@@ -18,13 +17,14 @@ embeddings:
   batch_size: 32
   cache_size: 1000
 
-vector_index:
-  type: "hnswlib"
-  path: "./mira_data/vectors.bin"
-  ef_construction: 200
-  ef_search: 50
-  M: 16
-  max_elements: 100000
+# HNSW Vector Index Configuration
+# Provides O(log n) approximate nearest neighbor search
+# Falls back to SQLite exact search during index building
+hnsw:
+  M: 32                    # Max neighbors per node (tuned for better recall, see v0.4.2)
+  Ml: 0.25                 # Level generation factor (0.25 = 1/ln(M))
+  ef_construction: 0       # INACTIVE — not supported by underlying hnsw library (coder/hnsw v0.4.0)
+  ef_search: 100           # Size of dynamic candidate list for search (tuned, see v0.4.2)
 
 allocator:
   default_budget: 4000
@@ -32,11 +32,14 @@ allocator:
   early_pruning_threshold: 0.6
   session_window_seconds: 7200
   session_boost_beta: 0.2
+  session_boost_max: 1.2
   causal_penalty_alpha: 0.15
   density_sigmoid:
     k: 2.0
     mu: 0.3
 
+# Decay rates control how quickly different memory types lose relevance over time.
+# Lower = slower decay (decisions last months), higher = faster decay (debug logs last days).
 decay_rates:
   decision: 0.001
   fact: 0.005
@@ -53,14 +56,166 @@ overlap_cache:
   max_entries: 1000000
 
 extraction:
-  max_verbatim_size: 65536
-  max_sentence_length: 500
   min_entity_length: 2
   causal_lookback: 50
   causal_max_days: 30
 
+# =============================================================================
+# RECALL CONFIGURATION
+# =============================================================================
+# Advanced retrieval pipeline options.
+# These features expand the recall pipeline beyond pure semantic similarity.
+
+recall:
+  adaptive_threshold_method: "iqr"   # iqr | elbow | mean_stddev
+  adaptive_threshold_floor: 0.15
+  adaptive_threshold_ceiling: 0.75
+  enable_fts5: true
+  fts5_limit: 100
+  rrf_k: 60
+  query_expansion:
+    enabled: true
+    num_variants: 3
+    temperature: 0.3
+  search_time_clustering:
+    enabled: true
+    similarity_threshold: 0.88
+  reranker:
+    enabled: false
+    top_k: 30
+
 mcp:
   name: "mira"
-  version: "0.1.0"
-  transport: "stdio"
+  version: "0.4.7"
+  transport: "stdio"      # "stdio" for Claude Desktop/Cursor, "sse" for HTTP Server-Sent Events
+  address: "localhost:3001" # Bind address when transport is "sse"
   timeout_seconds: 30
+
+# =============================================================================
+# REST HTTP API (Optional)
+# =============================================================================
+# Enable a REST HTTP API alongside the MCP server.
+# Disabled by default. Enable via this config or --with-api / --api-addr / --api-token flags.
+#
+# All 13 REST endpoints are documented in docs/API_REFERENCES.md.
+# An OpenAPI 3.1 specification is served at GET /openapi.json when the server is running.
+#
+# Example (with auth):
+#   api:
+#     enabled: true
+#     address: ":8080"
+#     auth_token: "my-secret-token"
+
+api:
+  enabled: false                # Set to true or use --with-api flag
+  address: ":8080"              # Listen address (e.g. ":8080" or "127.0.0.1:8080")
+  auth_token: ""                # Optional bearer token — empty means no authentication
+  read_timeout_seconds: 30
+  write_timeout_seconds: 30
+
+# =============================================================================
+# METRICS EXPORT
+# =============================================================================
+# Prometheus-compatible metrics export for monitoring and alerting.
+# Access metrics at http://localhost:9090/metrics
+
+metrics:
+  enabled: true            # Enable metrics collection and export
+  prometheus_addr: ":9090" # Address for Prometheus scrape endpoint (":9090" = all interfaces)
+  report_interval_seconds: 60  # Interval for logging metric reports
+
+# =============================================================================
+# WEBHOOK NOTIFICATIONS
+# =============================================================================
+# Receive HTTP callbacks when async operations complete.
+# Useful for integrating with external systems and building reactive workflows.
+
+webhooks:
+  enabled: false           # Enable webhook notifications
+  workers: 3               # Number of webhook delivery workers
+  queue_size: 1000         # Maximum webhook event queue depth
+  timeout_seconds: 30      # HTTP timeout for webhook delivery
+  endpoints: []            # List of default webhook URLs (optional)
+                           # Example: ["https://example.com/mira-webhook"]
+  
+# Webhook events include:
+#   - embedding.completed : Embedding generation finished
+#   - embedding.failed    : Embedding generation failed
+#   - store.completed     : Full T0/T1/T2 store completed
+#   - causal.detected     : New causal relationships detected
+#   - index.maintenance   : Background index maintenance completed
+#
+# Webhook payload format:
+#   {
+#     "id": "uuid",
+#     "type": "embedding.completed",
+#     "timestamp": "2026-04-09T14:30:45Z",
+#     "data": { ... event-specific data ... }
+#   }
+#
+# Headers sent with each webhook:
+#   Content-Type: application/json
+#   X-Webhook-ID: <event-uuid>              (legacy, use X-MIRA-Event-ID)
+#   X-Webhook-Event: <event-type>           (legacy, use X-MIRA-Event-Type)
+#   X-MIRA-Event-ID: <uuid>
+#   X-MIRA-Event-Type: <event-type>
+#   X-MIRA-Webhook-ID: <webhook-uuid>
+#   X-MIRA-Signature: sha256=...            (if secret configured)
+#   X-MIRA-Signature-Version: v1            (if secret configured)
+
+# =============================================================================
+# SOUL IDENTITY EXTENSION (Optional)
+# =============================================================================
+# SOUL is an opt-in identity preservation layer for LLM agents.
+# By default, MIRA runs without SOUL (9 tools). To enable SOUL (17 tools total: 9 MIRA + 8 SOUL):
+#
+#   1. Set soul.enabled: true below, OR
+#   2. Launch with: ./mira --config config.yaml --with-soul
+#
+# When enabled, SOUL shares MIRA's SQLite database and adds identity
+# capture, drift detection, and model-swap preservation tools.
+# See: https://github.com/benoitpetit/soul
+#
+# Every SOUL tuning option available in standalone mode can also be
+# configured directly inside MIRA's config file below. No separate SOUL config
+# file or process is required for embedded mode.
+
+soul:
+  enabled: false          # Set to true to activate SOUL identity features
+
+  # Identity extraction tuning
+  extraction:
+    min_trait_confidence: 0.3      # Minimum confidence for a trait to be valid
+    min_observations_for_trait: 5  # Observations needed to establish a trait
+
+  # Identity recall tuning
+  recall:
+    default_budget_tokens: 1000    # Token budget for generated identity prompts
+
+  # Drift detection tuning
+  drift_detection:
+    threshold: 0.3                 # Drift alert threshold (0.0 - 1.0)
+    window_size: 10                # Number of versions to analyse
+    auto_check_after_capture: true # Check drift automatically after each capture
+
+  # Model swap behaviour
+  model_swap:
+    auto_reinforce: true           # Generate reinforcement prompt after swap
+
+  # Evolution history tuning
+  evolution:
+    enabled: true                  # Track identity evolution over time
+    max_history_versions: 100      # Max snapshots to retain per agent
+
+  # MIRA↔SOUL memory enrichment
+  memory:
+    enrich_with_mira_memories: false  # Inject MIRA memories into SOUL identity prompts
+    max_mira_memories: 5              # Max MIRA memories to inject per identity recall
+
+# ─── Compression ────────────────────────────────────────────────────────────
+# Rule-based context compression for session_notes.
+# Summarised text is stored alongside the original verbatim and surfaced by
+# the recall engine when the token budget is too tight for full verbatim.
+compression:
+  auto_compress: false   # Auto-compress at store time (async, non-fatal)
+  min_tokens: 100        # Minimum verbatim token count to qualify

@@ -1,0 +1,21 @@
+// Package valueobjects provides immutable domain value objects.
+// FingerprintData value object
+package valueobjects
+
+// FingerprintData contains the structured extracted information
+type FingerprintData struct {
+	ID          string         `json:"id"`
+	Type        string         `json:"type"`
+	Date        string         `json:"date"`
+	Entities    []string       `json:"entities"`
+	Subject     []string       `json:"subject"`
+	Decision    string         `json:"decision,omitempty"`
+	Rejected    []string       `json:"rejected,omitempty"`
+	Reason      []string       `json:"reason,omitempty"`
+	ValidatedBy string         `json:"validated_by,omitempty"`
+	Assignee    string         `json:"assignee,omitempty"`
+	Deadline    string         `json:"deadline,omitempty"`
+	VerbatimRef string         `json:"verbatim_ref"`
+	Negated     bool           `json:"negated,omitempty"`
+	Custom      map[string]any `json:"custom,omitempty"`
+}
