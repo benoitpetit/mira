@@ -64,6 +64,7 @@ type Application struct {
 	restServer          *http.Server
 	startTime           time.Time
 	closeOnce           sync.Once
+	buildCancel         context.CancelFunc // cancels HNSW build goroutine
 }
 
 // NewApplication creates and wires all dependencies.
@@ -319,10 +320,15 @@ func (a *Application) initVectorStore(dbPath string) error {
 	}
 	if cfg.HNSW.EfConstruction > 0 {
 		hnswOpts.EfConstruction = cfg.HNSW.EfConstruction
+		slog.Warn("hnsw.EfConfiguration is set but ignored: the underlying coder/hnsw library v0.4.0 does not support this field. Set to 0 in config to suppress this warning.")
 	}
 	if cfg.HNSW.EfSearch > 0 {
 		hnswOpts.EfSearch = cfg.HNSW.EfSearch
 	}
+
+	// Create a cancellable context for the HNSW build goroutine
+	ctx, buildCancel := context.WithCancel(ctx)
+	a.buildCancel = buildCancel
 
 	indexPath := cfg.Storage.Path + "/vectors.bin"
 	hnswIndex, err := vector.NewHNSWStore(repo, cfg.Embeddings.Dimension, indexPath, hnswOpts)
@@ -422,7 +428,10 @@ func (a *Application) initUseCases() {
 			SessionWindowSeconds:          cfg.Allocator.SessionWindowSeconds,
 			SessionBoostBeta:              cfg.Allocator.SessionBoostBeta,
 			SessionBoostMax:               cfg.Allocator.SessionBoostMax,
+			SessionMemoryBoost:            cfg.Allocator.SessionMemoryBoost,
+			SessionCacheTTLSeconds:        cfg.Allocator.SessionCacheTTLSeconds,
 			CausalPenaltyAlpha:            cfg.Allocator.CausalPenaltyAlpha,
+			DiversityBoostAlpha:           cfg.Allocator.DiversityBoostAlpha,
 			DensitySigmoidK:               cfg.Allocator.DensitySigmoid.K,
 			DensitySigmoidMu:              cfg.Allocator.DensitySigmoid.Mu,
 			EmbeddingCacheSize:            cfg.Embeddings.CacheSize,
@@ -468,6 +477,9 @@ func (a *Application) initUseCases() {
 		a.clearMemory,
 		repo,
 		a.compressMemories,
+		a.updateMemory,
+		a.searchSemantic,
+		a.consolidateMemories,
 	)
 }
 
@@ -523,6 +535,12 @@ func (a *Application) Close() error {
 			if err := a.restServer.Shutdown(shutdownCtx); err != nil {
 				slog.Warn("rest server shutdown error", "error", err)
 			}
+		}
+
+		// Cancel the HNSW build goroutine if it's running
+		if a.buildCancel != nil {
+			a.buildCancel()
+			a.buildCancel = nil
 		}
 
 		if a.hnswIndex != nil {

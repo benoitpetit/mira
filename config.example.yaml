@@ -33,7 +33,10 @@ allocator:
   session_window_seconds: 7200
   session_boost_beta: 0.2
   session_boost_max: 1.2
+  session_memory_boost: 1.3       # Multiplier for memories recalled in previous turns (0 = disabled)
+  session_cache_ttl_seconds: 1800 # Session cache TTL in seconds (0 = entries never expire)
   causal_penalty_alpha: 0.15
+  diversity_boost_alpha: 0.1      # Weight of new-subject diversity boost in CBA scoring
   density_sigmoid:
     k: 2.0
     mu: 0.3
@@ -167,7 +170,7 @@ webhooks:
 # SOUL IDENTITY EXTENSION (Optional)
 # =============================================================================
 # SOUL is an opt-in identity preservation layer for LLM agents.
-# By default, MIRA runs without SOUL (9 tools). To enable SOUL (17 tools total: 9 MIRA + 8 SOUL):
+# By default, MIRA runs without SOUL (13 tools). To enable SOUL (21 tools total: 13 MIRA + 8 SOUL):
 #
 #   1. Set soul.enabled: true below, OR
 #   2. Launch with: ./mira --config config.yaml --with-soul

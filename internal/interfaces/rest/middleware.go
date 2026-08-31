@@ -9,11 +9,75 @@ import (
 	"net/http"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
 )
+
+// rateLimiter tracks request rates per IP for token bucket limiting.
+type rateLimiter struct {
+	mu        sync.Mutex
+	interval  time.Duration
+	limit       int // max requests per interval
+	intervals map[string][]time.Time // IP -> recent request timestamps
+}
+
+// newRateLimiter creates a new rate limiter with the given limit and interval.
+func newRateLimiter(limit int, interval time.Duration) *rateLimiter {
+	return &rateLimiter{
+		interval:  interval,
+		limit:     limit,
+		intervals: make(map[string][]time.Time),
+	}
+}
+
+// allowRequest checks if a request from the given IP is within the rate limit.
+// Returns true if allowed, false if rate limited.
+func (rl *rateLimiter) allowRequest(ip string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	// Clean up old timestamps outside the interval
+	timestamps := rl.intervals[ip]
+	valid := timestamps[:0]
+	for _, t := range timestamps {
+		if now.Sub(t) < rl.interval {
+			valid = append(valid, t)
+		}
+	}
+	rl.intervals[ip] = valid
+
+	// Check if under the limit
+	if len(valid) >= rl.limit {
+		rl.intervals[ip] = valid
+		return false
+	}
+
+	// Add current timestamp
+	rl.intervals[ip] = append(valid, now)
+	return true
+}
+
+// rateLimitMiddleware enforces per-IP rate limiting.
+func rateLimitMiddleware(limit int, interval time.Duration, next http.Handler) http.Handler {
+	rl := newRateLimiter(limit, interval)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ip := r.RemoteAddr
+		// If behind a proxy, extract real IP from X-Forwarded-For
+		if forwardedFor := r.Header.Get("X-Forwarded-For"); forwardedFor != "" {
+			ip = strings.Split(forwardedFor, ",")[0]
+		}
+
+		if !rl.allowRequest(ip) {
+			writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 // ── Context keys ──────────────────────────────────────────────────────────────
 

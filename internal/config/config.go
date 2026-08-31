@@ -177,7 +177,10 @@ type AllocatorConfig struct {
 	SessionWindowSeconds  int                  `yaml:"session_window_seconds"`
 	SessionBoostBeta      float64              `yaml:"session_boost_beta"`
 	SessionBoostMax       float64              `yaml:"session_boost_max"`
+	SessionMemoryBoost    float64              `yaml:"session_memory_boost"`
+	SessionCacheTTLSeconds int                 `yaml:"session_cache_ttl_seconds"`
 	CausalPenaltyAlpha    float64              `yaml:"causal_penalty_alpha"`
+	DiversityBoostAlpha   float64              `yaml:"diversity_boost_alpha"`
 	DensitySigmoid        DensitySigmoidConfig `yaml:"density_sigmoid"`
 }
 
@@ -280,13 +283,16 @@ func Default() *Config {
 			CacheSize:    1000,
 		},
 		Allocator: AllocatorConfig{
-			DefaultBudget:         4000,
-			MaxCandidates:         100,
-			EarlyPruningThreshold: 0.6,
-			SessionWindowSeconds:  7200,
-			SessionBoostBeta:      0.2,
-			SessionBoostMax:       1.2,
-			CausalPenaltyAlpha:    0.15,
+			DefaultBudget:          4000,
+			MaxCandidates:          100,
+			EarlyPruningThreshold:  0.6,
+			SessionWindowSeconds:   7200,
+			SessionBoostBeta:       0.2,
+			SessionBoostMax:        1.2,
+			SessionMemoryBoost:     1.3,
+			SessionCacheTTLSeconds: 1800,
+			CausalPenaltyAlpha:     0.15,
+			DiversityBoostAlpha:    0.1,
 			DensitySigmoid: DensitySigmoidConfig{
 				K:  2.0,
 				Mu: 0.3,
@@ -541,6 +547,18 @@ func (c *Config) Validate() error {
 	}
 	if c.Allocator.CausalPenaltyAlpha < 0 {
 		c.Allocator.CausalPenaltyAlpha = 0.15
+	}
+	if c.Allocator.SessionMemoryBoost <= 0 {
+		c.Allocator.SessionMemoryBoost = 1.3
+	}
+	if c.Allocator.SessionMemoryBoost > 2.0 {
+		c.Allocator.SessionMemoryBoost = 2.0
+	}
+	if c.Allocator.SessionCacheTTLSeconds <= 0 {
+		c.Allocator.SessionCacheTTLSeconds = 1800
+	}
+	if c.Allocator.DiversityBoostAlpha < 0 {
+		c.Allocator.DiversityBoostAlpha = 0.1
 	}
 	// Decay rates defaults
 	if c.DecayRates == nil {
