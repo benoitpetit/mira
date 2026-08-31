@@ -6,7 +6,7 @@
 
   **Système de Mémoire Long-Terme pour LLMs avec Allocation Optimale de Budget Contextuel**
 
-  [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
+  [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
   [![Version](https://img.shields.io/badge/Version-0.4.7-blue?style=flat-square)]()
   [![Tests](https://img.shields.io/badge/Tests-~70%25-yellow?style=flat-square)]()
@@ -258,6 +258,20 @@ Mélange : `0.7 × sémantique + 0.3 × rerank`
 
 Si HNSW n'est pas encore prêt (ex. reconstruction depuis zéro), un wrapper transparent redirige automatiquement vers le vector store SQLite. Le recall ne tombe jamais en panne.
 
+### 8. Compression contextuelle
+
+Compression contextuelle à base de règles pour les verbatims `session_note`. Le texte résumé est stocké aux côtés de l'original et surfaced par le moteur de recall quand le budget de tokens est trop serré pour le verbatim complet.
+
+- **Pas besoin de LLM** — déterministe, compression instantanée
+- **Auto-compression** au moment du stockage (async, non-fatale) ou à la demande via `mira_compress`
+- **Configurable** — définir le seuil `min_tokens` pour ignorer les notes courtes
+
+```yaml
+compression:
+  auto_compress: false   # Auto-compresser au moment du stockage
+  min_tokens: 100        # Seuil minimum de tokens pour se qualifier
+```
+
 ---
 
 ## Graphe causal
@@ -290,7 +304,7 @@ causalPatterns := map[RelationType]*regexp.Regexp{
 
 ### Prérequis
 
-- Go 1.23+ (si compilation depuis les sources)
+- Go 1.25+ (si compilation depuis les sources)
 - SQLite3 (inclus)
 - ~100 Mo d'espace disque pour le modèle d'embedding
 
@@ -396,6 +410,10 @@ nano config.yaml
 # Importer des mémoires depuis JSON (avec aperçu dry-run)
 ./mira import --file memories.json
 ./mira import --file memories.json --dry-run
+
+# Optimiser un fichier d'historique de chat pour tenir dans un budget de tokens (sans LLM)
+./mira optimize --file history.json --budget 2000
+./mira optimize --file history.json --stats-only
 
 # Validation et inspection de la configuration
 ./mira config validate
@@ -597,6 +615,7 @@ webhooks:
 | `mira_timeline` | Reconstruction chronologique des mémoires |
 | `mira_archive` | Archiver et nettoyer les vieilles mémoires |
 | `mira_clear_memory` | Suppression permanente (globale ou par room) |
+| `mira_compress` | Compression contextuelle à base de règles pour les session_notes |
 
 ### Wings de secours (Fallback Wings)
 
