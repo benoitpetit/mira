@@ -26,7 +26,30 @@ func NewMiraProvider(db *sql.DB, storeMemory *interactors.StoreMemory) *MiraProv
 }
 
 // GetMiraMemories retrieves factual memories relevant to the query.
+// Prefers FTS5 lexical search when available for better relevance ranking;
+// falls back to LIKE when FTS5 is not enabled.
 func (p *MiraProvider) GetMiraMemories(ctx context.Context, agentID, query string, limit int) ([]ports.MiraMemoryReference, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+
+	ftsQuery := `
+		SELECT v.id, f.data, f.ftype, v.created_at, COALESCE(v.wing, ''), v.room
+		FROM verbatim v
+		JOIN fingerprints f ON f.verbatim_id = v.id
+		WHERE v.id IN (SELECT rowid FROM verbatim_fts WHERE verbatim_fts MATCH ?)
+		ORDER BY v.created_at DESC
+		LIMIT ?`
+	
+	rows, err := p.db.QueryContext(ctx, ftsQuery, query, limit)
+	if err == nil {
+		memories := p.scanMiraMemories(rows)
+		rows.Close()
+		if len(memories) > 0 {
+			return memories, nil
+		}
+	}
+
 	sqlQuery := `
 		SELECT v.id, f.data, f.ftype, v.created_at, COALESCE(v.wing, ''), v.room
 		FROM verbatim v
@@ -36,12 +59,16 @@ func (p *MiraProvider) GetMiraMemories(ctx context.Context, agentID, query strin
 		LIMIT ?
 	`
 	searchPattern := "%" + query + "%"
-	rows, err := p.db.QueryContext(ctx, sqlQuery, searchPattern, searchPattern, limit)
+	rows, err = p.db.QueryContext(ctx, sqlQuery, searchPattern, searchPattern, limit)
 	if err != nil {
-		return []ports.MiraMemoryReference{}, nil
+		return nil, fmt.Errorf("GetMiraMemories query failed: %w", err)
 	}
 	defer rows.Close()
 
+	return p.scanMiraMemories(rows), nil
+}
+
+func (p *MiraProvider) scanMiraMemories(rows *sql.Rows) []ports.MiraMemoryReference {
 	memories := []ports.MiraMemoryReference{}
 	for rows.Next() {
 		mem := ports.MiraMemoryReference{}
@@ -59,7 +86,7 @@ func (p *MiraProvider) GetMiraMemories(ctx context.Context, agentID, query strin
 		mem.Relevance = 0.8
 		memories = append(memories, mem)
 	}
-	return memories, rows.Err()
+	return memories
 }
 
 // GetLinkedMemories retrieves MIRA memories linked to a SOUL identity.
@@ -108,6 +135,8 @@ func (p *MiraProvider) LinkIdentityToMemory(ctx context.Context, identityID, mem
 
 // NotifyMiraOfIdentityChange stores an identity change event as a full memory.
 // Uses StoreMemory use case if available for complete T0/T1/T2 extraction.
+// Falls back to direct INSERT using MIRA-compatible BLOB UUID storage when
+// storeMemory is nil (e.g. standalone SOUL without embedded use cases).
 func (p *MiraProvider) NotifyMiraOfIdentityChange(ctx context.Context, agentID string, changeType string) error {
 	content := fmt.Sprintf("Identity change detected: %s for agent %s at %s",
 		changeType, agentID, time.Now().Format(time.RFC3339))
@@ -125,13 +154,14 @@ func (p *MiraProvider) NotifyMiraOfIdentityChange(ctx context.Context, agentID s
 		return err
 	}
 
-	// Fallback to direct INSERT (legacy behavior)
-	// Note: requires token_count in STRICT mode - this is a known limitation
-	// when storeMemory is not available.
+	// Fallback to direct INSERT using BLOB UUID to match the verbatim.id column type.
+	// The verbatim table schema (MIRA migration 001) defines id as BLOB PRIMARY KEY,
+	// so we must store the raw 16-byte UUID, NOT its string representation.
+	id := uuid.New()
 	_, err := p.db.ExecContext(ctx,
-		"INSERT INTO verbatim (id, content, created_at, wing, token_count) VALUES (?, ?, ?, ?, ?)",
-		uuid.New().String(), content, time.Now().Unix(), "soul_identity",
-		calculateTokenCount(content),
+		`INSERT INTO verbatim (id, content, created_at, wing, token_count, metadata, metrics)
+		 VALUES (?, ?, ?, ?, ?, '{}', '{}')`,
+		id[:], content, time.Now().Unix(), "soul_identity", calculateTokenCount(content),
 	)
 	return err
 }

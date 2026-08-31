@@ -315,7 +315,7 @@ func TestRecallMemory_SessionIDCacheUpdated(t *testing.T) {
 	}
 
 	interactor.sessionCacheMu.RLock()
-	ids := interactor.sessionCache[sessionID]
+	ids := interactor.sessionCache[sessionID].ids
 	interactor.sessionCacheMu.RUnlock()
 	if len(ids) == 0 {
 		t.Error("expected session cache to be populated after Execute")
