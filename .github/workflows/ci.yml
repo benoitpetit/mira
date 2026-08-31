@@ -30,7 +30,7 @@ jobs:
 
       - name: Initialize Go workspace
         run: |
-          printf 'go 1.25\n\nuse ./soul\nuse .\n' > go.work
+          printf 'go 1.25.0\n\nuse ./soul\nuse .\n' > go.work
 
       - name: Install dependencies
         run: go mod download
@@ -63,7 +63,7 @@ jobs:
 
       - name: Initialize Go workspace
         run: |
-          printf 'go 1.25\n\nuse ./soul\nuse .\n' > go.work
+          printf 'go 1.25.0\n\nuse ./soul\nuse .\n' > go.work
 
       - name: Build binary
         env:
