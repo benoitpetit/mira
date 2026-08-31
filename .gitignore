@@ -64,14 +64,5 @@ TODO.md
 # Documents non-source (rapports, plans générés)
 *.pdf
 
-# WIP features — not part of current release
-internal/interfaces/rest/
-internal/adapters/storage/postgres_repository.go
-internal/adapters/storage/migrations/005_audit_log.up.sql
-internal/adapters/storage/migrations/006_access_policies.up.sql
-internal/domain/entities/audit.go
-internal/domain/entities/policy.go
-internal/interfaces/mcp/http_transport.go
-internal/adapters/extraction/ollama_extractor.go
-internal/adapters/extraction/ollama_extractor_test.go
-internal/app/main_extra_test.go
+# WIP features — not part of current release (but required for build)
+# Note: These files are referenced by the code and must be tracked for CI to work
