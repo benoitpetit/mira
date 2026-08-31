@@ -11,31 +11,31 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// PrometheusCollector expose les métriques au format Prometheus
+// PrometheusCollector exposes metrics in Prometheus format
 type PrometheusCollector struct {
-	// Métriques de durée
+	// Duration metrics
 	storeDuration  prometheus.Histogram
 	recallDuration prometheus.Histogram
 	searchDuration prometheus.Histogram
 	embedDuration  prometheus.Histogram
 
-	// Métriques de comptage
+	// Counter metrics
 	storeTotal  prometheus.Counter
 	recallTotal prometheus.Counter
 	searchTotal prometheus.Counter
 	errorsTotal prometheus.Counter
 
-	// Métriques de jauge (état actuel)
+	// Gauge metrics (current state)
 	memoryCount    prometheus.Gauge
 	vectorCount    prometheus.Gauge
 	storeFacts     prometheus.Counter
 	recallSelected prometheus.Counter
 
-	// Registre Prometheus
+	// Prometheus registry
 	registry *prometheus.Registry
 }
 
-// NewPrometheusCollector crée un nouveau collecteur Prometheus
+// NewPrometheusCollector creates a new Prometheus collector
 func NewPrometheusCollector() *PrometheusCollector {
 	registry := prometheus.NewRegistry()
 
@@ -107,7 +107,7 @@ func NewPrometheusCollector() *PrometheusCollector {
 		}),
 	}
 
-	// Enregistrer toutes les métriques
+	// Register all metrics
 	registry.MustRegister(
 		pc.storeDuration,
 		pc.recallDuration,
@@ -186,12 +186,12 @@ func (pc *PrometheusCollector) GetReport(ctx context.Context) ports.MetricsRepor
 	}
 }
 
-// Handler retourne le handler HTTP pour les métriques
+// Handler returns the HTTP handler for metrics
 func (pc *PrometheusCollector) Handler() http.Handler {
 	return promhttp.HandlerFor(pc.registry, promhttp.HandlerOpts{})
 }
 
-// StartServer démarre un serveur HTTP pour exposer les métriques
+// StartServer starts an HTTP server to expose metrics
 func (pc *PrometheusCollector) StartServer(addr string) error {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", pc.Handler())

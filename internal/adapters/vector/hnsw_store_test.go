@@ -80,7 +80,7 @@ func generateRandomVector(dim int) []float32 {
 	return vec
 }
 
-// createTestVector crée un vecteur de test
+// createTestVector creates a test vector
 func createTestVector(dim int, value float32) []float32 {
 	vec := make([]float32, dim)
 	for i := range vec {
@@ -514,14 +514,14 @@ func TestHNSWStoreAddDelete(t *testing.T) {
 	t.Logf("Stats after delete: %d", store.Stats())
 }
 
-// TestHNSWStoreCompletePersistence teste la sauvegarde et le chargement complets du graphe HNSW
+// TestHNSWStoreCompletePersistence tests complete save and load of the HNSW graph
 func TestHNSWStoreCompletePersistence(t *testing.T) {
 	dim := 10
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/test.db"
 	indexPath := tmpDir + "/vectors.bin"
 
-	// Créer le premier store et ajouter des candidats
+	// Create the first store and add candidates
 	repo1, err := storage.NewSQLiteRepository(dbPath, storage.SQLiteOptions{})
 	if err != nil {
 		t.Fatalf("Failed to create repository: %v", err)
@@ -533,7 +533,7 @@ func TestHNSWStoreCompletePersistence(t *testing.T) {
 		t.Fatalf("Failed to create HNSW store: %v", err)
 	}
 
-	// Créer et persister des candidats
+	// Create and persist candidates
 	candidates := make([]*entities.Candidate, 5)
 	for i := 0; i < 5; i++ {
 		candidates[i] = createAndPersistCandidate(t, repo1, dim, "test-wing", nil, float32(i+1)*0.1)
@@ -542,7 +542,7 @@ func TestHNSWStoreCompletePersistence(t *testing.T) {
 		}
 	}
 
-	// Construire l'index pour le rendre prêt
+	// Build the index to make it ready
 	if err := store1.BuildFromStore(context.Background()); err != nil {
 		t.Fatalf("Failed to build index: %v", err)
 	}
@@ -551,20 +551,20 @@ func TestHNSWStoreCompletePersistence(t *testing.T) {
 		t.Fatal("Store1 should be ready after BuildFromStore")
 	}
 
-	// Sauvegarder l'index complet
+	// Save the complete index
 	if err := store1.Save(); err != nil {
 		t.Fatalf("Failed to save index: %v", err)
 	}
 
-	// Vérifier que le fichier existe
+	// Verify that the file exists
 	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
 		t.Fatal("Index file was not created")
 	}
 
-	// Fermer le premier store
+	// Close the first store
 	repo1.Close()
 
-	// Créer un nouveau store et charger l'index
+	// Create a new store and load the index
 	repo2, err := storage.NewSQLiteRepository(dbPath, storage.SQLiteOptions{})
 	if err != nil {
 		t.Fatalf("Failed to create second repository: %v", err)
@@ -576,31 +576,31 @@ func TestHNSWStoreCompletePersistence(t *testing.T) {
 		t.Fatalf("Failed to create second HNSW store: %v", err)
 	}
 
-	// Charger l'index - devrait charger le graphe complet
+	// Load the index - should load the complete graph
 	if err := store2.Load(); err != nil {
 		t.Fatalf("Failed to load index: %v", err)
 	}
 
-	// Vérifier que l'index est prêt sans reconstruction
+	// Verify that the index is ready without reconstruction
 	if !store2.IsReady() {
 		t.Error("Store should be ready after Load without needing BuildFromStore")
 	}
 
-	// Vérifier que tous les vecteurs sont présents
+	// Verify that all vectors are present
 	// AddCandidate and BuildFromStore both use Verbatim.ID as UUID key,
 	// so duplicates are overwritten. We expect exactly 5 vectors.
 	if store2.Stats() != 5 {
 		t.Errorf("Expected 5 items after load, got %d", store2.Stats())
 	}
 
-	// Effectuer une recherche pour vérifier que l'index fonctionne
+	// Perform a search to verify the index works
 	query := createTestVector(dim, 0.15)
 	results2, err := store2.Search(context.Background(), query, 3, nil, nil)
 	if err != nil {
 		t.Fatalf("Search after load failed: %v", err)
 	}
 
-	// Vérifier que nous avons des résultats (le nombre exact peut varier car HNSW est approximatif)
+	// Verify that we have results (exact count may vary since HNSW is approximate)
 	if len(results2) == 0 {
 		t.Error("Expected search results after load, got none")
 	}

@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// MockStatsRepositoryForTimeline pour les tests
+// MockStatsRepositoryForTimeline for tests
 type mockStatsRepositoryForTimeline struct {
 	getTimelineFunc func(ctx context.Context, wing string, room *string, memType *valueobjects.MemoryType, since, until *string) ([]*valueobjects.TimelineItem, error)
 }
@@ -43,7 +43,7 @@ func (m *mockStatsRepositoryForTimeline) ClearByIDs(ctx context.Context, ids []u
 	return 0, nil
 }
 
-// createTestTimelineItems crée des éléments de timeline pour les tests
+// createTestTimelineItems creates timeline items for tests
 func createTestTimelineItems() []*valueobjects.TimelineItem {
 	now := time.Now()
 	return []*valueobjects.TimelineItem{
@@ -68,7 +68,7 @@ func createTestTimelineItems() []*valueobjects.TimelineItem {
 	}
 }
 
-// TestGetTimeline_Execute test timeline avec filtre wing
+// TestGetTimeline_Execute test timeline with wing filter
 func TestGetTimeline_Execute(t *testing.T) {
 	ctx := context.Background()
 	testItems := createTestTimelineItems()
@@ -103,13 +103,13 @@ func TestGetTimeline_Execute(t *testing.T) {
 		t.Errorf("Expected 3 items, got %d", len(output.Items))
 	}
 
-	// Vérifier l'ordre
+	// Check the order
 	if output.Items[0].Summary != "First session note" {
 		t.Errorf("Expected first item 'First session note', got '%s'", output.Items[0].Summary)
 	}
 }
 
-// TestGetTimeline_WithRoomFilter test avec filtre room
+// TestGetTimeline_WithRoomFilter test with room filter
 func TestGetTimeline_WithRoomFilter(t *testing.T) {
 	ctx := context.Background()
 	testItems := []*valueobjects.TimelineItem{
@@ -147,7 +147,7 @@ func TestGetTimeline_WithRoomFilter(t *testing.T) {
 	}
 }
 
-// TestGetTimeline_WithTypeFilter test avec filtre type
+// TestGetTimeline_WithTypeFilter test with type filter
 func TestGetTimeline_WithTypeFilter(t *testing.T) {
 	ctx := context.Background()
 	testItems := []*valueobjects.TimelineItem{
@@ -185,7 +185,7 @@ func TestGetTimeline_WithTypeFilter(t *testing.T) {
 		t.Errorf("Expected 2 items, got %d", len(output.Items))
 	}
 
-	// Vérifier que tous les items sont de type decision
+	// Verify that all items are of type decision
 	for _, item := range output.Items {
 		if item.Type != valueobjects.TypeDecision {
 			t.Errorf("Expected type 'decision', got '%s'", item.Type)
@@ -193,7 +193,7 @@ func TestGetTimeline_WithTypeFilter(t *testing.T) {
 	}
 }
 
-// TestGetTimeline_DateRange test avec since/until
+// TestGetTimeline_DateRange test with since/until
 func TestGetTimeline_DateRange(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
@@ -248,7 +248,7 @@ func TestGetTimeline_DateRange(t *testing.T) {
 	}
 }
 
-// TestGetTimeline_EmptyResult test quand aucun résultat
+// TestGetTimeline_EmptyResult test when no results
 func TestGetTimeline_EmptyResult(t *testing.T) {
 	ctx := context.Background()
 	mockRepo := &mockStatsRepositoryForTimeline{
@@ -276,7 +276,7 @@ func TestGetTimeline_EmptyResult(t *testing.T) {
 	}
 }
 
-// TestGetTimeline_RepositoryError test erreur du repository
+// TestGetTimeline_RepositoryError test repository error
 func TestGetTimeline_RepositoryError(t *testing.T) {
 	ctx := context.Background()
 	mockRepo := &mockStatsRepositoryForTimeline{
@@ -300,7 +300,7 @@ func TestGetTimeline_RepositoryError(t *testing.T) {
 	}
 }
 
-// TestGetTimeline_AllFilters test avec tous les filtres combinés
+// TestGetTimeline_AllFilters test with all filters combined
 func TestGetTimeline_AllFilters(t *testing.T) {
 	ctx := context.Background()
 	testItems := []*valueobjects.TimelineItem{

@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// MockVerbatimRepository pour les tests
+// MockVerbatimRepository for tests
 type mockVerbatimRepository struct {
 	getVerbatimByIDFunc func(ctx context.Context, id uuid.UUID) (*entities.Verbatim, error)
 }
@@ -44,7 +44,7 @@ func (m *mockVerbatimRepository) UpdateVerbatimSummary(_ context.Context, _ uuid
 	return nil
 }
 
-// MockFingerprintRepository pour les tests
+// MockFingerprintRepository for tests
 type mockLoadFingerprintRepository struct {
 	getFingerprintByIDFunc func(ctx context.Context, id uuid.UUID) (*entities.Fingerprint, error)
 }
@@ -76,7 +76,7 @@ func (m *mockLoadFingerprintRepository) GetRecentFingerprintsByWingTx(ctx contex
 	return nil, nil
 }
 
-// createTestVerbatim crée un verbatim de test
+// createTestVerbatim creates a test verbatim
 func createTestVerbatim(id uuid.UUID, content string) *entities.Verbatim {
 	room := "test-room"
 	return &entities.Verbatim{
@@ -90,7 +90,7 @@ func createTestVerbatim(id uuid.UUID, content string) *entities.Verbatim {
 	}
 }
 
-// TestLoadMemory_Execute test chargement verbatim existant
+// TestLoadMemory_Execute test loading existing verbatim
 func TestLoadMemory_Execute(t *testing.T) {
 	ctx := context.Background()
 	testID := uuid.New()
@@ -124,38 +124,38 @@ func TestLoadMemory_Execute(t *testing.T) {
 		t.Fatal("Expected verbatim, got nil")
 	}
 
-	// Vérifier l'ID
+	// Check the ID
 	if output.Verbatim.ID != testID {
 		t.Errorf("Expected ID %s, got %s", testID, output.Verbatim.ID)
 	}
 
-	// Vérifier le contenu
+	// Check the content
 	if output.Verbatim.Content != testContent {
 		t.Errorf("Expected content '%s', got '%s'", testContent, output.Verbatim.Content)
 	}
 
-	// Vérifier le wing
+	// Check the wing
 	if output.Verbatim.Wing != "test-wing" {
 		t.Errorf("Expected wing 'test-wing', got '%s'", output.Verbatim.Wing)
 	}
 
-	// Vérifier le room
+	// Check the room
 	if output.Verbatim.Room == nil || *output.Verbatim.Room != "test-room" {
 		t.Error("Expected room to be 'test-room'")
 	}
 
-	// Vérifier le TokenCount
+	// Check the TokenCount
 	if output.Verbatim.TokenCount != len(testContent)/4 {
 		t.Errorf("Expected TokenCount %d, got %d", len(testContent)/4, output.Verbatim.TokenCount)
 	}
 
-	// Vérifier les métadonnées
+	// Check the metadata
 	if len(output.Verbatim.Metadata) != 1 {
 		t.Errorf("Expected 1 metadata entry, got %d", len(output.Verbatim.Metadata))
 	}
 }
 
-// TestLoadMemory_NotFound test avec ID inexistant
+// TestLoadMemory_NotFound test with non-existent ID
 func TestLoadMemory_NotFound(t *testing.T) {
 	ctx := context.Background()
 	testID := uuid.New()
@@ -186,19 +186,19 @@ func TestLoadMemory_NotFound(t *testing.T) {
 	}
 }
 
-// TestLoadMemory_InvalidID test avec UUID invalide (cas impossible avec le type uuid.UUID)
-// Ce test vérifie que le use case gère correctement les erreurs du repository
+// TestLoadMemory_InvalidID test with invalid UUID (impossible case with the uuid.UUID type)
+// This test verifies that the use case handles repository errors correctly
 func TestLoadMemory_InvalidID(t *testing.T) {
 	ctx := context.Background()
 	mockRepo := &mockVerbatimRepository{
 		getVerbatimByIDFunc: func(ctx context.Context, id uuid.UUID) (*entities.Verbatim, error) {
-			// Simuler une erreur de repository
+			// Simulate a repository error
 			return nil, errors.New("invalid identifier format")
 		},
 	}
 
 	interactor := NewLoadMemory(mockRepo, nil)
-	// Utiliser un UUID zéro qui pourrait être considéré comme invalide par certains systèmes
+	// Use a zero UUID that might be considered invalid by some systems
 	input := LoadMemoryInput{
 		ID: uuid.Nil,
 	}
@@ -213,7 +213,7 @@ func TestLoadMemory_InvalidID(t *testing.T) {
 	}
 }
 
-// TestLoadMemory_RepositoryError test erreur du repository
+// TestLoadMemory_RepositoryError test repository error
 func TestLoadMemory_RepositoryError(t *testing.T) {
 	ctx := context.Background()
 	testID := uuid.New()
@@ -239,7 +239,7 @@ func TestLoadMemory_RepositoryError(t *testing.T) {
 	}
 }
 
-// TestLoadMemory_MultipleCalls test plusieurs appels successifs
+// TestLoadMemory_MultipleCalls test multiple successive calls
 func TestLoadMemory_MultipleCalls(t *testing.T) {
 	ctx := context.Background()
 	id1 := uuid.New()
@@ -261,7 +261,7 @@ func TestLoadMemory_MultipleCalls(t *testing.T) {
 
 	interactor := NewLoadMemory(mockRepo, nil)
 
-	// Premier appel
+	// First call
 	output1, err := interactor.Execute(ctx, LoadMemoryInput{ID: id1})
 	if err != nil {
 		t.Fatalf("First Execute failed: %v", err)
@@ -270,7 +270,7 @@ func TestLoadMemory_MultipleCalls(t *testing.T) {
 		t.Errorf("Expected 'Content 1', got '%s'", output1.Verbatim.Content)
 	}
 
-	// Deuxième appel
+	// Second call
 	output2, err := interactor.Execute(ctx, LoadMemoryInput{ID: id2})
 	if err != nil {
 		t.Fatalf("Second Execute failed: %v", err)
@@ -279,7 +279,7 @@ func TestLoadMemory_MultipleCalls(t *testing.T) {
 		t.Errorf("Expected 'Content 2', got '%s'", output2.Verbatim.Content)
 	}
 
-	// Troisième appel (retour au premier)
+	// Third call (back to the first)
 	output3, err := interactor.Execute(ctx, LoadMemoryInput{ID: id1})
 	if err != nil {
 		t.Fatalf("Third Execute failed: %v", err)
@@ -289,7 +289,7 @@ func TestLoadMemory_MultipleCalls(t *testing.T) {
 	}
 }
 
-// BenchmarkLoadMemory benchmark le use case LoadMemory
+// BenchmarkLoadMemory benchmarks the LoadMemory use case
 func BenchmarkLoadMemory_Execute(b *testing.B) {
 	ctx := context.Background()
 	testID := uuid.New()
@@ -313,7 +313,7 @@ func BenchmarkLoadMemory_Execute(b *testing.B) {
 	}
 }
 
-// TestLoadMemory_ByFingerprintID test le chargement par FingerprintID
+// TestLoadMemory_ByFingerprintID test loading by FingerprintID
 func TestLoadMemory_ByFingerprintID(t *testing.T) {
 	ctx := context.Background()
 	verbatimID := uuid.New()

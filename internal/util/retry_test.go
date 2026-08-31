@@ -10,7 +10,7 @@ import (
 )
 
 func TestRetry_Success(t *testing.T) {
-	// Test que Retry retourne nil quand fn réussit du premier coup
+	// Test that Retry returns nil when fn succeeds on the first try
 	callCount := 0
 	fn := func() error {
 		callCount++
@@ -30,7 +30,7 @@ func TestRetry_Success(t *testing.T) {
 }
 
 func TestRetry_SuccessAfterRetries(t *testing.T) {
-	// Test que Retry réessaye et finit par réussir
+	// Test that Retry retries and eventually succeeds
 	callCount := 0
 	fn := func() error {
 		callCount++
@@ -58,7 +58,7 @@ func TestRetry_SuccessAfterRetries(t *testing.T) {
 }
 
 func TestRetry_MaxAttemptsExceeded(t *testing.T) {
-	// Test que Retry retourne l'erreur après MaxAttempts échecs
+	// Test that Retry returns the error after MaxAttempts failures
 	callCount := 0
 	expectedErr := errors.New("persistent error")
 	fn := func() error {
@@ -87,7 +87,7 @@ func TestRetry_MaxAttemptsExceeded(t *testing.T) {
 }
 
 func TestRetry_ContextCancellation(t *testing.T) {
-	// Test que Retry respecte la cancellation du context
+	// Test that Retry respects context cancellation
 	callCount := 0
 	fn := func() error {
 		callCount++
@@ -119,7 +119,7 @@ func TestRetry_ContextCancellation(t *testing.T) {
 }
 
 func TestRetry_ContextTimeout(t *testing.T) {
-	// Test que Retry respecte le timeout du context
+	// Test that Retry respects context timeout
 	callCount := 0
 	fn := func() error {
 		callCount++
@@ -150,7 +150,7 @@ func TestRetry_ContextTimeout(t *testing.T) {
 }
 
 func TestRetry_ExponentialBackoff(t *testing.T) {
-	// Test que les délais augmentent exponentiellement
+	// Test that delays increase exponentially
 	delays := []time.Duration{}
 	startTimes := []time.Time{}
 
@@ -192,7 +192,7 @@ func TestRetry_ExponentialBackoff(t *testing.T) {
 }
 
 func TestRetry_NonRetryableError(t *testing.T) {
-	// Test que Retry s'arrête immédiatement sur une erreur non retryable
+	// Test that Retry stops immediately on a non-retryable error
 	retryableErr := errors.New("retryable")
 	nonRetryableErr := errors.New("non-retryable")
 
@@ -221,7 +221,7 @@ func TestRetry_NonRetryableError(t *testing.T) {
 }
 
 func TestRetry_RetryableError(t *testing.T) {
-	// Test que Retry continue sur une erreur retryable
+	// Test that Retry continues on a retryable error
 	retryableErr := errors.New("retryable")
 
 	callCount := 0
@@ -252,7 +252,7 @@ func TestRetry_RetryableError(t *testing.T) {
 }
 
 func TestRetry_DefaultValues(t *testing.T) {
-	// Test que les valeurs par défaut sont appliquées correctement
+	// Test that default values are applied correctly
 	callCount := 0
 	fn := func() error {
 		callCount++
@@ -275,7 +275,7 @@ func TestRetry_DefaultValues(t *testing.T) {
 }
 
 func TestRetryWithResult_Success(t *testing.T) {
-	// Test RetryWithResult avec succès
+	// Test RetryWithResult with success
 	callCount := 0
 	expectedResult := "success"
 	fn := func() (string, error) {
@@ -299,7 +299,7 @@ func TestRetryWithResult_Success(t *testing.T) {
 }
 
 func TestRetryWithResult_SuccessAfterRetries(t *testing.T) {
-	// Test RetryWithResult qui réussit après plusieurs tentatives
+	// Test RetryWithResult that succeeds after multiple attempts
 	callCount := 0
 	expectedResult := 42
 	fn := func() (int, error) {
@@ -331,7 +331,7 @@ func TestRetryWithResult_SuccessAfterRetries(t *testing.T) {
 }
 
 func TestRetryWithResult_MaxAttemptsExceeded(t *testing.T) {
-	// Test RetryWithResult qui échoue après MaxAttempts
+	// Test RetryWithResult that fails after MaxAttempts
 	callCount := 0
 	expectedErr := errors.New("persistent error")
 	fn := func() (string, error) {
