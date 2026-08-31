@@ -7,9 +7,9 @@ import (
 	"context"
 	"errors"
 
-	"github.com/benoitpetit/mira/internal/adapters/storage"
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
+	"github.com/benoitpetit/mira/internal/usecases/ports"
 	"github.com/google/uuid"
 )
 
@@ -35,9 +35,15 @@ func DefaultHNSWOptions() HNSWOptions {
 }
 
 // NewHNSWStore creates a new HNSW index (not supported on Windows)
-func NewHNSWStore(store *storage.SQLiteRepository, dimension int, indexPath string, opts HNSWOptions) (*HNSWStore, error) {
+func NewHNSWStore(store ports.EmbeddingSource, dimension int, indexPath string, opts HNSWOptions) (*HNSWStore, error) {
 	return nil, errors.New("HNSW vector store is not supported on Windows. Use SQLiteVectorStore instead")
 }
+
+// SetModelHash sets the expected embedding model hash (no-op on Windows).
+func (h *HNSWStore) SetModelHash(hash string) {}
+
+// SetEncryptionKey sets the AES-256-GCM encryption key (no-op on Windows).
+func (h *HNSWStore) SetEncryptionKey(key []byte) {}
 
 // Search searches for nearest neighbors (not supported on Windows)
 func (h *HNSWStore) Search(ctx context.Context, vector []float32, limit int, wing, room *string) ([]*entities.Candidate, error) {
