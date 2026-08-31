@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// MockStatsRepositoryForArchive pour les tests
+// MockStatsRepositoryForArchive for tests
 type mockStatsRepositoryForArchive struct {
 	archiveOldMemoriesFunc func(ctx context.Context) (*valueobjects.ArchiveResult, error)
 }
@@ -42,7 +42,7 @@ func (m *mockStatsRepositoryForArchive) ClearByIDs(ctx context.Context, ids []uu
 	return 0, nil
 }
 
-// TestArchiveMemories_Execute test archivage avec vieilles mémoires
+// TestArchiveMemories_Execute test archiving with old memories
 func TestArchiveMemories_Execute(t *testing.T) {
 	ctx := context.Background()
 	expectedResult := &valueobjects.ArchiveResult{
@@ -71,23 +71,23 @@ func TestArchiveMemories_Execute(t *testing.T) {
 		t.Fatal("Expected result, got nil")
 	}
 
-	// Vérifier SessionNotes
+	// Check SessionNotes
 	if output.Result.SessionNotes != 10 {
 		t.Errorf("Expected SessionNotes 10, got %d", output.Result.SessionNotes)
 	}
 
-	// Vérifier DebugLogs
+	// Check DebugLogs
 	if output.Result.DebugLogs != 25 {
 		t.Errorf("Expected DebugLogs 25, got %d", output.Result.DebugLogs)
 	}
 
-	// Vérifier TokensFreed
+	// Check TokensFreed
 	if output.Result.TokensFreed != 5000 {
 		t.Errorf("Expected TokensFreed 5000, got %d", output.Result.TokensFreed)
 	}
 }
 
-// TestArchiveMemories_Empty test quand rien à archiver
+// TestArchiveMemories_Empty test when nothing to archive
 func TestArchiveMemories_Empty(t *testing.T) {
 	ctx := context.Background()
 	emptyResult := &valueobjects.ArchiveResult{
@@ -125,7 +125,7 @@ func TestArchiveMemories_Empty(t *testing.T) {
 	}
 }
 
-// TestArchiveMemories_ByType test archivage par type (simule différents résultats par type)
+// TestArchiveMemories_ByType test archiving by type (simulates different results per type)
 func TestArchiveMemories_ByType(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -210,7 +210,7 @@ func TestArchiveMemories_ByType(t *testing.T) {
 	}
 }
 
-// TestArchiveMemories_RepositoryError test erreur du repository
+// TestArchiveMemories_RepositoryError test repository error
 func TestArchiveMemories_RepositoryError(t *testing.T) {
 	ctx := context.Background()
 	mockRepo := &mockStatsRepositoryForArchive{
@@ -230,7 +230,7 @@ func TestArchiveMemories_RepositoryError(t *testing.T) {
 	}
 }
 
-// TestArchiveMemories_MultipleExecutions test plusieurs exécutions successives
+// TestArchiveMemories_MultipleExecutions test multiple successive executions
 func TestArchiveMemories_MultipleExecutions(t *testing.T) {
 	ctx := context.Background()
 	callCount := 0
@@ -253,7 +253,7 @@ func TestArchiveMemories_MultipleExecutions(t *testing.T) {
 
 	interactor := NewArchiveMemories(mockRepo)
 
-	// Première exécution
+	// First execution
 	output1, err := interactor.Execute(ctx)
 	if err != nil {
 		t.Fatalf("First Execute failed: %v", err)
@@ -262,7 +262,7 @@ func TestArchiveMemories_MultipleExecutions(t *testing.T) {
 		t.Errorf("Expected SessionNotes 10, got %d", output1.Result.SessionNotes)
 	}
 
-	// Deuxième exécution
+	// Second execution
 	output2, err := interactor.Execute(ctx)
 	if err != nil {
 		t.Fatalf("Second Execute failed: %v", err)
@@ -271,7 +271,7 @@ func TestArchiveMemories_MultipleExecutions(t *testing.T) {
 		t.Errorf("Expected SessionNotes 5, got %d", output2.Result.SessionNotes)
 	}
 
-	// Troisième exécution
+	// Third execution
 	output3, err := interactor.Execute(ctx)
 	if err != nil {
 		t.Fatalf("Third Execute failed: %v", err)
@@ -285,7 +285,7 @@ func TestArchiveMemories_MultipleExecutions(t *testing.T) {
 	}
 }
 
-// BenchmarkArchiveMemories benchmark le use case ArchiveMemories
+// BenchmarkArchiveMemories benchmarks the ArchiveMemories use case
 func BenchmarkArchiveMemories_Execute(b *testing.B) {
 	ctx := context.Background()
 	result := &valueobjects.ArchiveResult{

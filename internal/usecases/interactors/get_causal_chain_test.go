@@ -13,7 +13,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// MockCausalGraphRepository pour les tests
+// MockCausalGraphRepository for tests
 type mockCausalGraphRepository struct {
 	getChainFunc        func(ctx context.Context, id uuid.UUID, maxDepth int) ([]*entities.CausalNode, error)
 	getConsequencesFunc func(ctx context.Context, id uuid.UUID, maxDepth int) ([]*entities.CausalNode, error)
@@ -61,7 +61,7 @@ func (m *mockCausalGraphRepository) GetChildren(ctx context.Context, nodeID uuid
 	return nil, nil
 }
 
-// TestGetCausalChain_Execute test avec une chaîne causale simple
+// TestGetCausalChain_Execute test with a simple causal chain
 func TestGetCausalChain_Execute(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
@@ -101,7 +101,7 @@ func TestGetCausalChain_Execute(t *testing.T) {
 		t.Errorf("Expected 2 nodes in chain, got %d", len(output.Chain))
 	}
 
-	// Vérifier que les nœuds sont retournés dans le bon ordre
+	// Verify that nodes are returned in the correct order
 	if output.Chain[0].Summary != "Root cause" {
 		t.Errorf("Expected first node summary 'Root cause', got '%s'", output.Chain[0].Summary)
 	}
@@ -109,13 +109,13 @@ func TestGetCausalChain_Execute(t *testing.T) {
 		t.Errorf("Expected second node summary 'Current node', got '%s'", output.Chain[1].Summary)
 	}
 
-	// Vérifier que les conséquences ne sont pas incluses
+	// Verify that consequences are not included
 	if len(output.Consequences) != 0 {
 		t.Errorf("Expected no consequences, got %d", len(output.Consequences))
 	}
 }
 
-// TestGetCausalChain_WithConsequences test avec includeConsequences=true
+// TestGetCausalChain_WithConsequences test with includeConsequences=true
 func TestGetCausalChain_WithConsequences(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
@@ -164,7 +164,7 @@ func TestGetCausalChain_WithConsequences(t *testing.T) {
 		t.Errorf("Expected 2 consequences, got %d", len(output.Consequences))
 	}
 
-	// Vérifier les conséquences
+	// Check the consequences
 	if output.Consequences[0].Summary != "Child 1" {
 		t.Errorf("Expected first consequence 'Child 1', got '%s'", output.Consequences[0].Summary)
 	}
@@ -173,7 +173,7 @@ func TestGetCausalChain_WithConsequences(t *testing.T) {
 	}
 }
 
-// TestGetCausalChain_MaxDepth test que maxDepth est respecté
+// TestGetCausalChain_MaxDepth test that maxDepth is respected
 func TestGetCausalChain_MaxDepth(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
@@ -212,7 +212,7 @@ func TestGetCausalChain_MaxDepth(t *testing.T) {
 	}
 }
 
-// TestGetCausalChain_NotFound test avec ID inexistant
+// TestGetCausalChain_NotFound test with non-existent ID
 func TestGetCausalChain_NotFound(t *testing.T) {
 	ctx := context.Background()
 	testID := uuid.New()
@@ -244,7 +244,7 @@ func TestGetCausalChain_NotFound(t *testing.T) {
 	}
 }
 
-// TestGetCausalChain_RepositoryError test erreur du repository
+// TestGetCausalChain_RepositoryError test repository error
 func TestGetCausalChain_RepositoryError(t *testing.T) {
 	ctx := context.Background()
 	testID := uuid.New()

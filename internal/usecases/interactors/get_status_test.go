@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// MockStatsRepository pour les tests
+// MockStatsRepository for tests
 type mockStatsRepository struct {
 	getStatsFunc func(ctx context.Context) (*valueobjects.Stats, error)
 }
@@ -44,7 +44,7 @@ func (m *mockStatsRepository) ClearByIDs(ctx context.Context, ids []uuid.UUID) (
 	return 0, nil
 }
 
-// MockModelRepository pour les tests
+// MockModelRepository for tests
 type mockModelRepository struct {
 	getAllModelsFunc func(ctx context.Context) ([]string, error)
 }
@@ -60,7 +60,7 @@ func (m *mockModelRepository) GetAllModels(ctx context.Context) ([]string, error
 	return nil, nil
 }
 
-// TestGetStatus_Execute test que toutes les stats sont retournées
+// TestGetStatus_Execute test that all stats are returned
 func TestGetStatus_Execute(t *testing.T) {
 	ctx := context.Background()
 	expectedStats := &valueobjects.Stats{
@@ -102,53 +102,53 @@ func TestGetStatus_Execute(t *testing.T) {
 		t.Fatal("Expected output, got nil")
 	}
 
-	// Vérifier VerbatimCount
+	// Check VerbatimCount
 	if output.Stats.VerbatimCount != 100 {
 		t.Errorf("Expected VerbatimCount 100, got %d", output.Stats.VerbatimCount)
 	}
 
-	// Vérifier FingerprintCount
+	// Check FingerprintCount
 	if output.Stats.FingerprintCount != 95 {
 		t.Errorf("Expected FingerprintCount 95, got %d", output.Stats.FingerprintCount)
 	}
 
-	// Vérifier EmbeddingCount
+	// Check EmbeddingCount
 	if output.Stats.EmbeddingCount != 95 {
 		t.Errorf("Expected EmbeddingCount 95, got %d", output.Stats.EmbeddingCount)
 	}
 
-	// Vérifier CausalNodeCount
+	// Check CausalNodeCount
 	if output.Stats.CausalNodeCount != 50 {
 		t.Errorf("Expected CausalNodeCount 50, got %d", output.Stats.CausalNodeCount)
 	}
 
-	// Vérifier CausalEdgeCount
+	// Check CausalEdgeCount
 	if output.Stats.CausalEdgeCount != 120 {
 		t.Errorf("Expected CausalEdgeCount 120, got %d", output.Stats.CausalEdgeCount)
 	}
 
-	// Vérifier TotalTokens
+	// Check TotalTokens
 	if output.Stats.TotalTokens != 50000 {
 		t.Errorf("Expected TotalTokens 50000, got %d", output.Stats.TotalTokens)
 	}
 
-	// Vérifier TypeCounts
+	// Check TypeCounts
 	if len(output.Stats.TypeCounts) != 3 {
 		t.Errorf("Expected 3 type counts, got %d", len(output.Stats.TypeCounts))
 	}
 
-	// Vérifier ActiveWings
+	// Check ActiveWings
 	if len(output.Stats.ActiveWings) != 3 {
 		t.Errorf("Expected 3 active wings, got %d", len(output.Stats.ActiveWings))
 	}
 
-	// Vérifier les modèles
+	// Check the models
 	if len(output.Models) != 3 {
 		t.Errorf("Expected 3 models, got %d", len(output.Models))
 	}
 }
 
-// TestGetStatus_EmptyDatabase test avec base vide
+// TestGetStatus_EmptyDatabase test with empty database
 func TestGetStatus_EmptyDatabase(t *testing.T) {
 	ctx := context.Background()
 	emptyStats := &valueobjects.Stats{
@@ -201,7 +201,7 @@ func TestGetStatus_EmptyDatabase(t *testing.T) {
 	}
 }
 
-// TestGetStatus_WithModels test que les modèles sont listés
+// TestGetStatus_WithModels test that models are listed
 func TestGetStatus_WithModels(t *testing.T) {
 	ctx := context.Background()
 	stats := &valueobjects.Stats{
@@ -243,7 +243,7 @@ func TestGetStatus_WithModels(t *testing.T) {
 	}
 }
 
-// TestGetStatus_StatsError test erreur lors de la récupération des stats
+// TestGetStatus_StatsError test error when fetching stats
 func TestGetStatus_StatsError(t *testing.T) {
 	ctx := context.Background()
 	mockStatsRepo := &mockStatsRepository{
@@ -269,7 +269,7 @@ func TestGetStatus_StatsError(t *testing.T) {
 	}
 }
 
-// TestGetStatus_ModelsError test erreur lors de la récupération des modèles (fallback)
+// TestGetStatus_ModelsError test error when fetching models (fallback)
 func TestGetStatus_ModelsError(t *testing.T) {
 	ctx := context.Background()
 	stats := &valueobjects.Stats{

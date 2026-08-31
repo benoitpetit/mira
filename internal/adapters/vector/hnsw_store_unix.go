@@ -375,23 +375,23 @@ func floatsToEmbedding(v []float32) hnsw.Embedding {
 	return v
 }
 
-// hnswNodeData représente un nœud à persister
+// hnswNodeData represents a node to persist
 type hnswNodeData struct {
 	ID        string    // ID interne
 	UUID      string    // UUID original
 	Embedding []float32 // Vecteur
 }
 
-// hnswIndexData représente les données complètes à persister
+// hnswIndexData represents the complete data to persist
 type hnswIndexData struct {
-	Version   string            // Version du format
-	Dimension int               // Dimension des embeddings
-	ModelHash string            // Hash du modèle d'embedding
-	NodeCount int               // Nombre de nœuds
-	Nodes     []hnswNodeData    // Données des nœuds
-	UUIDToID  map[string]string // Mapping UUID -> ID interne
-	NextID    int               // Prochain ID disponible
-	SavedAt   time.Time         // Date de sauvegarde
+	Version   string            // Format version
+	Dimension int               // Embedding dimension
+	ModelHash string            // Embedding model hash
+	NodeCount int               // Number of nodes
+	Nodes     []hnswNodeData    // Node data
+	UUIDToID  map[string]string // Mapping UUID -> internal ID
+	NextID    int               // Next available ID
+	SavedAt   time.Time         // Save timestamp
 }
 
 // Save persists the complete HNSW index to disk (mappings + all nodes with embeddings)
@@ -403,22 +403,22 @@ func (h *HNSWStore) Save() error {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	// Préparer les données de mappings
+	// Prepare mapping data
 	uuidToID := make(map[string]string)
 	for uuid, id := range h.uuidToID {
 		uuidToID[uuid.String()] = id
 	}
 
-	// Collecter tous les nœuds du graphe
+	// Collect all nodes from the graph
 	nodes := make([]hnswNodeData, 0, h.graph.Len())
 	for uuid, id := range h.uuidToID {
-		// Récupérer le nœud depuis le graphe
+		// Retrieve node from graph
 		n, ok := h.graph.Lookup(id)
 		if !ok {
-			continue // Nœud non trouvé dans le graphe
+			continue // Node not found in graph
 		}
 
-		// Copier l'embedding
+	// Copy embedding
 		embedding := make([]float32, len(n.Embedding()))
 		copy(embedding, n.Embedding())
 
@@ -429,7 +429,7 @@ func (h *HNSWStore) Save() error {
 		})
 	}
 
-	// Construire la structure de données complète
+	// Build complete data structure
 	data := hnswIndexData{
 		Version:   "1.0",
 		Dimension: h.dimension,
@@ -441,14 +441,14 @@ func (h *HNSWStore) Save() error {
 		SavedAt:   time.Now(),
 	}
 
-	// Encoder en mémoire (nécessaire pour le chiffrement optionnel)
+	// Encode in memory (required for optional encryption)
 	var buf bytes.Buffer
 	if err := gob.NewEncoder(&buf).Encode(data); err != nil {
 		return fmt.Errorf("failed to encode index: %w", err)
 	}
 	payload := buf.Bytes()
 
-	// Chiffrement AES-256-GCM optionnel
+	// Optional AES-256-GCM encryption
 	if len(h.encryptionKey) == 32 {
 		encrypted, err := h.encryptAESGCM(payload)
 		if err != nil {
@@ -458,19 +458,19 @@ func (h *HNSWStore) Save() error {
 		log.Printf("[Vector] HNSW index encrypted (AES-256-GCM)")
 	}
 
-	// Sauvegarde atomique : écriture dans .tmp puis rename
+	// Atomic save: write to .tmp then rename
 	tmpPath := h.indexPath + ".tmp"
 	if err := os.WriteFile(tmpPath, payload, 0600); err != nil {
 		return fmt.Errorf("failed to write temp index file: %w", err)
 	}
 
-	// Remplacement atomique
+	// Atomic replacement
 	if err := os.Rename(tmpPath, h.indexPath); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("failed to rename index file: %w", err)
 	}
 
-	// Calculer et écrire le checksum sur le fichier final (chiffré ou non)
+	// Calculate and write checksum on the final file (encrypted or not)
 	written, err := os.ReadFile(h.indexPath)
 	if err != nil {
 		return fmt.Errorf("failed to read saved index for checksum: %w", err)
@@ -492,19 +492,19 @@ func (h *HNSWStore) Load() error {
 		return nil
 	}
 
-	// Vérifier si le fichier existe
+	// Check if file exists
 	if _, err := os.Stat(h.indexPath); os.IsNotExist(err) {
 		log.Printf("[Vector] HNSW index file not found, will build from scratch")
 		return nil
 	}
 
-	// Lire les bytes bruts du fichier (chiffrés ou non)
+	// Read raw bytes from file (encrypted or not)
 	raw, err := os.ReadFile(h.indexPath)
 	if err != nil {
 		return fmt.Errorf("failed to read index file: %w", err)
 	}
 
-	// Vérifier le checksum sur les bytes bruts (avant déchiffrement)
+	// Verify checksum on raw bytes (before decryption)
 	checksumPath := h.indexPath + ".sha256"
 	if checksumData, err := os.ReadFile(checksumPath); err == nil {
 		hash := sha256.Sum256(raw)
@@ -515,7 +515,7 @@ func (h *HNSWStore) Load() error {
 		}
 	}
 
-	// Déchiffrement AES-256-GCM optionnel
+	// Optional AES-256-GCM decryption
 	payload := raw
 	if len(h.encryptionKey) == 32 {
 		decrypted, err := h.decryptAESGCM(raw)
@@ -526,10 +526,10 @@ func (h *HNSWStore) Load() error {
 		log.Printf("[Vector] HNSW index decrypted (AES-256-GCM)")
 	}
 
-	// Décoder les données
+	// Decode data
 	var data hnswIndexData
 	if err := gob.NewDecoder(bytes.NewReader(payload)).Decode(&data); err != nil {
-		// Essayer de charger l'ancien format (sans Nodes) — seulement si non chiffré
+		// Try loading old format (without Nodes) — only if not encrypted
 		if len(h.encryptionKey) == 32 {
 			return fmt.Errorf("failed to decode encrypted index: %w", err)
 		}
@@ -540,7 +540,7 @@ func (h *HNSWStore) Load() error {
 		if err := gob.NewDecoder(bytes.NewReader(payload)).Decode(&oldData); err != nil {
 			return fmt.Errorf("failed to decode index: %w", err)
 		}
-		// Migrer depuis l'ancien format
+		// Migrate from old format
 		data.Version = "1.0"
 		data.UUIDToID = oldData.UUIDToID
 		data.NextID = oldData.NextID
@@ -549,7 +549,7 @@ func (h *HNSWStore) Load() error {
 		log.Printf("[Vector] Loaded legacy index format, will rebuild graph from DB")
 	}
 
-	// Vérifier la version
+	// Verify version
 	if data.Version != "1.0" {
 		return fmt.Errorf("unsupported index version: %s", data.Version)
 	}
@@ -559,7 +559,7 @@ func (h *HNSWStore) Load() error {
 		return fmt.Errorf("dimension mismatch: saved=%d, expected=%d", data.Dimension, h.dimension)
 	}
 
-	// Vérifier le model hash
+	// Verify model hash
 	if data.ModelHash != "" && h.modelHash != "" && data.ModelHash != h.modelHash {
 		return fmt.Errorf("model hash mismatch: saved=%s, expected=%s", data.ModelHash, h.modelHash)
 	}
@@ -567,7 +567,7 @@ func (h *HNSWStore) Load() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	// Restaurer les mappings
+	// Restore mappings
 	h.nextID = data.NextID
 	for uuidStr, id := range data.UUIDToID {
 		idUUID, err := uuid.Parse(uuidStr)
@@ -579,10 +579,10 @@ func (h *HNSWStore) Load() error {
 		h.idToUUID[id] = idUUID
 	}
 
-	// Si nous avons des nœuds sauvegardés, reconstruire le graphe
+	// If we have saved nodes, rebuild the graph
 	if len(data.Nodes) > 0 {
 		for _, nodeData := range data.Nodes {
-			// Vérifier la dimension du vecteur
+			// Verify vector dimension
 			if len(nodeData.Embedding) != h.dimension {
 				log.Printf("[Vector] Warning: skipping node %s with wrong dimension: got %d, expected %d",
 					nodeData.ID, len(nodeData.Embedding), h.dimension)
@@ -596,7 +596,7 @@ func (h *HNSWStore) Load() error {
 			h.graph.Add(n)
 		}
 
-		// Vérifier que le nombre de nœuds chargés correspond
+		// Verify loaded node count matches
 		if h.graph.Len() != len(data.Nodes) {
 			log.Printf("[Vector] Warning: loaded %d nodes but expected %d",
 				h.graph.Len(), len(data.Nodes))

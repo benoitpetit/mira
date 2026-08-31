@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// setupTestDB crée une DB temporaire
+// setupTestDB creates a temporary DB
 func setupTestDB(t *testing.T) *storage.SQLiteRepository {
 	dbPath := "/tmp/test_mira_" + uuid.New().String() + ".db"
 	repo, err := storage.NewSQLiteRepository(dbPath, storage.SQLiteOptions{})
