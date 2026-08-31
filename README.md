@@ -6,7 +6,7 @@
 
   **Long-term Memory System for LLMs with Optimal Context Budget Allocation**
 
-  [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
+  [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
   [![Version](https://img.shields.io/badge/Version-0.4.7-blue?style=flat-square)]()
   [![Tests](https://img.shields.io/badge/Tests-~70%25-yellow?style=flat-square)]()
@@ -258,6 +258,20 @@ Blend: `0.7 × semantic + 0.3 × rerank`
 
 If HNSW is not ready (e.g., rebuilding from scratch), a transparent fallback wrapper routes searches to the SQLite vector store. Recall never fails.
 
+### 8. Context Compression
+
+Rule-based context compression for `session_note` verbatims. Summarised text is stored alongside the original and surfaced by the recall engine when the token budget is too tight for full verbatim.
+
+- **No LLM required** — deterministic, instant compression
+- **Auto-compress** at store time (async, non-fatal) or on-demand via `mira_compress`
+- **Configurable** — set `min_tokens` threshold to skip short notes
+
+```yaml
+compression:
+  auto_compress: false   # Auto-compress at store time
+  min_tokens: 100        # Minimum token count to qualify
+```
+
 ---
 
 ## Causal Graph
@@ -290,7 +304,7 @@ causalPatterns := map[RelationType]*regexp.Regexp{
 
 ### Prerequisites
 
-- Go 1.23+ (if building from source)
+- Go 1.25+ (if building from source)
 - SQLite3 (included)
 - ~100 MB disk space for the embedding model
 
@@ -396,6 +410,10 @@ nano config.yaml
 # Import memories from JSON (with optional dry-run)
 ./mira import --file memories.json
 ./mira import --file memories.json --dry-run
+
+# Optimize a chat history file to fit a token budget (no LLM calls)
+./mira optimize --file history.json --budget 2000
+./mira optimize --file history.json --stats-only
 
 # Config validation and inspection
 ./mira config validate
@@ -597,6 +615,7 @@ webhooks:
 | `mira_timeline` | Chronological memory reconstruction |
 | `mira_archive` | Archive and clean old memories |
 | `mira_clear_memory` | Permanently delete memories (global or room-scoped) |
+| `mira_compress` | Run rule-based context compression on session_notes |
 
 ### Fallback Wings
 
