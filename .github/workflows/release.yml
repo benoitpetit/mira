@@ -55,8 +55,7 @@ jobs:
 
       - name: Initialize Go workspace
         run: |
-          echo "use ./soul" > go.work
-          echo "use ." >> go.work
+          printf 'go 1.25\n\nuse ./soul\nuse .\n' > go.work
 
       - name: Build binary
         env:
@@ -95,8 +94,7 @@ jobs:
 
       - name: Initialize Go workspace
         run: |
-          echo "use ./soul" > go.work
-          echo "use ." >> go.work
+          printf 'go 1.25\n\nuse ./soul\nuse .\n' > go.work
 
       - name: Run tests
         run: go test -v -race ./...
