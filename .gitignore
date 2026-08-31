@@ -66,7 +66,6 @@ TODO.md
 
 # WIP features — not part of current release
 internal/interfaces/rest/
-internal/adapters/storage/migrations_postgres/
 internal/adapters/storage/postgres_repository.go
 internal/adapters/storage/migrations/005_audit_log.up.sql
 internal/adapters/storage/migrations/006_access_policies.up.sql

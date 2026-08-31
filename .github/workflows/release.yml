@@ -40,6 +40,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Checkout SOUL dependency
+        uses: actions/checkout@v4
+        with:
+          repository: benoitpetit/soul
+          path: ../soul
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
