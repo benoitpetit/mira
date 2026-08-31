@@ -163,10 +163,17 @@ type RecallMemory struct {
 	rerankerTopK                  int
 	sessionMemoryBoost            float64
 	decayRates                    map[string]float64
+	sessionCacheTTLSeconds        int
 
 	// Session cache for multi-turn memory injection
-	sessionCache     map[string][]uuid.UUID
+	sessionCache     map[string]sessionCacheEntry
 	sessionCacheMu   sync.RWMutex
+}
+
+// sessionCacheEntry stores cached session memory IDs with a timestamp for TTL eviction.
+type sessionCacheEntry struct {
+	ids    []uuid.UUID
+	expires time.Time
 }
 
 // RecallMemoryConfig configures the recall interactor
@@ -195,6 +202,7 @@ type RecallMemoryConfig struct {
 	RerankerEnabled               bool
 	RerankerTopK                  int
 	SessionMemoryBoost            float64
+	SessionCacheTTLSeconds        int
 	TagRepo                       ports.TagRepository
 	Reranker                      ports.Reranker
 	DecayRates                    map[string]float64
@@ -227,6 +235,7 @@ func DefaultRecallMemoryConfig() RecallMemoryConfig {
 		RerankerEnabled:               false,
 		RerankerTopK:                  30,
 		SessionMemoryBoost:            1.3,
+		SessionCacheTTLSeconds:        1800,
 		DecayRates: map[string]float64{
 			"decision":     0.001,
 			"fact":         0.005,
@@ -290,16 +299,19 @@ func NewRecallMemory(
 		rerankerEnabled:               config.RerankerEnabled,
 		rerankerTopK:                  config.RerankerTopK,
 		sessionMemoryBoost:            config.SessionMemoryBoost,
+		sessionCacheTTLSeconds:        config.SessionCacheTTLSeconds,
 		tagRepo:                       config.TagRepo,
 		reranker:                      config.Reranker,
 		decayRates:                    decayRates,
-		sessionCache:                  make(map[string][]uuid.UUID),
+		sessionCache:                  make(map[string]sessionCacheEntry),
 	}
 }
 
 // Execute performs context budget allocation
 func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*RecallMemoryOutput, error) {
 	start := time.Now()
+
+	uc.cleanupSessionCache()
 
 	budget := input.Budget
 	if budget <= 0 {
@@ -454,9 +466,10 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 	if input.SessionID != nil && *input.SessionID != "" {
 		uc.sessionCacheMu.Lock()
 		if uc.sessionCache == nil {
-			uc.sessionCache = make(map[string][]uuid.UUID)
+			uc.sessionCache = make(map[string]sessionCacheEntry)
 		}
-		existing := uc.sessionCache[*input.SessionID]
+		entry, _ := uc.sessionCache[*input.SessionID]
+		existing := entry.ids
 		for _, sel := range selected {
 			found := false
 			for _, id := range existing {
@@ -469,11 +482,13 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 				existing = append(existing, sel.CandidateID)
 			}
 		}
-		// Limit session cache to 20 memories to prevent pollution
 		if len(existing) > 20 {
 			existing = existing[len(existing)-20:]
 		}
-		uc.sessionCache[*input.SessionID] = existing
+		uc.sessionCache[*input.SessionID] = sessionCacheEntry{
+			ids:    existing,
+			expires: time.Now().Add(time.Duration(uc.sessionCacheTTLSeconds) * time.Second),
+		}
 		uc.sessionCacheMu.Unlock()
 	}
 
@@ -814,10 +829,12 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 	var sessionMemoryIDs map[uuid.UUID]bool
 	if sessionID != nil && *sessionID != "" {
 		uc.sessionCacheMu.RLock()
-		if ids, ok := uc.sessionCache[*sessionID]; ok {
-			sessionMemoryIDs = make(map[uuid.UUID]bool, len(ids))
-			for _, id := range ids {
-				sessionMemoryIDs[id] = true
+		if entry, ok := uc.sessionCache[*sessionID]; ok {
+			if time.Now().Before(entry.expires) {
+				sessionMemoryIDs = make(map[uuid.UUID]bool, len(entry.ids))
+				for _, id := range entry.ids {
+					sessionMemoryIDs[id] = true
+				}
 			}
 		}
 		uc.sessionCacheMu.RUnlock()
@@ -1039,4 +1056,20 @@ func (uc *RecallMemory) render(c *entities.Candidate, mode valueobjects.RenderMo
 	default:
 		return ""
 	}
+}
+
+// cleanupSessionCache removes expired session cache entries.
+// It is called from Execute to prevent unbounded memory growth.
+func (uc *RecallMemory) cleanupSessionCache() {
+	if uc.sessionCacheTTLSeconds <= 0 {
+		return
+	}
+	now := time.Now()
+	uc.sessionCacheMu.Lock()
+	for key, entry := range uc.sessionCache {
+		if now.After(entry.expires) {
+			delete(uc.sessionCache, key)
+		}
+	}
+	uc.sessionCacheMu.Unlock()
 }

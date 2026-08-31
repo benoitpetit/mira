@@ -54,11 +54,8 @@ func NewSQLiteRepository(dbPath string, opts SQLiteOptions) (*SQLiteRepository, 
 	}
 
 	if opts.EncryptionKey != "" {
-		// Securely set the key using PRAGMA key
-		// Use fmt.Sprintf for simplicity, but in production we'd use a more robust escaping if keys could contain quotes
-		// Fortunately PRAGMA key '...' handles single quotes by doubling them.
-		escapedKey := strings.ReplaceAll(opts.EncryptionKey, "'", "''")
-		_, err = db.Exec(fmt.Sprintf("PRAGMA key = '%s';", escapedKey))
+		// Securely set the key using PRAGMA key with parameter binding
+		_, err = db.Exec("PRAGMA key = ?;", opts.EncryptionKey)
 		if err != nil {
 			db.Close()
 			return nil, fmt.Errorf("failed to set encryption key: %w", err)

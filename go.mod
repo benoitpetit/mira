@@ -69,4 +69,4 @@ require (
 	google.golang.org/protobuf v1.36.8 // indirect
 )
 
-replace github.com/benoitpetit/soul => /home/ben/workspace/mira_stack/soul
+replace github.com/benoitpetit/soul => ../soul
