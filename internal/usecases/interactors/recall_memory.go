@@ -3,6 +3,7 @@ package interactors
 
 import (
 	"container/heap"
+	"container/list"
 	"context"
 	"fmt"
 	"math"
@@ -58,9 +59,15 @@ func (h *candidateHeap) Pop() any {
 // embeddingCache is an LRU cache to avoid re-computations (thread-safe)
 type embeddingCache struct {
 	mu      sync.RWMutex
-	cache   map[string][]float32
-	order   []string
+	cache   map[string]*list.Element // key -> list element
+	order   *list.List               // doubly-linked list for O(1) LRU tracking
 	maxSize int
+}
+
+// cacheElement wraps a key and its associated value for LRU tracking.
+type cacheElement struct {
+	key      string
+	vector   []float32
 }
 
 // newEmbeddingCache creates a new embedding cache.
@@ -70,30 +77,26 @@ func newEmbeddingCache(maxSize int) *embeddingCache {
 		maxSize = 128
 	}
 	return &embeddingCache{
-		cache:   make(map[string][]float32),
-		order:   make([]string, 0, maxSize),
+		cache:   make(map[string]*list.Element),
+		order:   list.New(),
 		maxSize: maxSize,
 	}
 }
 
 // get retrieves a value from cache (thread-safe).
-// A successful get promotes the key to most-recently-used so it is the last
-// candidate for LRU eviction.
+// A successful get promotes the key to most-recently-used so it is the first
+// candidate for LRU eviction (front of list).
 func (c *embeddingCache) get(key string) ([]float32, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	vec, ok := c.cache[key]
+	element, ok := c.cache[key]
 	if ok {
-		// Promote to MRU: remove from current position and append to end.
-		for i, k := range c.order {
-			if k == key {
-				c.order = append(c.order[:i], c.order[i+1:]...)
-				break
-			}
-		}
-		c.order = append(c.order, key)
+		// Promote to MRU: move element to front of list
+		c.order.MoveToFront(element)
+		ce := element.Value.(*cacheElement)
+		return ce.vector, true
 	}
-	return vec, ok
+	return nil, false
 }
 
 // set stores a value in cache (thread-safe)
@@ -101,28 +104,30 @@ func (c *embeddingCache) set(key string, vec []float32) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if _, exists := c.cache[key]; exists {
-		// Move to end
-		for i, k := range c.order {
-			if k == key {
-				c.order = append(c.order[:i], c.order[i+1:]...)
-				break
-			}
-		}
-		c.cache[key] = vec
-		c.order = append(c.order, key)
+	// Check if key already exists
+	if element, exists := c.cache[key]; exists {
+		// Key exists: move to end (MRU) and update value
+		c.order.MoveToBack(element)
+		ce := element.Value.(*cacheElement)
+		ce.vector = vec
 		return
 	}
 
-	if len(c.cache) >= c.maxSize {
-		// LRU eviction
-		oldest := c.order[0]
-		delete(c.cache, oldest)
-		c.order = c.order[1:]
+	// Key doesn't exist: check capacity and evict LRU if needed
+	if c.order.Len() >= c.maxSize {
+		// Evict least recently used (back of list, since we PushFront new items)
+		oldest := c.order.Back()
+		if oldest != nil {
+			ce := oldest.Value.(*cacheElement)
+			delete(c.cache, ce.key)
+			c.order.Remove(oldest)
+		}
 	}
 
-	c.cache[key] = vec
-	c.order = append(c.order, key)
+	// Add new key-value pair to front (new MRU)
+	ce := &cacheElement{key: key, vector: vec}
+	element := c.order.PushFront(ce)
+	c.cache[key] = element
 }
 
 // RecallMemory implements the context budget allocation use case
@@ -349,7 +354,7 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 		g.Go(func() error {
 			lexicalCandidates, err = uc.vectorStore.SearchLexical(gctx, input.Query, uc.fts5Limit, input.Wing, input.Room)
 			if err != nil {
-				// Non-fatal: FTS5 may not be available
+				uc.logger.Warn("FTS5 lexical search failed, continuing without lexical candidates", "error", err)
 				lexicalCandidates = nil
 			}
 			return nil // Don't propagate lexical errors
@@ -857,7 +862,7 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 	// Initialize scores for all candidates
 	for _, c := range h.candidates {
 		initialScore := c.Relevance * c.Density * c.Recency
-		if sessionMemoryIDs != nil && sessionMemoryIDs[c.ID()] {
+		if uc.sessionMemoryBoost > 0 && sessionMemoryIDs != nil && sessionMemoryIDs[c.ID()] {
 			initialScore *= uc.sessionMemoryBoost
 		}
 		maxPossibleScore := initialScore * 1.0 * 1.0 * (1.0 + uc.sessionBoostBeta) * (1.0 + uc.diversityBoostAlpha)
@@ -939,7 +944,7 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 			}
 
 			initialScore := c.Relevance * c.Density * c.Recency
-			if sessionMemoryIDs != nil && sessionMemoryIDs[c.ID()] {
+			if uc.sessionMemoryBoost > 0 && sessionMemoryIDs != nil && sessionMemoryIDs[c.ID()] {
 				initialScore *= uc.sessionMemoryBoost
 			}
 			c.Score = initialScore * (1.0 - c.MaxOverlap) * c.CausalPenalty * c.SessionBoost * diversityBoost

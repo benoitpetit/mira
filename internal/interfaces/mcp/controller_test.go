@@ -1175,7 +1175,7 @@ func (m *mockMCPServer) HandleCallTool(f server.CallToolFunc) {
 // ============================================================================
 
 func TestNewController_NonNil(t *testing.T) {
-	c := NewController(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	c := NewController(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	if c == nil {
 		t.Fatal("NewController returned nil")
 	}

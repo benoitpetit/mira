@@ -29,6 +29,11 @@ const (
 
 // sanitizeStoredMemoryContent neutralizes instruction-like lines when replaying
 // stored memories back into model context to reduce memory-prompt-injection risk.
+// Uses a structural approach: memories should be wrapped in <memory>...</memory>
+// tags with system instructions, but as a defense-in-depth measure, this function
+// blacklists common instruction patterns. For stronger protection, use structural
+// delimiters: wrap all stored memories in <memory>...</memory> with an instruction
+// to the model not to interpret the content as directives.
 func sanitizeStoredMemoryContent(content string) string {
 	if content == "" {
 		return content
@@ -36,13 +41,33 @@ func sanitizeStoredMemoryContent(content string) string {
 	lines := strings.Split(content, "\n")
 	for i, line := range lines {
 		l := strings.ToLower(strings.TrimSpace(line))
+		// Blacklisted instruction patterns (prefix-based + substrings)
 		if strings.HasPrefix(l, "system:") ||
 			strings.HasPrefix(l, "assistant:") ||
+			strings.HasPrefix(l, "user:") ||
 			strings.Contains(l, "ignore previous") ||
 			strings.Contains(l, "ignore all") ||
 			strings.Contains(l, "override instructions") ||
-			strings.Contains(l, "you are now") {
+			strings.Contains(l, "you are now") ||
+			strings.Contains(l, "disregard previous") ||
+			strings.Contains(l, "forget previous") ||
+			strings.Contains(l, "reset context") ||
+			strings.Contains(l, "start new") ||
+			strings.Contains(l, "system prompt") ||
+			strings.Contains(l, "ai assistant") ||
+			strings.Contains(l, "as an ai") {
 			lines[i] = "[filtered potential instruction from memory]"
+		}
+		// Additional structural check: detect lines that look like directives
+		// (uppercase, single words that are common instruction triggers)
+		if len(strings.Fields(l)) <= 3 {
+			firstWord := strings.Fields(l)[0]
+			if firstWord == "system" ||
+				firstWord == "ignore" ||
+				firstWord == "forget" ||
+				firstWord == "reset" {
+				lines[i] = "[filtered potential instruction from memory]"
+			}
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -95,6 +120,21 @@ type (
 		Execute(ctx context.Context, input interactors.CompressMemoriesInput) (*interactors.CompressMemoriesOutput, error)
 	}
 
+	// UpdateMemoryExecutor updates a memory's content with re-extraction.
+	UpdateMemoryExecutor interface {
+		Execute(ctx context.Context, input interactors.UpdateMemoryInput) (*interactors.UpdateMemoryOutput, error)
+	}
+
+	// SearchSemanticExecutor performs pure vector search without CBA.
+	SearchSemanticExecutor interface {
+		Execute(ctx context.Context, input interactors.SearchSemanticInput) ([]*interactors.SearchSemanticResult, error)
+	}
+
+	// ConsolidateMemoriesExecutor merges redundant memories.
+	ConsolidateMemoriesExecutor interface {
+		Execute(ctx context.Context, input interactors.ConsolidateMemoriesInput) (*interactors.ConsolidateMemoriesOutput, error)
+	}
+
 	// FingerprintLookup provides read-only access to fingerprint lookups
 	FingerprintLookup interface {
 		GetFingerprintByVerbatimID(ctx context.Context, verbatimID uuid.UUID) (*entities.Fingerprint, error)
@@ -103,16 +143,19 @@ type (
 
 // Controller handles MCP tool calls
 type Controller struct {
-	storeMemory      StoreMemoryExecutor
-	recallMemory     RecallMemoryExecutor
-	loadMemory       LoadMemoryExecutor
-	getTimeline      GetTimelineExecutor
-	getStatus        GetStatusExecutor
-	getCausalChain   GetCausalChainExecutor
-	archiveMemories  ArchiveMemoriesExecutor
-	clearMemory      ClearMemoryExecutor
-	compressMemories CompressMemoriesExecutor
-	fingerprintRepo  FingerprintLookup
+	storeMemory       StoreMemoryExecutor
+	recallMemory      RecallMemoryExecutor
+	loadMemory        LoadMemoryExecutor
+	getTimeline       GetTimelineExecutor
+	getStatus         GetStatusExecutor
+	getCausalChain    GetCausalChainExecutor
+	archiveMemories   ArchiveMemoriesExecutor
+	clearMemory       ClearMemoryExecutor
+	compressMemories  CompressMemoriesExecutor
+	updateMemory      UpdateMemoryExecutor
+	searchSemantic    SearchSemanticExecutor
+	consolidateMemories ConsolidateMemoriesExecutor
+	fingerprintRepo   FingerprintLookup
 }
 
 // NewController creates a new MCP controller
@@ -127,18 +170,24 @@ func NewController(
 	clearMemory *interactors.ClearMemory,
 	fingerprintRepo FingerprintLookup,
 	compressMemories *interactors.CompressMemories,
+	updateMemory *interactors.UpdateMemory,
+	searchSemantic *interactors.SearchSemantic,
+	consolidateMemories *interactors.ConsolidateMemories,
 ) *Controller {
 	return &Controller{
-		storeMemory:      storeMemory,
-		recallMemory:     recallMemory,
-		loadMemory:       loadMemory,
-		getTimeline:      getTimeline,
-		getStatus:        getStatus,
-		getCausalChain:   getCausalChain,
-		archiveMemories:  archiveMemories,
-		clearMemory:      clearMemory,
-		fingerprintRepo:  fingerprintRepo,
-		compressMemories: compressMemories,
+		storeMemory:       storeMemory,
+		recallMemory:      recallMemory,
+		loadMemory:        loadMemory,
+		getTimeline:       getTimeline,
+		getStatus:         getStatus,
+		getCausalChain:    getCausalChain,
+		archiveMemories:   archiveMemories,
+		clearMemory:       clearMemory,
+		fingerprintRepo:   fingerprintRepo,
+		compressMemories:  compressMemories,
+		updateMemory:      updateMemory,
+		searchSemantic:    searchSemantic,
+		consolidateMemories: consolidateMemories,
 	}
 }
 
@@ -153,7 +202,7 @@ func (c *Controller) RegisterTools(mcpServer server.MCPServer) {
 	})
 }
 
-// ToolDefinitions returns the 9 MIRA tool definitions.
+// ToolDefinitions returns the 13 MIRA tool definitions.
 // Used for combined registration when SOUL is embedded.
 func (c *Controller) ToolDefinitions() []mcptypes.Tool {
 	return []mcptypes.Tool{
@@ -402,6 +451,78 @@ Examples:
 					},
 				},
 			},
+			{
+				Name: "mira_update",
+				Description: `Update a memory's content and regenerate its fingerprint and embedding.
+
+The existing verbatim is replaced atomically: fingerprint, embedding, and vector
+index entries are all regenerated from the new content. Use when a stored memory
+needs correction or enrichment.
+
+Parameters:
+  - id:      Verbatim UUID or T0 reference (e.g., "T0:auth-123" or full UUID) (required)
+  - content: New text content to replace the existing content (required)
+
+Examples:
+  Correct a fact:   {"id": "T0:auth-service-abc123", "content": "Updated: API rate limit is 5000 req/min"}
+  Enrich a decision: {"id": "550e8400-e29b-41d4-a716-446655440000", "content": "Decision: Use PostgreSQL 16 for v2. Key reasons: JSONB support, partitioning, pgvector."}`,
+				InputSchema: mcptypes.ToolInputSchema{
+					Type: "object",
+					Properties: map[string]interface{}{
+						"id":      map[string]string{"type": "string", "description": "Verbatim UUID or T0:xxx reference"},
+						"content": map[string]string{"type": "string", "description": "New content for this memory"},
+					},
+				},
+			},
+			{
+				Name: "mira_search",
+				Description: `Pure vector search without CBA (Context Budget Allocation).
+
+Returns raw semantic matches ranked by cosine similarity. Unlike mira_recall,
+this does not apply session boost, causal penalties, diversity weighting, or
+token budgeting — useful for diagnostics, data exploration, and building
+custom selection logic.
+
+Parameters:
+  - query:     Search text (required)
+  - top_k:     Maximum results to return (default: 10)
+  - threshold: Minimum similarity score (0.0–1.0, default: 0.3)
+
+Examples:
+  Quick search:    {"query": "authentication JWT"}
+  High precision:  {"query": "database migration plan", "threshold": 0.7, "top_k": 5}`,
+				InputSchema: mcptypes.ToolInputSchema{
+					Type: "object",
+					Properties: map[string]interface{}{
+						"query":     map[string]string{"type": "string", "description": "Search text"},
+						"top_k":     map[string]string{"type": "number", "description": "Max results (default: 10)"},
+						"threshold": map[string]string{"type": "number", "description": "Min similarity 0.0–1.0 (default: 0.3)"},
+					},
+				},
+			},
+			{
+				Name: "mira_consolidate",
+				Description: `Merge redundant session notes within a wing into synthesized facts.
+
+Scans session notes, clusters highly similar items (default threshold: 0.92),
+creates a synthetic fact for each cluster, and removes the originals. Useful
+for compressing accumulated session noise into concise, permanent knowledge.
+
+Parameters:
+  - wing:                  Target wing (required)
+  - similarity_threshold:  Min cosine similarity to merge (0.0–1.0, default: 0.92)
+
+Examples:
+  Consolidate a wing:          {"wing": "auth-service"}
+  Aggressive merge:            {"wing": "api", "similarity_threshold": 0.85}`,
+				InputSchema: mcptypes.ToolInputSchema{
+					Type: "object",
+					Properties: map[string]interface{}{
+						"wing":                  map[string]string{"type": "string", "description": "Target wing to consolidate"},
+						"similarity_threshold":  map[string]string{"type": "number", "description": "Min similarity to merge (0.0–1.0, default: 0.92)"},
+					},
+				},
+			},
 	}
 }
 
@@ -429,6 +550,12 @@ func (c *Controller) Call(ctx context.Context, name string, arguments map[string
 		return c.handleClearMemory(ctx, arguments)
 	case "mira_compress":
 		return c.handleCompress(ctx, arguments)
+	case "mira_update":
+		return c.handleUpdate(ctx, arguments)
+	case "mira_search":
+		return c.handleSearch(ctx, arguments)
+	case "mira_consolidate":
+		return c.handleConsolidate(ctx, arguments)
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}
@@ -671,6 +798,148 @@ func (c *Controller) handleCompress(ctx context.Context, args map[string]interfa
 	result := fmt.Sprintf("Compression complete%s:\n- Compressed: %d verbatims\n- Tokens saved: %d",
 		qualifier, output.CompressedCount, output.TokensSaved)
 
+	return &mcptypes.CallToolResult{
+		Content: []mcptypes.Content{mcptypes.TextContent{Type: "text", Text: result}},
+	}, nil
+}
+
+func (c *Controller) handleUpdate(ctx context.Context, args map[string]interface{}) (*mcptypes.CallToolResult, error) {
+	idStr, ok := args["id"].(string)
+	if !ok {
+		return nil, fmt.Errorf("id is required")
+	}
+
+	normalizedID := normalizeLoadID(idStr)
+	id, err := uuid.Parse(normalizedID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid ID '%s': %w. Use the exact ID returned by mira_recall or mira_timeline (plain UUID, T0:UUID, or F0:UUID)", idStr, err)
+	}
+
+	content, ok := args["content"].(string)
+	if !ok || strings.TrimSpace(content) == "" {
+		return nil, fmt.Errorf("content is required and cannot be empty")
+	}
+
+	if utf8.RuneCountInString(content) > MaxContentLength {
+		return nil, fmt.Errorf("content exceeds maximum length of %d characters", MaxContentLength)
+	}
+
+	output, err := c.updateMemory.Execute(ctx, interactors.UpdateMemoryInput{
+		ID:      id,
+		Content: content,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update failed: %w", err)
+	}
+
+	result := fmt.Sprintf("Updated: %s\nNew content stored with regenerated fingerprint and embedding.", output.Verbatim.ID)
+	return &mcptypes.CallToolResult{
+		Content: []mcptypes.Content{mcptypes.TextContent{Type: "text", Text: result}},
+	}, nil
+}
+
+func (c *Controller) handleSearch(ctx context.Context, args map[string]interface{}) (*mcptypes.CallToolResult, error) {
+	query, ok := args["query"].(string)
+	if !ok || strings.TrimSpace(query) == "" {
+		return nil, fmt.Errorf("query is required")
+	}
+
+	if utf8.RuneCountInString(query) > MaxQueryLength {
+		return nil, fmt.Errorf("query exceeds maximum length of %d characters", MaxQueryLength)
+	}
+
+	topK := 10
+	if t, ok := args["top_k"]; ok {
+		switch v := t.(type) {
+		case float64:
+			topK = int(v)
+		case int:
+			topK = v
+		}
+	}
+	if topK <= 0 {
+		topK = 10
+	}
+	if topK > 100 {
+		topK = 100
+	}
+
+	threshold := 0.3
+	if th, ok := args["threshold"]; ok {
+		switch v := th.(type) {
+		case float64:
+			threshold = v
+		}
+	}
+	if threshold < 0 {
+		threshold = 0
+	}
+	if threshold > 1 {
+		threshold = 1
+	}
+
+	results, err := c.searchSemantic.Execute(ctx, interactors.SearchSemanticInput{
+		Query:     query,
+		TopK:      topK,
+		Threshold: threshold,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("search failed: %w", err)
+	}
+
+	if len(results) == 0 {
+		return &mcptypes.CallToolResult{
+			Content: []mcptypes.Content{mcptypes.TextContent{Type: "text", Text: "No results found."}},
+		}, nil
+	}
+
+	var parts []string
+	parts = append(parts, fmt.Sprintf("=== VECTOR SEARCH RESULTS (%d) ===", len(results)))
+	parts = append(parts, fmt.Sprintf("Query: %s | Threshold: %.2f", query, threshold))
+	parts = append(parts, "")
+	for i, r := range results {
+		parts = append(parts, fmt.Sprintf("[%d] T0:%s (%.3f) [%s] wing=%s",
+			i+1, r.ID, r.Similarity, r.Type, r.Wing))
+		safeContent := sanitizeStoredMemoryContent(r.Content)
+		if len(safeContent) > 200 {
+			safeContent = safeContent[:200] + "..."
+		}
+		parts = append(parts, safeContent)
+		parts = append(parts, "")
+	}
+
+	return &mcptypes.CallToolResult{
+		Content: []mcptypes.Content{mcptypes.TextContent{Type: "text", Text: strings.Join(parts, "\n")}},
+	}, nil
+}
+
+func (c *Controller) handleConsolidate(ctx context.Context, args map[string]interface{}) (*mcptypes.CallToolResult, error) {
+	wing, ok := args["wing"].(string)
+	if !ok || strings.TrimSpace(wing) == "" {
+		return nil, fmt.Errorf("wing is required")
+	}
+
+	threshold := 0.92
+	if th, ok := args["similarity_threshold"]; ok {
+		switch v := th.(type) {
+		case float64:
+			threshold = v
+		}
+	}
+	if threshold <= 0 || threshold > 1 {
+		threshold = 0.92
+	}
+
+	output, err := c.consolidateMemories.Execute(ctx, interactors.ConsolidateMemoriesInput{
+		Wing:                wing,
+		SimilarityThreshold: threshold,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("consolidation failed: %w", err)
+	}
+
+	result := fmt.Sprintf("Consolidation complete for wing '%s':\n- Consolidated clusters: %d\n- Original notes removed: %d",
+		wing, output.ConsolidatedCount, output.RemovedCount)
 	return &mcptypes.CallToolResult{
 		Content: []mcptypes.Content{mcptypes.TextContent{Type: "text", Text: result}},
 	}, nil

@@ -10,22 +10,26 @@ tags: [memory, mcp, mira]
 
 You are augmented with **MIRA** (Memory with Information-theoretic Relevance Allocation), an external MCP server providing long-term, cross-session memory for LLMs. MIRA uses a **multi-stage retrieval pipeline** (Query Expansion → Dense HNSW Search → Lexical FTS5 Search → RRF Fusion → Search-Time Clustering → Tag Boost → Adaptive Threshold → CBA Greedy Allocation) to retrieve the most relevant context within a token budget.
 
-The detailed tool schemas for `mira_store`, `mira_recall`, `mira_load`, `mira_timeline`, `mira_causal_chain`, `mira_status`, `mira_health`, `mira_archive`, and `mira_clear_memory` are documented in the *External Tools Reference (MCP Servers)* section of your system prompt.
+The detailed tool schemas for `mira_store`, `mira_recall`, `mira_load`, `mira_update`, `mira_search`, `mira_consolidate`, `mira_causal_chain`, `mira_status`, `mira_health`, `mira_archive`, `mira_compress`, `mira_timeline`, and `mira_clear_memory` are documented in the *External Tools Reference (MCP Servers)* section of your system prompt.
 
-> **SOUL Extension**: If MIRA is running with SOUL enabled (`--with-soul` or `soul.enabled: true`), 8 additional `soul_*` tools are available for identity capture, drift detection, and model-swap preservation. These are documented separately in the SOUL skill. When SOUL is enabled, MIRA provides **9 + 8 = 17 tools total**.
+> **SOUL Extension**: If MIRA is running with SOUL enabled (`--with-soul` or `soul.enabled: true`), 8 additional `soul_*` tools are available for identity capture, drift detection, and model-swap preservation. These are documented separately in the SOUL skill. When SOUL is enabled, MIRA provides **13 + 8 = 21 tools total**.
 
 **Rule #1**: Always recall before answering. **Rule #2**: Store progressively as you work.
 
-MIRA provides **9 MCP tools** by default:
+MIRA provides **13 MCP tools** by default:
 - `mira_store` — Store memories with T0/T1/T2 extraction
 - `mira_recall` — Context-aware retrieval with token budget (CBA)
 - `mira_load` — Load full verbatim by ID
+- `mira_update` — Update memory content with re-extraction
+- `mira_search` — Pure vector search without CBA
+- `mira_consolidate` — Merge redundant session notes into synthesized facts
 - `mira_causal_chain` — Trace causal chains
 - `mira_timeline` — Chronological reconstruction
 - `mira_status` — Full system statistics
 - `mira_health` — Quick JSON health check
 - `mira_archive` — Clean old memories
 - `mira_clear_memory` — Delete memories
+- `mira_compress` — Rule-based context compression
 
 ---
 
@@ -270,11 +274,15 @@ Store memories **progressively** as you work. Do not wait until the end of a lon
 
 ## Additional Tools
 
+- **`mira_update(id, content)`** — Update a memory's content and regenerate its fingerprint/embedding. Use for corrections and enrichments.
+- **`mira_search(query, top_k, threshold)`** — Pure vector search without CBA. Useful for diagnostics and data exploration.
+- **`mira_consolidate(wing, similarity_threshold)`** — Merge redundant session notes into synthesized facts.
 - **`mira_timeline(wing="<project>")`** — Review project evolution before major refactors. Filter by `room`, `type`, `since`, `until`.
 - **`mira_archive`** — Call occasionally to archive stale session notes and debug logs.
 - **`mira_status`** — Check system health, memory counts, version, uptime, and index status before heavy usage.
 - **`mira_health`** — Quick JSON health check (`status`, `db_connected`, `memory_count`). Use for lightweight liveness probes.
 - **`mira_clear_memory`** — Permanently delete memories (global or room-scoped). **Use ONLY with explicit user request.**
+- **`mira_compress`** — Run rule-based context compression over session_note verbatims. Optional, deterministic.
 
 ---
 
@@ -287,7 +295,7 @@ Store memories **progressively** as you work. Do not wait until the end of a lon
 5. **Keep wing names consistent** — reuse the same canonical wing name across a project.
 6. **Do not translate queries** — MIRA handles cross-lingual retrieval automatically.
 7. **Do not store raw code without context** — store the *decision* or *fact* behind the code, not the code itself.
-8. **Do not assume SOUL is enabled** — MIRA runs solo by default (9 tools). Check tool availability before invoking `soul_*` tools.
+8. **Do not assume SOUL is enabled** — MIRA runs solo by default (13 tools). Check tool availability before invoking `soul_*` tools.
 
 ---
 

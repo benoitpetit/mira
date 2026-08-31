@@ -1,0 +1,20 @@
+version: "3.8"
+
+services:
+  mira:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"    # MCP/SSE transport
+      - "8080:8080"    # REST API
+      - "9090:9090"    # Prometheus metrics
+    volumes:
+      - mira-data:/home/mira/.mira
+    environment:
+      - MIRA_STORAGE_TYPE=sqlite
+      - MIRA_DATA_PATH=/home/mira/.mira
+    restart: unless-stopped
+
+volumes:
+  mira-data:

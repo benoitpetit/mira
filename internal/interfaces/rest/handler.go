@@ -562,6 +562,7 @@ func NewServer(h *Handler, addr, masterToken string, wingTokens map[string][]str
 	if masterToken != "" || len(wingTokens) > 0 || h.policy != nil {
 		rootHandler = authMiddleware(masterToken, wingTokens, h.policy, rootHandler)
 	}
+	rootHandler = rateLimitMiddleware(100, 1*time.Minute, rootHandler) // 100 requests per minute per IP
 	rootHandler = loggingMiddleware(rootHandler)
 	rootHandler = recoveryMiddleware(rootHandler)
 
