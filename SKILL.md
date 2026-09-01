@@ -78,7 +78,7 @@ This downloads the embedding model on first run (~80 MB).
 
 ### 6. MCP Client Configuration
 
-**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+**Claude Code** (`~/.config/claude/claude_desktop_config.json`):
 ```json
 {
   "mcpServers": {
@@ -90,7 +90,49 @@ This downloads the embedding model on first run (~80 MB).
 }
 ```
 
-**Cursor / b0p / any MCP client:** same structure.
+**Codex** (`~/.codex/config.yaml`):
+```yaml
+mcp_servers:
+  mira:
+    command: /absolute/path/to/mira
+    args: ["--config", "/absolute/path/to/mira/config.yaml"]
+```
+
+**Cursor** (`.cursor/mcp.json` in project root):
+```json
+{
+  "mcpServers": {
+    "mira": {
+      "command": "/absolute/path/to/mira",
+      "args": ["--config", "/absolute/path/to/mira/config.yaml"]
+    }
+  }
+}
+```
+
+**Windsurf** (`~/.codeium/windsurf/mcp_config.json`):
+```json
+{
+  "mcpServers": {
+    "mira": {
+      "command": "/absolute/path/to/mira",
+      "args": ["--config", "/absolute/path/to/mira/config.yaml"]
+    }
+  }
+}
+```
+
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "mira": {
+      "command": "/absolute/path/to/mira",
+      "args": ["--config", "/absolute/path/to/mira/config.yaml"]
+    }
+  }
+}
+```
 
 ### 7. Optional: Enable SOUL (Identity Extension)
 SOUL is **opt-in and disabled by default**. To activate it alongside MIRA (17 tools total: 9 MIRA + 8 SOUL):
