@@ -2,16 +2,18 @@
   <img src="./logo.png" alt="MIRA Logo" width="800">
 
   # MIRA
-  ### Memory with Information-theoretic Relevance Allocation
 
-  **Long-term Memory System for LLMs with Optimal Context Budget Allocation**
+  ### Persistent memory for AI coding agents.
+
+  Give Claude Code, Codex, Cursor and other MCP agents
+  a shared, private, local memory.
+
+  ✓ 100% local · ✓ No API key · ✓ No cloud · ✓ MCP native · ✓ Token-efficient · ✓ Persistent across models
 
   [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
   [![Version](https://img.shields.io/badge/Version-0.4.7-blue?style=flat-square)]()
   [![Tests](https://img.shields.io/badge/Tests-~70%25-yellow?style=flat-square)]()
-
-  *100% Local • Deterministic (embedding variance < 1e-6) • Clean Architecture*
 
   [API Reference](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [Français](README_FR.md) • [SOUL Extension](https://github.com/benoitpetit/soul)
 
@@ -30,6 +32,8 @@
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
+- [Privacy & Memory Governance](#privacy--memory-governance)
+- [Memory Policies](#memory-policies)
 - [MCP API](#mcp-api)
 - [REST API](#rest-api)
 - [Performance](#performance)
@@ -41,7 +45,43 @@
 
 ## What is MIRA?
 
-**MIRA** is a long-term memory system designed for **Large Language Models**. Instead of simple similarity retrieval, MIRA solves an optimization problem: maximize useful information within a fixed token budget.
+**MIRA** gives your AI coding agents a persistent, private memory that survives across sessions, models, and tools.
+
+Claude Code learns your project architecture on Monday. Codex automatically knows your decisions on Tuesday. Cursor remembers your debugging session on Wednesday. **Same memory.**
+
+- ✓ 100% local — your memories never leave your machine
+- ✓ No API key required
+- ✓ MCP native — works with Claude Code, Codex, Cursor, Windsurf and more
+- ✓ Token-efficient — CBA algorithm maximizes information per token
+- ✓ Persistent across models — switch LLMs without losing context
+
+> **Need identity persistence?** The optional [SOUL](https://github.com/benoitpetit/soul) extension adds 8 MCP tools for capturing and recalling an agent's personality across model changes — activated with a single `--with-soul` flag.
+
+### See the difference
+
+**Without MIRA:**
+
+```
+User: "Continue the database migration we discussed last week."
+Claude: "I don't have access to that previous conversation..."
+```
+
+**With MIRA:**
+
+```
+User: "Continue the database migration we discussed last week."
+MIRA:
+  Project: Acme API
+  Decision: Migrate MySQL → PostgreSQL
+  Reason: JSONB + existing PostgreSQL infrastructure
+  Status: 72% complete
+  Last action: PR #381
+  Next step: Migrate user_events table
+```
+
+### How MIRA works
+
+Instead of simple similarity retrieval, MIRA solves an optimization problem: maximize useful information within a fixed token budget.
 
 Each memory is stored in three forms — full text (T0), structured facts (T1), and a 384-dimensional embedding (T2) — enabling adaptive rendering that adjusts to the available budget.
 
@@ -59,8 +99,6 @@ Each memory is stored in three forms — full text (T0), structured facts (T1), 
 - **Hybrid search** — HNSW O(log n) + SQLite FTS5, fused with Reciprocal Rank Fusion
 - **Causal graph** — automatic detection of cause-effect relationships between memories
 - **Clean architecture** — hexagonal, fully tested, extensible
-
-> **Need identity persistence?** The optional [SOUL](https://github.com/benoitpetit/soul) extension adds 8 MCP tools for capturing and recalling an agent's personality across model changes — activated with a single `--with-soul` flag.
 
 ---
 
@@ -597,6 +635,70 @@ webhooks:
   timeout_seconds: 30
   endpoints: []
 ```
+
+---
+
+## Privacy & Memory Governance
+
+MIRA is 100% local by default — your memories never leave your machine. You can enforce stricter controls with memory governance policies.
+
+### Restrict what gets stored
+
+```yaml
+privacy:
+  local_only: true
+
+memory:
+  allowed:
+    - project
+    - architecture
+    - decisions
+
+  forbidden:
+    - secrets
+    - credentials
+    - api_keys
+```
+
+MIRA will detect and reject sensitive content:
+
+```
+MIRA detected possible secret.
+Memory NOT stored.
+```
+
+---
+
+## Memory Policies
+
+Control how long different types of memories are retained. This works with MIRA's T0/T1/T2 architecture to optimize storage and recall.
+
+```yaml
+policies:
+  architecture:
+    retention: permanent
+    priority: high
+
+  debugging:
+    retention: 90d
+
+  temporary:
+    retention: 7d
+
+  user_preferences:
+    retention: permanent
+```
+
+### Supported retention periods
+
+| Policy | Retention | Auto-archive |
+|--------|-----------|--------------|
+| `permanent` | Never expires | No |
+| `90d` | 90 days | Yes |
+| `7d` | 7 days | Yes |
+| `30d` | 30 days | Yes |
+
+Memories exceeding their retention period are automatically archived and removed from active recall.
 
 ---
 
