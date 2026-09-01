@@ -336,6 +336,56 @@ causalPatterns := map[RelationType]*regexp.Regexp{
 }
 ```
 
+### Demandez à MIRA "Pourquoi ?"
+
+Le graphe causal n'est pas seulement une optimisation interne — c'est une feature utilisable directement. Demandez à MIRA pourquoi quelque chose a été décidé, et il retrace toute la chaîne de raisonnement.
+
+```json
+{
+  "tool": "mira_recall",
+  "arguments": {
+    "query": "Pourquoi utilisons-nous PostgreSQL ?",
+    "wing": "backend-team"
+  }
+}
+```
+
+**Réponse :**
+
+```
+=== MIRA CONTEXT ===
+
+PostgreSQL
+   ↓
+Décision #421
+   ↓
+Choisi car :
+   ├─ Support JSONB
+   ├─ Infrastructure existante
+   └─ Migration de MySQL terminée
+
+Décision prise : 2026-02-13
+
+Relié à :
+   PR #182
+   ADR-004
+```
+
+Vous pouvez aussi tracer la chaîne causale complète :
+
+```json
+{
+  "tool": "mira_causal_chain",
+  "arguments": {
+    "id": "T0:uuid-de-la-decision",
+    "max_depth": 3,
+    "include_consequences": true
+  }
+}
+```
+
+Cela révèle non seulement **ce qui** a été décidé, mais **pourquoi** — et vers quoi cela a **conduit**.
+
 ---
 
 ## Installation
@@ -458,6 +508,51 @@ nano config.yaml
 ./mira config show
 ./mira config show --json
 ```
+
+### 4. Export & Import
+
+MIRA supporte la portabilité complète des données. Vos mémoires vous appartiennent.
+
+#### Export
+
+```bash
+# Exporter toutes les mémoires
+./mira export --output memories.json
+
+# Exporter un wing spécifique uniquement
+./mira export --wing backend-team --output backend-memories.json
+
+# Exporter avec filtres
+./mira export --wing backend-team --type decision --output decisions.json
+
+# Aperçu de ce qui serait exporté
+./mira export --wing backend-team --output memories.json --dry-run
+```
+
+#### Import
+
+```bash
+# Importer avec validation (dry-run d'abord)
+./mira import --file memories.json --dry-run
+
+# Importer pour de bon
+./mira import --file memories.json
+
+# Importer avec remapping de wing
+./mira import --file old-project.json --target-wing new-project
+```
+
+#### Sauvegarde & Restauration
+
+```bash
+# Sauvegarde complète
+cp -r ~/.mira ~/.mira.backup.$(date +%Y%m%d)
+
+# Restaurer depuis une sauvegarde
+cp -r ~/.mira.backup.20260901 ~/.mira
+```
+
+> **Votre mémoire IA vous appartient.** Pas de lock-in, pas de dépendance cloud. Exportez, sauvegardez ou migrez à tout moment.
 
 ### 4. Utiliser les outils MCP
 
@@ -699,6 +794,20 @@ policies:
 | `30d` | 30 jours | Oui |
 
 Les mémoires dépassant leur période de rétention sont automatiquement archivées et retirées du recall actif.
+
+### Quand utiliser chaque type
+
+Choisissez le bon type de mémoire en fonction de ce que vous stockez :
+
+| Type | Utiliser quand | Exemple |
+|------|----------------|---------|
+| `decision` | Vous avez fait un choix qui affecte le projet | "Nous avons choisi PostgreSQL plutôt que MySQL pour le support ACID" |
+| `fact` | Vous avez découvert une information objective | "La limite de débit API est de 1000 req/min" |
+| `preference` | L'utilisateur a exprimé un choix subjectif | "L'utilisateur préfère l'indentation par 4 espaces" |
+| `session_note` | Résumer le travail fait dans une session | "Refactorisé le middleware auth, mis à jour les tests" |
+| `debug_log` | Vous avez corrigé un bug ou trouvé une cause racine | "Race condition dans le webhook manager, mutex ajouté" |
+
+> **Astuce :** Si vous hésitez, omettez le `type` — MIRA le détecte automatiquement depuis le contenu.
 
 ---
 

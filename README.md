@@ -336,6 +336,56 @@ causalPatterns := map[RelationType]*regexp.Regexp{
 }
 ```
 
+### Ask MIRA "Why?"
+
+The causal graph is more than an internal optimization — it's a feature you can use directly. Ask MIRA why something was decided, and it traces the full reasoning chain.
+
+```json
+{
+  "tool": "mira_recall",
+  "arguments": {
+    "query": "Why are we using PostgreSQL?",
+    "wing": "backend-team"
+  }
+}
+```
+
+**Response:**
+
+```
+=== MIRA CONTEXT ===
+
+PostgreSQL
+   ↓
+Decision #421
+   ↓
+Chosen because:
+   ├─ JSONB support
+   ├─ existing infrastructure
+   └─ migration from MySQL completed
+
+Decision made: 2026-02-13
+
+Related:
+   PR #182
+   ADR-004
+```
+
+You can also trace the full causal chain:
+
+```json
+{
+  "tool": "mira_causal_chain",
+  "arguments": {
+    "id": "T0:uuid-of-the-decision",
+    "max_depth": 3,
+    "include_consequences": true
+  }
+}
+```
+
+This reveals not just **what** was decided, but **why** — and what it **led to**.
+
 ---
 
 ## Installation
@@ -458,6 +508,51 @@ nano config.yaml
 ./mira config show
 ./mira config show --json
 ```
+
+### 4. Export & Import
+
+MIRA supports full data portability. Your memories belong to you.
+
+#### Export
+
+```bash
+# Export all memories
+./mira export --output memories.json
+
+# Export specific wing only
+./mira export --wing backend-team --output backend-memories.json
+
+# Export with filters
+./mira export --wing backend-team --type decision --output decisions.json
+
+# Preview what would be exported
+./mira export --wing backend-team --output memories.json --dry-run
+```
+
+#### Import
+
+```bash
+# Import with validation (dry-run first)
+./mira import --file memories.json --dry-run
+
+# Import for real
+./mira import --file memories.json
+
+# Import with wing remapping
+./mira import --file old-project.json --target-wing new-project
+```
+
+#### Backup & Restore
+
+```bash
+# Full backup
+cp -r ~/.mira ~/.mira.backup.$(date +%Y%m%d)
+
+# Restore from backup
+cp -r ~/.mira.backup.20260901 ~/.mira
+```
+
+> **Your AI memory belongs to you.** No lock-in, no cloud dependency. Export, backup, or migrate at any time.
 
 ### 4. Use MCP Tools
 
@@ -699,6 +794,20 @@ policies:
 | `30d` | 30 days | Yes |
 
 Memories exceeding their retention period are automatically archived and removed from active recall.
+
+### When to use each type
+
+Choose the right memory type based on what you're storing:
+
+| Type | Use when | Example |
+|------|----------|---------|
+| `decision` | You made a choice that affects the project | "We chose PostgreSQL over MySQL for ACID support" |
+| `fact` | You discovered objective information | "API rate limit is 1000 req/min" |
+| `preference` | The user expressed a subjective choice | "User prefers 4-space indentation" |
+| `session_note` | Summarizing work done in a session | "Refactored auth middleware, updated tests" |
+| `debug_log` | You fixed a bug or found a root cause | "Race condition in webhook manager, added mutex" |
+
+> **Tip:** If unsure, omit the `type` — MIRA auto-detects it from content.
 
 ---
 
