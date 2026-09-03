@@ -43,7 +43,7 @@ func (m *mockDeleteVectorStore) Delete(ctx context.Context, id uuid.UUID) error 
 	}
 	return nil
 }
-func (m *mockDeleteVectorStore) ClearAll(ctx context.Context) error                            { return nil }
+func (m *mockDeleteVectorStore) ClearAll(ctx context.Context) error { return nil }
 func (m *mockDeleteVectorStore) ClearByRoom(ctx context.Context, wing string, room *string) error {
 	return nil
 }

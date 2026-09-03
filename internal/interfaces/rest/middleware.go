@@ -20,7 +20,7 @@ import (
 type rateLimiter struct {
 	mu        sync.Mutex
 	interval  time.Duration
-	limit       int // max requests per interval
+	limit     int                    // max requests per interval
 	intervals map[string][]time.Time // IP -> recent request timestamps
 }
 
@@ -42,7 +42,7 @@ func (rl *rateLimiter) allowRequest(ip string) bool {
 	now := time.Now()
 	// Clean up old timestamps outside the interval
 	timestamps := rl.intervals[ip]
-	valid := timestamps[:0]
+	valid := make([]time.Time, 0, rl.limit)
 	for _, t := range timestamps {
 		if now.Sub(t) < rl.interval {
 			valid = append(valid, t)
@@ -184,7 +184,8 @@ func loggingMiddleware(next http.Handler) http.Handler {
 // authMiddleware enforces Bearer token authentication.
 //
 // Access rules (evaluated in order):
-//  1. /openapi.json is always public.
+//  1. /openapi.json and the dashboard shell/assets are always public. API data
+//     remains protected and the dashboard supplies its token via JavaScript.
 //  2. If masterToken is non-empty and the request carries it → full access.
 //  3. If PolicyRepository is provided, the token hash is looked up in DB.
 //  4. If wingTokens is non-nil, the token is looked up in static config.
@@ -193,8 +194,8 @@ func loggingMiddleware(next http.Handler) http.Handler {
 func authMiddleware(masterToken string, wingTokens map[string][]string, repo ports.PolicyRepository, next http.Handler) http.Handler {
 	noAuth := masterToken == "" && len(wingTokens) == 0 && repo == nil
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Always-public endpoint
-		if r.URL.Path == "/openapi.json" {
+		// Always-public documentation and dashboard assets.
+		if isPublicRESTPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -245,6 +246,15 @@ func authMiddleware(masterToken string, wingTokens map[string][]string, repo por
 
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 	})
+}
+
+func isPublicRESTPath(path string) bool {
+	switch path {
+	case "/", "/index.html", "/app.js", "/styles.css", "/favicon.ico", "/openapi.json":
+		return true
+	default:
+		return false
+	}
 }
 
 // auditMiddleware logs operations to the AuditRepository.

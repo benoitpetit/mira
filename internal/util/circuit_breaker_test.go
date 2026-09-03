@@ -50,7 +50,7 @@ func TestCircuitBreaker_RejectsWhenOpen(t *testing.T) {
 	cb := NewCircuitBreaker(config)
 
 	// Open the circuit
-	cb.Execute(func() error {
+	_ = cb.Execute(func() error {
 		return errors.New("test error")
 	})
 
@@ -78,7 +78,7 @@ func TestCircuitBreaker_HalfOpenAfterTimeout(t *testing.T) {
 	cb := NewCircuitBreaker(config)
 
 	// Open the circuit
-	cb.Execute(func() error {
+	_ = cb.Execute(func() error {
 		return errors.New("test error")
 	})
 
@@ -118,7 +118,7 @@ func TestCircuitBreaker_ClosesAfterSuccesses(t *testing.T) {
 	cb := NewCircuitBreaker(config)
 
 	// Open the circuit
-	cb.Execute(func() error {
+	_ = cb.Execute(func() error {
 		return errors.New("test error")
 	})
 
@@ -173,7 +173,7 @@ func TestCircuitBreaker_ResetsOnSuccess(t *testing.T) {
 
 	// Generate some failures but not enough to open
 	for i := 0; i < 3; i++ {
-		cb.Execute(func() error {
+		_ = cb.Execute(func() error {
 			return testErr
 		})
 	}
@@ -192,7 +192,7 @@ func TestCircuitBreaker_ResetsOnSuccess(t *testing.T) {
 
 	// Now we need 5 more failures to open
 	for i := 0; i < 5; i++ {
-		cb.Execute(func() error {
+		_ = cb.Execute(func() error {
 			return testErr
 		})
 	}
@@ -212,7 +212,7 @@ func TestCircuitBreaker_HalfOpenFailureReopens(t *testing.T) {
 	cb := NewCircuitBreaker(config)
 
 	// Open the circuit
-	cb.Execute(func() error {
+	_ = cb.Execute(func() error {
 		return errors.New("test error")
 	})
 
@@ -220,7 +220,7 @@ func TestCircuitBreaker_HalfOpenFailureReopens(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// First success in half-open
-	cb.Execute(func() error {
+	_ = cb.Execute(func() error {
 		return nil
 	})
 
@@ -282,7 +282,7 @@ func TestCircuitBreaker_ConcurrentAccess(t *testing.T) {
 	done := make(chan bool, 100)
 	for i := 0; i < 100; i++ {
 		go func() {
-			cb.Execute(func() error {
+			_ = cb.Execute(func() error {
 				return nil
 			})
 			done <- true

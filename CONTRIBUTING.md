@@ -4,7 +4,7 @@ Thank you for your interest in contributing to MIRA! This document outlines the 
 
 ## Table of Contents
 
-1. [Code of Conduct](#code-of-conduct)
+1. [Conduct](#conduct)
 2. [Development Setup](#development-setup)
 3. [Coding Conventions](#coding-conventions)
 4. [Testing Requirements](#testing-requirements)
@@ -15,9 +15,10 @@ Thank you for your interest in contributing to MIRA! This document outlines the 
 
 ---
 
-## Code of Conduct
+## Conduct
 
-Please read and follow the [Code of Conduct](CODE_OF_CONDUCT.md) to ensure a welcoming environment for all contributors.
+Be respectful, constructive, and mindful of the privacy-first goals of this
+project in discussions, issues, and pull requests.
 
 ---
 
@@ -25,8 +26,8 @@ Please read and follow the [Code of Conduct](CODE_OF_CONDUCT.md) to ensure a wel
 
 ### Prerequisites
 
-- Go 1.23+
-- GCC (for CGO, `go-sqlite3`)
+- Go 1.25+
+- A CGO C toolchain and OpenSSL development headers (`libssl-dev` on Debian/Ubuntu)
 - Make
 
 ### Building
@@ -37,7 +38,7 @@ git clone https://github.com/benoitpetit/mira.git
 cd mira
 
 # Build the binary
-go build -o mira ./cmd/mira
+go build -tags fts5 -o mira ./cmd/mira
 
 # Or use Make
 make build
@@ -46,7 +47,7 @@ make build
 ### Running Tests
 
 ```bash
-go test ./...
+go test -tags fts5 ./...
 ```
 
 ### Linting
@@ -100,7 +101,7 @@ make lint
 - All new functions must have unit tests
 - Tests should be in the same package (`_test.go` files)
 - Follow the existing test patterns in the codebase
-- Run `go test ./...` to verify all tests pass
+- Run `go test -tags fts5 ./...` to verify all tests pass
 
 ### Test Coverage
 
@@ -134,7 +135,7 @@ make lint
 
 1. Ensure you're on `dev` or create a feature branch: `git checkout -b feature/description dev`
 2. Make your changes
-3. Run tests: `go test ./...`
+3. Run tests: `go test -tags fts5 ./...`
 4. Run lint: `make lint`
 5. Commit with descriptive message following [Conventional Commits](https://www.conventionalcommits.org/):
    - `feat: add new feature`
@@ -163,7 +164,7 @@ When adding new PostgreSQL migrations:
 
 - SQLite schema evolves automatically through Go schema changes
 - Add new columns/tables in Go struct definitions
-- Run `go build && ./mira migrate` to apply changes
+- Run `go build -tags fts5 && ./mira migrate` to apply changes
 - Backward compatibility is maintained through the Go code
 
 ---
@@ -171,7 +172,7 @@ When adding new PostgreSQL migrations:
 ## Pull Request Process
 
 1. **Fork the repository** and create your feature branch
-2. **Run the full test suite**: `go test ./...`
+2. **Run the full test suite**: `go test -tags fts5 ./...`
 3. **Run the linter**: `make lint`
 4. **Update documentation** if needed (SKILL.md, README.md, config.example.yaml)
 5. **Ensure code follows conventions** (gofmt, godoc, naming)
@@ -186,7 +187,7 @@ When adding new PostgreSQL migrations:
 
 ### PR Checklist
 
-- [ ] All tests pass (`go test ./...`)
+- [ ] All tests pass (`go test -tags fts5 ./...`)
 - [ ] Linting passes (`make lint`)
 - [ ] Code follows project conventions
 - [ ] Documentation updated if needed

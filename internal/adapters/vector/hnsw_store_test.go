@@ -134,7 +134,7 @@ func BenchmarkHNSWAdd(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		candidate := createTestCandidate(vectors[i])
-		store.AddCandidate(context.Background(), candidate)
+		_ = store.AddCandidate(context.Background(), candidate)
 	}
 }
 
@@ -148,18 +148,18 @@ func BenchmarkHNSWSearch(b *testing.B) {
 	numVectors := 1000
 	for i := 0; i < numVectors; i++ {
 		candidate := createTestCandidate(generateRandomVector(dim))
-		store.AddCandidate(context.Background(), candidate)
+		_ = store.AddCandidate(context.Background(), candidate)
 	}
 
 	// Mark store as ready for search
-	store.BuildFromStore(context.Background())
+	_ = store.BuildFromStore(context.Background())
 
 	query := generateRandomVector(dim)
 	limit := 10
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		store.Search(context.Background(), query, limit, nil, nil)
+		_, _ = store.Search(context.Background(), query, limit, nil, nil)
 	}
 }
 
@@ -176,18 +176,18 @@ func BenchmarkHNSWSearchScalability(b *testing.B) {
 			// Add vectors
 			for i := 0; i < size; i++ {
 				candidate := createTestCandidate(generateRandomVector(dim))
-				store.AddCandidate(context.Background(), candidate)
+				_ = store.AddCandidate(context.Background(), candidate)
 			}
 
 			// Mark store as ready
-			store.BuildFromStore(context.Background())
+			_ = store.BuildFromStore(context.Background())
 
 			query := generateRandomVector(dim)
 			limit := 10
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				store.Search(context.Background(), query, limit, nil, nil)
+				_, _ = store.Search(context.Background(), query, limit, nil, nil)
 			}
 		})
 	}
@@ -203,11 +203,11 @@ func BenchmarkHNSWConcurrentAccess(b *testing.B) {
 	numVectors := 1000
 	for i := 0; i < numVectors; i++ {
 		candidate := createTestCandidate(generateRandomVector(dim))
-		store.AddCandidate(context.Background(), candidate)
+		_ = store.AddCandidate(context.Background(), candidate)
 	}
 
 	// Mark store as ready
-	store.BuildFromStore(context.Background())
+	_ = store.BuildFromStore(context.Background())
 
 	queries := make([][]float32, 100)
 	for i := 0; i < 100; i++ {
@@ -218,7 +218,7 @@ func BenchmarkHNSWConcurrentAccess(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
 		for pb.Next() {
-			store.Search(context.Background(), queries[i%100], 10, nil, nil)
+			_, _ = store.Search(context.Background(), queries[i%100], 10, nil, nil)
 			i++
 		}
 	})
@@ -236,12 +236,12 @@ func BenchmarkHNSWBuildTime(b *testing.B) {
 	// Pre-populate store
 	for j := 0; j < numVectors; j++ {
 		candidate := createTestCandidate(generateRandomVector(dim))
-		store.AddCandidate(context.Background(), candidate)
+		_ = store.AddCandidate(context.Background(), candidate)
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		store.BuildFromStore(context.Background())
+		_ = store.BuildFromStore(context.Background())
 	}
 }
 
@@ -280,7 +280,7 @@ func TestHNSWBasicOperations(t *testing.T) {
 	}
 
 	// Test build and search
-	store.BuildFromStore(ctx)
+	_ = store.BuildFromStore(ctx)
 
 	if !store.IsReady() {
 		t.Error("Store should be ready after BuildFromStore")
@@ -319,7 +319,7 @@ func TestHNSWDelete(t *testing.T) {
 	ctx := context.Background()
 	// Add candidate
 	candidate := createTestCandidate(generateRandomVector(dim))
-	store.AddCandidate(ctx, candidate)
+	_ = store.AddCandidate(ctx, candidate)
 
 	if store.Stats() != 1 {
 		t.Errorf("Expected 1 item, got %d", store.Stats())

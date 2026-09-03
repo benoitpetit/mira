@@ -15,7 +15,7 @@ import (
 
 // MiraProvider implements ports.MiraMemoryProvider using MIRA's SQLite connection.
 type MiraProvider struct {
-	db         *sql.DB
+	db          *sql.DB
 	storeMemory *interactors.StoreMemory
 }
 
@@ -40,7 +40,7 @@ func (p *MiraProvider) GetMiraMemories(ctx context.Context, agentID, query strin
 		WHERE v.id IN (SELECT rowid FROM verbatim_fts WHERE verbatim_fts MATCH ?)
 		ORDER BY v.created_at DESC
 		LIMIT ?`
-	
+
 	rows, err := p.db.QueryContext(ctx, ftsQuery, query, limit)
 	if err == nil {
 		memories := p.scanMiraMemories(rows)

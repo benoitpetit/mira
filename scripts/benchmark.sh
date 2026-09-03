@@ -31,7 +31,7 @@ trap "rm -f $OUTPUT_FILE" EXIT
 echo "Executing benchmarks (this may take a few minutes)..."
 echo ""
 
-go test ./internal/adapters/vector/... \
+go test -tags fts5 ./internal/adapters/vector/... \
     -bench=. \
     -benchmem \
     -benchtime="$BENCHTIME" \
@@ -95,7 +95,7 @@ if [ -f "$JSON_FILE" ] && [ -s "$JSON_FILE" ]; then
 else
     echo ""
     echo "To export results for visualization:"
-    echo "  go test ./internal/adapters/vector/... -bench=. -benchmem -benchtime=1s -run=^$ 2>&1 | \\"
+    echo "  go test -tags fts5 ./internal/adapters/vector/... -bench=. -benchmem -benchtime=1s -run=^$ 2>&1 | \\"
     echo "    go run scripts/benchmark_to_json.go > benchmark_results.json"
 fi
 

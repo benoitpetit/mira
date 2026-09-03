@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/mutecomm/go-sqlcipher/v4"
+	_ "github.com/benoitpetit/go-sqlcipher/v4"
 
 	"github.com/benoitpetit/mira/internal/usecases/ports"
 	"github.com/benoitpetit/mira/internal/util"
@@ -107,7 +107,7 @@ func TestSaveToDLQ_NilDB(t *testing.T) {
 		Payload:    map[string]interface{}{"key": "val"},
 		Timestamp:  time.Now(),
 	}
-	if err := m.saveToDLQ(event); err != nil {
+	if err := m.saveToDLQ(&event); err != nil {
 		t.Errorf("expected nil error with nil DB, got %v", err)
 	}
 }
@@ -124,7 +124,7 @@ func TestSaveToDLQ_WithDB(t *testing.T) {
 		Payload:    map[string]interface{}{"foo": "bar"},
 		Timestamp:  time.Now(),
 	}
-	if err := m.saveToDLQ(event); err != nil {
+	if err := m.saveToDLQ(&event); err != nil {
 		t.Fatalf("saveToDLQ: %v", err)
 	}
 
@@ -429,7 +429,7 @@ func TestTrigger_QueueFull_SavesToDLQ(t *testing.T) {
 func TestSendWebhook_EndpointNotFound(t *testing.T) {
 	m := newManager()
 	// EndpointID not in m.endpoints — should be a silent no-op.
-	m.sendWebhook(ports.WebhookEvent{
+	m.sendWebhook(&ports.WebhookEvent{
 		ID:         uuid.New(),
 		EndpointID: uuid.New(),
 		Type:       "test.event",
@@ -446,7 +446,7 @@ func TestSendWebhook_Success(t *testing.T) {
 
 	m := newManager()
 	ep := m.Register(context.Background(), srv.URL, []string{"*"}, "")
-	m.sendWebhook(ports.WebhookEvent{
+	m.sendWebhook(&ports.WebhookEvent{
 		ID:         uuid.New(),
 		EndpointID: ep.ID,
 		Type:       "test.event",
@@ -473,7 +473,7 @@ func TestDoSendWebhook_Non2xx(t *testing.T) {
 		Payload:   map[string]interface{}{},
 		Timestamp: time.Now(),
 	}
-	err := m.doSendWebhook(ep, event)
+	err := m.doSendWebhook(ep, &event)
 	if err == nil {
 		t.Fatal("expected error for non-2xx response, got nil")
 	}
@@ -499,10 +499,10 @@ func TestDoSendWebhook_WithSecret(t *testing.T) {
 		Payload:   map[string]interface{}{"a": "b"},
 		Timestamp: time.Now(),
 	}
-	if err := m.doSendWebhook(ep, event); err != nil {
+	if err := m.doSendWebhook(ep, &event); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(gotSig) == 0 || gotSig[:7] != "sha256=" {
+	if gotSig == "" || gotSig[:7] != "sha256=" {
 		t.Errorf("expected HMAC signature header starting with sha256=, got: %q", gotSig)
 	}
 }

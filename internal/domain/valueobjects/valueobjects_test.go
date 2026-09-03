@@ -57,6 +57,23 @@ func TestMemoryTypeString(t *testing.T) {
 	}
 }
 
+func TestMemoryKind(t *testing.T) {
+	for _, kind := range []MemoryKind{KindIdentity, KindUser, KindProject, KindTask, KindKnowledge, KindHistory} {
+		if !kind.IsValid() {
+			t.Errorf("%q should be valid", kind)
+		}
+	}
+	if MemoryKind("unknown").IsValid() {
+		t.Error("unknown kind should not be valid")
+	}
+	if got := DefaultMemoryKindForType(TypePreference); got != KindUser {
+		t.Errorf("preference kind = %q, want %q", got, KindUser)
+	}
+	if got := DefaultMemoryKindForType(TypeSessionNote); got != KindHistory {
+		t.Errorf("session note kind = %q, want %q", got, KindHistory)
+	}
+}
+
 func TestRelationTypeIsValid(t *testing.T) {
 	tests := []struct {
 		rt       RelationType

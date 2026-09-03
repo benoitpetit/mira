@@ -1,5 +1,5 @@
 system:
-  version: "0.4.7"
+  version: "0.5.0"
 
 storage:
   path: ".mira"
@@ -89,9 +89,9 @@ recall:
 
 mcp:
   name: "mira"
-  version: "0.4.7"
-  transport: "stdio"      # "stdio" for Claude Desktop/Cursor, "sse" for HTTP Server-Sent Events
-  address: "localhost:3001" # Bind address when transport is "sse"
+  version: "0.5.0"
+  transport: "stdio"      # "stdio", "sse", or stateless "http" (POST /mcp)
+  address: "localhost:3001" # Bind address when transport is "sse" or "http"
   timeout_seconds: 30
 
 # =============================================================================
@@ -170,7 +170,7 @@ webhooks:
 # SOUL IDENTITY EXTENSION (Optional)
 # =============================================================================
 # SOUL is an opt-in identity preservation layer for LLM agents.
-# By default, MIRA runs without SOUL (13 tools). To enable SOUL (21 tools total: 13 MIRA + 8 SOUL):
+# By default, MIRA runs without SOUL (14 tools). To enable SOUL (22 tools total: 14 MIRA + 8 SOUL):
 #
 #   1. Set soul.enabled: true below, OR
 #   2. Launch with: ./mira --config config.yaml --with-soul

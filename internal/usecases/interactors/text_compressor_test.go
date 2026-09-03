@@ -24,7 +24,9 @@ func TestCompressText_FillerPhrases(t *testing.T) {
 		{
 			name:  "due to the fact that",
 			input: "We switched due to the fact that performance was poor.",
-			check: func(s string) bool { return strings.Contains(s, "because") && !strings.Contains(s, "due to the fact that") },
+			check: func(s string) bool {
+				return strings.Contains(s, "because") && !strings.Contains(s, "due to the fact that")
+			},
 		},
 		{
 			name:  "in order to lowercase",

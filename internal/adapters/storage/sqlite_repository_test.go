@@ -2,7 +2,9 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -49,6 +51,47 @@ func TestNewSQLiteRepository(t *testing.T) {
 	}
 }
 
+func TestNewSQLiteRepository_EncryptsDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "encrypted.db")
+	key := "correct 'horse' \"battery\" staple"
+	repo, err := NewSQLiteRepository(path, SQLiteOptions{EncryptionKey: key})
+	if err != nil {
+		t.Fatalf("NewSQLiteRepository() error = %v", err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	header, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if len(header) < len("SQLite format 3\\x00") {
+		t.Fatalf("encrypted database header is too short: %d bytes", len(header))
+	}
+	if string(header[:len("SQLite format 3\\x00")]) == "SQLite format 3\\x00" {
+		t.Fatal("database was written in plaintext")
+	}
+
+	withoutKey, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatalf("sql.Open() without key error = %v", err)
+	}
+	defer withoutKey.Close()
+	if err := withoutKey.QueryRow("SELECT count(*) FROM sqlite_master").Err(); err == nil {
+		t.Fatal("database opened without its encryption key")
+	}
+
+	reopened, err := NewSQLiteRepository(path, SQLiteOptions{EncryptionKey: key})
+	if err != nil {
+		t.Fatalf("NewSQLiteRepository() reopening encrypted database error = %v", err)
+	}
+	defer reopened.Close()
+	if err := reopened.DB().Ping(); err != nil {
+		t.Fatalf("Ping() reopened encrypted database error = %v", err)
+	}
+}
+
 func TestStoreAndGetVerbatim(t *testing.T) {
 	repo, cleanup := setupTestDB(t)
 	defer cleanup()
@@ -75,6 +118,47 @@ func TestStoreAndGetVerbatim(t *testing.T) {
 	}
 	if retrieved.TokenCount != verbatim.TokenCount {
 		t.Errorf("TokenCount = %d, want %d", retrieved.TokenCount, verbatim.TokenCount)
+	}
+}
+
+func TestStoreAndGetVerbatimValidityInterval(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	from := time.Date(2026, 4, 15, 0, 0, 0, 0, time.UTC)
+	until := from.Add(24 * time.Hour)
+	verbatim := entities.NewVerbatim("PostgreSQL is the primary database", "backend", nil)
+	verbatim.ValidFrom = &from
+	verbatim.ValidUntil = &until
+	if err := repo.StoreVerbatim(context.Background(), verbatim); err != nil {
+		t.Fatalf("StoreVerbatim failed: %v", err)
+	}
+
+	got, err := repo.GetVerbatimByID(context.Background(), verbatim.ID)
+	if err != nil {
+		t.Fatalf("GetVerbatimByID failed: %v", err)
+	}
+	if got.ValidFrom == nil || !got.ValidFrom.Equal(from) || got.ValidUntil == nil || !got.ValidUntil.Equal(until) {
+		t.Fatalf("validity interval = %v..%v, want %v..%v", got.ValidFrom, got.ValidUntil, from, until)
+	}
+}
+
+func TestStoreAndGetVerbatimKind(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	verbatim := entities.NewVerbatim("The user prefers French", "general", nil)
+	verbatim.Kind = valueobjects.KindUser
+	if err := repo.StoreVerbatim(context.Background(), verbatim); err != nil {
+		t.Fatalf("StoreVerbatim failed: %v", err)
+	}
+
+	got, err := repo.GetVerbatimByID(context.Background(), verbatim.ID)
+	if err != nil {
+		t.Fatalf("GetVerbatimByID failed: %v", err)
+	}
+	if got.Kind != valueobjects.KindUser {
+		t.Errorf("Kind = %q, want %q", got.Kind, valueobjects.KindUser)
 	}
 }
 
@@ -221,8 +305,8 @@ func TestAddAndHasEdge(t *testing.T) {
 	node1 := entities.NewCausalNode(fromID, "decision", "Decision A", "backend", nil)
 	node2 := entities.NewCausalNode(toID, "decision", "Decision B", "backend", nil)
 	ctx := context.Background()
-	repo.AddNode(ctx, node1)
-	repo.AddNode(ctx, node2)
+	_ = repo.AddNode(ctx, node1)
+	_ = repo.AddNode(ctx, node2)
 
 	// Add edge
 	edge := entities.NewCausalEdge(fromID, toID, valueobjects.RelBecause)
@@ -248,10 +332,10 @@ func TestGetRecentFingerprintsByWing(t *testing.T) {
 	ctx := context.Background()
 	for i := 0; i < 3; i++ {
 		verbatim := entities.NewVerbatim("Test content", "backend", nil)
-		repo.StoreVerbatim(ctx, verbatim)
+		_ = repo.StoreVerbatim(ctx, verbatim)
 
 		fp := entities.NewFingerprint(verbatim.ID, valueobjects.TypeFact, "hash")
-		repo.StoreFingerprint(ctx, fp)
+		_ = repo.StoreFingerprint(ctx, fp)
 	}
 
 	// Get recent fingerprints
@@ -272,14 +356,14 @@ func TestGetStats(t *testing.T) {
 	// Create some data
 	ctx := context.Background()
 	verbatim := entities.NewVerbatim("Test", "wing", nil)
-	repo.StoreVerbatim(ctx, verbatim)
+	_ = repo.StoreVerbatim(ctx, verbatim)
 
 	fp := entities.NewFingerprint(verbatim.ID, valueobjects.TypeDecision, "hash")
-	repo.StoreFingerprint(ctx, fp)
+	_ = repo.StoreFingerprint(ctx, fp)
 
 	// Register model
 	model := entities.NewEmbeddingModel("test-model", 384)
-	repo.RegisterModel(ctx, model)
+	_ = repo.RegisterModel(ctx, model)
 
 	// Get stats
 	stats, err := repo.GetStats(ctx)
@@ -302,13 +386,13 @@ func TestGetTimeline(t *testing.T) {
 	// Create verbatims and fingerprints
 	ctx := context.Background()
 	verbatim := entities.NewVerbatim("Test content", "timeline-wing", nil)
-	repo.StoreVerbatim(ctx, verbatim)
+	_ = repo.StoreVerbatim(ctx, verbatim)
 
 	fp := entities.NewFingerprint(verbatim.ID, valueobjects.TypeDecision, "hash")
 	fp.WithData(valueobjects.FingerprintData{
 		Subject: []string{"test-subject"},
 	})
-	repo.StoreFingerprint(ctx, fp)
+	_ = repo.StoreFingerprint(ctx, fp)
 
 	// Get timeline
 	timeline, err := repo.GetTimeline(ctx, "timeline-wing", nil, nil, nil, nil, 100, nil)
@@ -334,34 +418,34 @@ func TestArchiveOldMemories(t *testing.T) {
 	oldSessionNote := entities.NewVerbatim("Old session note", "test", nil)
 	oldSessionNote.CreatedAt = time.Now().Add(-40 * 24 * time.Hour) // 40 days old
 	oldSessionNote.TokenCount = 100                                 // Set token count
-	repo.StoreVerbatim(ctx, oldSessionNote)
+	_ = repo.StoreVerbatim(ctx, oldSessionNote)
 
 	oldSessionFp := entities.NewFingerprint(oldSessionNote.ID, valueobjects.TypeSessionNote, "hash")
-	repo.StoreFingerprint(ctx, oldSessionFp)
+	_ = repo.StoreFingerprint(ctx, oldSessionFp)
 
 	// Create old debug log (should be archived - > 7 days)
 	oldDebugLog := entities.NewVerbatim("Old debug log", "test", nil)
 	oldDebugLog.CreatedAt = time.Now().Add(-10 * 24 * time.Hour) // 10 days old
 	oldDebugLog.TokenCount = 50                                  // Set token count
-	repo.StoreVerbatim(ctx, oldDebugLog)
+	_ = repo.StoreVerbatim(ctx, oldDebugLog)
 
 	oldDebugFp := entities.NewFingerprint(oldDebugLog.ID, valueobjects.TypeDebugLog, "hash")
-	repo.StoreFingerprint(ctx, oldDebugFp)
+	_ = repo.StoreFingerprint(ctx, oldDebugFp)
 
 	// Create recent session note (should NOT be archived - < 30 days)
 	recentSessionNote := entities.NewVerbatim("Recent session note", "test", nil)
 	recentSessionNote.CreatedAt = time.Now().Add(-5 * 24 * time.Hour) // 5 days old
 	recentSessionNote.TokenCount = 75
-	repo.StoreVerbatim(ctx, recentSessionNote)
+	_ = repo.StoreVerbatim(ctx, recentSessionNote)
 
 	recentSessionFp := entities.NewFingerprint(recentSessionNote.ID, valueobjects.TypeSessionNote, "hash")
-	repo.StoreFingerprint(ctx, recentSessionFp)
+	_ = repo.StoreFingerprint(ctx, recentSessionFp)
 
 	// Create recent decision (should NOT be archived - any age)
 	recentDecision := entities.NewVerbatim("Recent decision", "test", nil)
 	recentDecision.CreatedAt = time.Now()
 	recentDecision.TokenCount = 80
-	repo.StoreVerbatim(ctx, recentDecision)
+	_ = repo.StoreVerbatim(ctx, recentDecision)
 
 	recentDecisionFp := entities.NewFingerprint(recentDecision.ID, valueobjects.TypeDecision, "hash")
 	repo.StoreFingerprint(ctx, recentDecisionFp)
@@ -370,10 +454,10 @@ func TestArchiveOldMemories(t *testing.T) {
 	oldDecision := entities.NewVerbatim("Old decision", "test", nil)
 	oldDecision.CreatedAt = time.Now().Add(-60 * 24 * time.Hour) // 60 days old
 	oldDecision.TokenCount = 120
-	repo.StoreVerbatim(ctx, oldDecision)
+	_ = repo.StoreVerbatim(ctx, oldDecision)
 
 	oldDecisionFp := entities.NewFingerprint(oldDecision.ID, valueobjects.TypeDecision, "hash")
-	repo.StoreFingerprint(ctx, oldDecisionFp)
+	_ = repo.StoreFingerprint(ctx, oldDecisionFp)
 
 	// Run archive
 	result, err := repo.ArchiveOldMemories(ctx)
@@ -477,7 +561,7 @@ func TestStoreVerbatimTx(t *testing.T) {
 	verbatim := entities.NewVerbatim("Transaction test content", "tx-wing", nil)
 	err = repo.StoreVerbatimTx(ctx, tx, verbatim)
 	if err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		t.Fatalf("StoreVerbatimTx failed: %v", err)
 	}
 
@@ -502,7 +586,7 @@ func TestStoreVerbatimTx(t *testing.T) {
 	verbatim2 := entities.NewVerbatim("Committed content", "tx-wing", nil)
 	err = repo.StoreVerbatimTx(ctx, tx, verbatim2)
 	if err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		t.Fatalf("StoreVerbatimTx failed: %v", err)
 	}
 
@@ -552,7 +636,7 @@ func TestStoreEmbeddingTx(t *testing.T) {
 
 	err = repo.StoreEmbeddingTx(ctx, tx, emb)
 	if err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		t.Fatalf("StoreEmbeddingTx failed: %v", err)
 	}
 
@@ -615,7 +699,7 @@ func TestTransactionRollback(t *testing.T) {
 	verbatim := entities.NewVerbatim("Will be rolled back", "rollback-wing", nil)
 	err = repo.StoreVerbatimTx(ctx, tx, verbatim)
 	if err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		t.Fatalf("StoreVerbatimTx failed: %v", err)
 	}
 
@@ -640,7 +724,7 @@ func TestTransactionRollback(t *testing.T) {
 	verbatim2 := entities.NewVerbatim("Should be committed", "rollback-wing", nil)
 	err = repo.StoreVerbatimTx(ctx, tx2, verbatim2)
 	if err != nil {
-		tx2.Rollback()
+		_ = tx2.Rollback()
 		t.Fatalf("StoreVerbatimTx failed: %v", err)
 	}
 
@@ -666,7 +750,7 @@ func BenchmarkStoreVerbatim(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		verbatim := entities.NewVerbatim("Benchmark content", "bench", nil)
-		repo.StoreVerbatim(context.Background(), verbatim)
+		_ = repo.StoreVerbatim(context.Background(), verbatim)
 	}
 }
 
@@ -934,7 +1018,7 @@ func TestSearchLexical(t *testing.T) {
 	ctx := context.Background()
 
 	if !repo.fts5Enabled {
-		t.Skip("FTS5 not available in this build")
+		t.Fatal("FTS5 not available: build and test MIRA with -tags fts5")
 	}
 
 	// Store full memories so the FTS join succeeds
@@ -976,7 +1060,7 @@ func TestSearchExact(t *testing.T) {
 	ctx := context.Background()
 
 	if !repo.fts5Enabled {
-		t.Skip("FTS5 not available in this build")
+		t.Fatal("FTS5 not available: build and test MIRA with -tags fts5")
 	}
 
 	content := "exact content for search test"
@@ -1245,7 +1329,7 @@ func TestClearByRoom(t *testing.T) {
 	}
 
 	room1 := "room1"
-	vKeep := storeWithRoom("keep", "wingA", nil)    // wingA, room=NULL
+	vKeep := storeWithRoom("keep", "wingA", nil)     // wingA, room=NULL
 	vDel := storeWithRoom("delete", "wingA", &room1) // wingA, room=room1
 
 	// ClearByRoom on a wing/room combination that doesn't exist → 0 rows, no error.

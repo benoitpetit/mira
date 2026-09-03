@@ -75,7 +75,7 @@ func (r *PostgreSQLRepository) StoreVerbatim(ctx context.Context, verbatim *enti
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
 
 	if err := r.StoreVerbatimTx(ctx, tx, verbatim); err != nil {
 		return err
@@ -94,9 +94,9 @@ func (r *PostgreSQLRepository) StoreVerbatimTx(ctx context.Context, tx *sql.Tx, 
 	metricsJSON, _ := json.Marshal(v.Metrics)
 
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO verbatim (id, content, token_count, created_at, wing, room, metadata, metrics)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		v.ID, v.Content, v.TokenCount, float64(v.CreatedAt.Unix()), v.Wing, v.Room, metadataJSON, metricsJSON,
+		`INSERT INTO verbatim (id, content, token_count, created_at, valid_from, valid_until, kind, wing, room, metadata, metrics)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		v.ID, v.Content, v.TokenCount, float64(v.CreatedAt.Unix()), unixTimeOrNil(v.ValidFrom), unixTimeOrNil(v.ValidUntil), v.Kind, v.Wing, v.Room, metadataJSON, metricsJSON,
 	)
 	return err
 }
@@ -107,7 +107,7 @@ func (r *PostgreSQLRepository) DeleteVerbatimByID(ctx context.Context, id uuid.U
 	if err != nil {
 		return fmt.Errorf("failed to begin delete transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
 
 	if err := r.DeleteVerbatimByIDTx(ctx, tx, id); err != nil {
 		return err
@@ -148,7 +148,7 @@ func (r *PostgreSQLRepository) DeleteVerbatimByIDTx(ctx context.Context, tx *sql
 // GetVerbatimByID implements VerbatimRepository
 func (r *PostgreSQLRepository) GetVerbatimByID(ctx context.Context, id uuid.UUID) (*entities.Verbatim, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, content, token_count, created_at, wing, room, metadata, metrics, summary, summary_tokens FROM verbatim WHERE id = $1`,
+		`SELECT id, content, token_count, created_at, valid_from, valid_until, kind, wing, room, metadata, metrics, summary, summary_tokens FROM verbatim WHERE id = $1`,
 		id,
 	)
 
@@ -157,16 +157,19 @@ func (r *PostgreSQLRepository) GetVerbatimByID(ctx context.Context, id uuid.UUID
 	var room sql.NullString
 	var summary sql.NullString
 	var createdAt float64
+	var validFrom, validUntil sql.NullFloat64
 
-	err := row.Scan(&v.ID, &v.Content, &v.TokenCount, &createdAt, &v.Wing, &room, &metadataJSON, &metricsJSON, &summary, &v.SummaryTokenCount)
+	err := row.Scan(&v.ID, &v.Content, &v.TokenCount, &createdAt, &validFrom, &validUntil, &v.Kind, &v.Wing, &room, &metadataJSON, &metricsJSON, &summary, &v.SummaryTokenCount)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("verbatim not found")
+			return nil, &NotFoundError{Resource: "verbatim"}
 		}
 		return nil, err
 	}
 
 	v.CreatedAt = time.Unix(int64(createdAt), 0)
+	v.ValidFrom = nullableUnixTime(validFrom)
+	v.ValidUntil = nullableUnixTime(validUntil)
 	if room.Valid {
 		v.Room = &room.String
 	}
@@ -198,7 +201,7 @@ func (r *PostgreSQLRepository) StoreFingerprint(ctx context.Context, fp *entitie
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
 
 	if err := r.StoreFingerprintTx(ctx, tx, fp); err != nil {
 		return err
@@ -246,7 +249,7 @@ func (r *PostgreSQLRepository) GetFingerprintByID(ctx context.Context, id uuid.U
 	err := row.Scan(&fp.ID, &fp.VerbatimID, &ftype, &extractedAt, &entitiesJSON, &subjectsJSON, &decision, &dataJSON, &fp.FactCount, &fp.TokenEstimate, &fp.ModelHash)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("fingerprint not found")
+			return nil, &NotFoundError{Resource: "fingerprint"}
 		}
 		return nil, err
 	}
@@ -283,7 +286,7 @@ func (r *PostgreSQLRepository) GetFingerprintByVerbatimID(ctx context.Context, v
 	err := row.Scan(&fp.ID, &fp.VerbatimID, &ftype, &extractedAt, &entitiesJSON, &subjectsJSON, &decision, &dataJSON, &fp.FactCount, &fp.TokenEstimate, &fp.ModelHash)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("fingerprint not found")
+			return nil, &NotFoundError{Resource: "fingerprint"}
 		}
 		return nil, err
 	}
@@ -308,7 +311,7 @@ func (r *PostgreSQLRepository) GetRecentFingerprintsByWing(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
 	return r.GetRecentFingerprintsByWingTx(ctx, tx, wing, excludeID, limit)
 }
 
@@ -362,7 +365,7 @@ func (r *PostgreSQLRepository) StoreEmbedding(ctx context.Context, emb *entities
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
 
 	if err := r.StoreEmbeddingTx(ctx, tx, emb); err != nil {
 		return err
@@ -429,7 +432,7 @@ func (r *PostgreSQLRepository) AddNode(ctx context.Context, node *entities.Causa
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
 
 	if err := r.AddNodeTx(ctx, tx, node); err != nil {
 		return err
@@ -454,7 +457,7 @@ func (r *PostgreSQLRepository) AddEdge(ctx context.Context, edge *entities.Causa
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
 
 	if err := r.AddEdgeTx(ctx, tx, edge); err != nil {
 		return err
@@ -750,7 +753,7 @@ func (r *PostgreSQLRepository) GetTimeline(ctx context.Context, wing string, roo
 		}
 
 		var data valueobjects.FingerprintData
-		json.Unmarshal(dataJSON, &data)
+		_ = json.Unmarshal(dataJSON, &data)
 
 		summary := ""
 		if len(data.Subject) > 0 {
@@ -787,7 +790,7 @@ func (r *PostgreSQLRepository) ClearAll(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
 
 	_, _ = tx.ExecContext(ctx, `TRUNCATE verbatim CASCADE`)
 	_, _ = tx.ExecContext(ctx, `TRUNCATE overlap_cache`)
@@ -802,7 +805,7 @@ func (r *PostgreSQLRepository) ClearByRoom(ctx context.Context, wing string, roo
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
 
 	var roomCondition string
 	args := []interface{}{wing}
@@ -909,7 +912,7 @@ func (r *PostgreSQLRepository) GetCandidatesWithEmbeddings(ctx context.Context, 
 	}
 
 	query := `
-		SELECT v.id, v.content, v.wing, v.room, v.token_count, v.created_at,
+		SELECT v.id, v.content, v.wing, v.room, v.token_count, v.created_at, v.valid_from, v.valid_until, v.kind,
 			   v.summary, v.summary_tokens,
 			   f.id, f.ftype, f.fact_count, f.token_estimate, f.model_hash, f.data,
 			   e.vector::float4[]
@@ -927,16 +930,17 @@ func (r *PostgreSQLRepository) GetCandidatesWithEmbeddings(ctx context.Context, 
 	var candidates []*entities.Candidate
 	for rows.Next() {
 		var vID, fID uuid.UUID
-		var vContent, vWing, fType, fModelHash string
+		var vContent, vWing, vKind, fType, fModelHash string
 		var vRoom sql.NullString
 		var vSummary sql.NullString
 		var vTokenCount, vSummaryTokens, fFactCount, fTokenEstimate int
 		var vCreatedAt float64
+		var vValidFrom, vValidUntil sql.NullFloat64
 		var fData []byte
 		var vector []float32
 
 		err := rows.Scan(
-			&vID, &vContent, &vWing, &vRoom, &vTokenCount, &vCreatedAt,
+			&vID, &vContent, &vWing, &vRoom, &vTokenCount, &vCreatedAt, &vValidFrom, &vValidUntil, &vKind,
 			&vSummary, &vSummaryTokens,
 			&fID, &fType, &fFactCount, &fTokenEstimate, &fModelHash, &fData,
 			&vector,
@@ -959,6 +963,9 @@ func (r *PostgreSQLRepository) GetCandidatesWithEmbeddings(ctx context.Context, 
 			TokenCount:        vTokenCount,
 			SummaryTokenCount: vSummaryTokens,
 			CreatedAt:         time.Unix(int64(vCreatedAt), 0),
+			ValidFrom:         nullableUnixTime(vValidFrom),
+			ValidUntil:        nullableUnixTime(vValidUntil),
+			Kind:              valueobjects.MemoryKind(vKind),
 		}
 		if vRoom.Valid {
 			verbatim.Room = &vRoom.String

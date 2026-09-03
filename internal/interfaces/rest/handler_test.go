@@ -20,11 +20,13 @@ import (
 // ── Fake executors ────────────────────────────────────────────────────────────
 
 type fakeStore struct {
-	out *interactors.StoreMemoryOutput
-	err error
+	out    *interactors.StoreMemoryOutput
+	err    error
+	inputs []interactors.StoreMemoryInput
 }
 
-func (f *fakeStore) Execute(_ context.Context, _ interactors.StoreMemoryInput) (*interactors.StoreMemoryOutput, error) {
+func (f *fakeStore) Execute(_ context.Context, input interactors.StoreMemoryInput) (*interactors.StoreMemoryOutput, error) {
+	f.inputs = append(f.inputs, input)
 	return f.out, f.err
 }
 
@@ -280,6 +282,48 @@ func TestHandleStore_BadJSON(t *testing.T) {
 	}
 }
 
+func TestHandleIngest_Success(t *testing.T) {
+	s := newSuite(t)
+	s.store.out = &interactors.StoreMemoryOutput{}
+	resp := s.post("/api/v1/memories/ingest", map[string]any{
+		"wing": "test",
+		"messages": []map[string]string{
+			{"role": "user", "content": "Keep this durable user decision in memory."},
+			{"role": "assistant", "content": "This assistant message is excluded by default."},
+		},
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("want 201, got %d", resp.StatusCode)
+	}
+	var out struct {
+		Selected int  `json:"selected"`
+		Stored   int  `json:"stored"`
+		DryRun   bool `json:"dry_run"`
+	}
+	decodeJSON(t, resp, &out)
+	if out.Selected != 1 || out.Stored != 1 || out.DryRun {
+		t.Errorf("response = %#v", out)
+	}
+	if len(s.store.inputs) != 1 || s.store.inputs[0].Kind == nil || *s.store.inputs[0].Kind != valueobjects.KindHistory {
+		t.Errorf("stored inputs = %#v", s.store.inputs)
+	}
+}
+
+func TestHandleIngest_DryRunDoesNotStore(t *testing.T) {
+	s := newSuite(t)
+	resp := s.post("/api/v1/memories/ingest", map[string]any{
+		"wing":     "test",
+		"dry_run":  true,
+		"messages": []map[string]string{{"role": "user", "content": "Keep this durable user decision in memory."}},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	if len(s.store.inputs) != 0 {
+		t.Errorf("dry run stored %#v", s.store.inputs)
+	}
+}
+
 func TestHandleLoad_Success(t *testing.T) {
 	s := newSuite(t)
 	id := uuid.New()
@@ -463,7 +507,7 @@ func TestHandleStatus_Success(t *testing.T) {
 	s.status.out = &interactors.GetStatusOutput{
 		Stats:   valueobjects.NewStats(),
 		Models:  []string{"model-v1"},
-		Version: "0.4.7",
+		Version: "0.5.0",
 		Uptime:  "1h",
 	}
 
@@ -551,6 +595,16 @@ func TestAuth_OpenAPISpec_NoToken_Allowed(t *testing.T) {
 	resp := s.get("/openapi.json")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestAuth_DashboardShell_NoToken_Allowed(t *testing.T) {
+	s := newSuiteWithAuth(t, "secret-token")
+	for _, path := range []string{"/", "/index.html", "/app.js", "/styles.css"} {
+		resp := s.get(path)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s without token: want 200, got %d", path, resp.StatusCode)
+		}
 	}
 }
 

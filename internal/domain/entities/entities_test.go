@@ -28,11 +28,32 @@ func TestNewVerbatim(t *testing.T) {
 	if v.TokenCount != 0 {
 		t.Errorf("TokenCount should be 0 initially, got %d", v.TokenCount)
 	}
+	if v.Kind != valueobjects.KindKnowledge {
+		t.Errorf("Kind = %s, want %s", v.Kind, valueobjects.KindKnowledge)
+	}
 	if v.Metadata == nil {
 		t.Error("Metadata should be initialized")
 	}
 	if time.Since(v.CreatedAt) > time.Second {
 		t.Error("CreatedAt should be recent")
+	}
+}
+
+func TestVerbatimIsValidAt(t *testing.T) {
+	from := time.Date(2026, 4, 15, 0, 0, 0, 0, time.UTC)
+	until := from.Add(24 * time.Hour)
+	v := NewVerbatim("temporal fact", "backend", nil)
+	v.ValidFrom = &from
+	v.ValidUntil = &until
+
+	if v.IsValidAt(from.Add(-time.Second)) {
+		t.Error("memory should not be valid before valid_from")
+	}
+	if !v.IsValidAt(from) || !v.IsValidAt(until) {
+		t.Error("validity bounds should be inclusive")
+	}
+	if v.IsValidAt(until.Add(time.Second)) {
+		t.Error("memory should not be valid after valid_until")
 	}
 }
 

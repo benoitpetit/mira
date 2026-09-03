@@ -256,3 +256,29 @@ func TestSearchSemantic_ResultFields(t *testing.T) {
 		t.Errorf("Similarity: expected ~1.0, got %f", r.Similarity)
 	}
 }
+
+func TestSearchSemanticFiltersByKindAndExpandsSearch(t *testing.T) {
+	ctx := context.Background()
+	project := buildSemanticCandidate(uuid.New(), "project result", valueobjects.TypeFact, []float32{1, 0, 0, 0})
+	project.Verbatim.Kind = valueobjects.KindProject
+	user := buildSemanticCandidate(uuid.New(), "user result", valueobjects.TypePreference, []float32{1, 0, 0, 0})
+	user.Verbatim.Kind = valueobjects.KindUser
+
+	var receivedLimit int
+	vs := &mockSemanticVectorStore{searchFunc: func(_ context.Context, _ []float32, limit int, _, _ *string) ([]*entities.Candidate, error) {
+		receivedLimit = limit
+		return []*entities.Candidate{project, user}, nil
+	}}
+	uc := NewSearchSemantic(vs, &mockSemanticEmbedder{})
+	kind := valueobjects.KindUser
+	results, err := uc.Execute(ctx, SearchSemanticInput{Query: "q", TopK: 1, Threshold: 0.5, Kind: &kind})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if receivedLimit != 5 {
+		t.Errorf("search limit = %d, want 5", receivedLimit)
+	}
+	if len(results) != 1 || results[0].ID != user.Verbatim.ID || results[0].Kind != string(valueobjects.KindUser) {
+		t.Fatalf("results = %#v, want the user memory", results)
+	}
+}

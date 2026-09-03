@@ -4,6 +4,7 @@ package extraction
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -21,14 +22,14 @@ import (
 // CybertronEmbedder uses Cybertron for real embeddings with a model pool
 // to allow concurrent encoding without global serialization.
 type CybertronEmbedder struct {
-	modelPool  chan textencoding.Interface
-	allModels  []textencoding.Interface
-	modelsDir  string
-	modelName  string
-	dimension  int
-	closeOnce  sync.Once
-	closed     bool
-	mu         sync.Mutex
+	modelPool chan textencoding.Interface
+	allModels []textencoding.Interface
+	modelsDir string
+	modelName string
+	dimension int
+	closeOnce sync.Once
+	closed    bool
+	mu        sync.Mutex
 }
 
 // CybertronEmbedderOptions configures the embedder
@@ -46,7 +47,7 @@ func NewCybertronEmbedder(opts CybertronEmbedderOptions) (*CybertronEmbedder, er
 	}
 
 	// Ensure models directory exists
-	if err := os.MkdirAll(opts.ModelsDir, 0755); err != nil {
+	if err := os.MkdirAll(opts.ModelsDir, 0o755); err != nil {
 		return nil, fmt.Errorf("failed to create models directory: %w", err)
 	}
 
@@ -55,10 +56,12 @@ func NewCybertronEmbedder(opts CybertronEmbedderOptions) (*CybertronEmbedder, er
 
 	// Check if model already exists locally
 	modelPath := filepath.Join(opts.ModelsDir, opts.ModelName)
-	modelExists := false
-	if info, err := os.Stat(modelPath); err == nil && info.IsDir() {
-		if _, err := os.Stat(filepath.Join(modelPath, "config.json")); err == nil {
-			modelExists = true
+	modelExists := validModelConfig(filepath.Join(modelPath, "config.json"))
+	if !modelExists {
+		// Cybertron may leave partial files behind when a download is interrupted.
+		// Remove that unusable cache so the next load performs a clean download.
+		if err := os.RemoveAll(modelPath); err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("failed to clear incomplete model cache: %w", err)
 		}
 	}
 
@@ -93,6 +96,10 @@ func NewCybertronEmbedder(opts CybertronEmbedderOptions) (*CybertronEmbedder, er
 		close(progressStop)
 	}
 	if err != nil {
+		if !modelExists {
+			// Do not let a failed download poison all subsequent starts.
+			_ = os.RemoveAll(modelPath)
+		}
 		return nil, fmt.Errorf("failed to load cybertron model %s: %w", opts.ModelName, err)
 	}
 	models = append(models, m)
@@ -131,6 +138,20 @@ func NewCybertronEmbedder(opts CybertronEmbedderOptions) (*CybertronEmbedder, er
 		modelName: opts.ModelName,
 		dimension: opts.Dimension,
 	}, nil
+}
+
+func validModelConfig(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	var cfg map[string]any
+	if err := json.NewDecoder(f).Decode(&cfg); err != nil {
+		return false
+	}
+	return len(cfg) > 0
 }
 
 // Encode implements Embedder

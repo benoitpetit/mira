@@ -54,7 +54,7 @@ type Application struct {
 	searchSemantic      *interactors.SearchSemantic
 	updateMemory        *interactors.UpdateMemory
 	consolidateMemories *interactors.ConsolidateMemories
-	compressMemories   *interactors.CompressMemories
+	compressMemories    *interactors.CompressMemories
 	renderer            *interactors.DefaultFingerprintRenderer
 	controller          *mcpserver.Controller
 	webhookManager      ports.WebhookManager
@@ -62,6 +62,7 @@ type Application struct {
 	soulApp             *soul.Application
 	soulCtrl            *soul.Controller
 	restServer          *http.Server
+	metricsServer       *http.Server
 	startTime           time.Time
 	closeOnce           sync.Once
 	buildCancel         context.CancelFunc // cancels HNSW build goroutine
@@ -206,10 +207,22 @@ func (a *Application) initMetrics() {
 	if a.config.Metrics.PrometheusAddr != "" {
 		promCollector := metrics.NewPrometheusCollector()
 		a.metricsCollector = promCollector
+		healthChecker := NewHealthChecker(a, a.config.MCP.Version)
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promCollector.Handler())
+		mux.Handle("/health", healthChecker.Handler())
+		mux.Handle("/health/live", healthChecker.LivenessHandler())
+		mux.Handle("/health/ready", healthChecker.ReadinessHandler())
+		a.metricsServer = &http.Server{
+			Addr:         a.config.Metrics.PrometheusAddr,
+			Handler:      mux,
+			ReadTimeout:  10 * time.Second,
+			WriteTimeout: 10 * time.Second,
+		}
 		slog.Info("prometheus collector enabled")
 		go func() {
-			slog.Info("starting prometheus server", "addr", a.config.Metrics.PrometheusAddr+"/metrics")
-			if err := promCollector.StartServer(a.config.Metrics.PrometheusAddr); err != nil {
+			slog.Info("starting observability server", "addr", a.config.Metrics.PrometheusAddr)
+			if err := a.metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				slog.Error("prometheus server error", "error", err)
 			}
 		}()
@@ -456,7 +469,7 @@ func (a *Application) initUseCases() {
 
 	a.loadMemory = interactors.NewLoadMemory(repo, repo)
 	a.getTimeline = interactors.NewGetTimeline(repo)
-	a.getStatus = interactors.NewGetStatus(repo, repo, a.startTime, "0.4.7")
+	a.getStatus = interactors.NewGetStatus(repo, repo, a.startTime, "0.5.0")
 	a.getCausalChain = interactors.NewGetCausalChain(repo)
 	a.archiveMemories = interactors.NewArchiveMemories(repo)
 	a.clearMemory = interactors.NewClearMemory(repo, a.vectorStore)
@@ -466,7 +479,7 @@ func (a *Application) initUseCases() {
 	a.consolidateMemories = interactors.NewConsolidateMemories(repo, a.vectorStore, a.embedder, a.extractor)
 	a.compressMemories = interactors.NewCompressMemories(repo, repo)
 
-	a.controller = mcpserver.NewController(
+	a.controller = mcpserver.NewControllerWithLimits(
 		a.storeMemory,
 		a.recallMemory,
 		a.loadMemory,
@@ -480,6 +493,12 @@ func (a *Application) initUseCases() {
 		a.updateMemory,
 		a.searchSemantic,
 		a.consolidateMemories,
+		mcpserver.ValidationLimits{
+			MaxContentLength: cfg.MCP.MaxContentLength,
+			MaxWingLength:    cfg.MCP.MaxWingLength,
+			MaxRoomLength:    cfg.MCP.MaxRoomLength,
+			MaxQueryLength:   cfg.MCP.MaxQueryLength,
+		},
 	)
 }
 
@@ -529,6 +548,13 @@ func (a *Application) initRestAPI() {
 func (a *Application) Close() error {
 	var closeErr error
 	a.closeOnce.Do(func() {
+		if a.metricsServer != nil {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := a.metricsServer.Shutdown(shutdownCtx); err != nil {
+				slog.Warn("observability server shutdown error", "error", err)
+			}
+		}
 		if a.restServer != nil {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -646,7 +672,7 @@ func (a *Application) Run() error {
 			sseServer = server.NewSSEServer(s, "http://"+a.config.MCP.Address)
 			errChan <- sseServer.Start(a.config.MCP.Address)
 		case "http":
-			httpHandler := mcpserver.NewMCPServerHandler(s, a.config.MCP.Address)
+			httpHandler = mcpserver.NewMCPServerHandler(s, a.config.MCP.Address)
 			errChan <- httpHandler.Start(a.config.MCP.Address)
 		default:
 			errChan <- fmt.Errorf("unsupported transport: %s (stdio, sse, or http supported)", a.config.MCP.Transport)

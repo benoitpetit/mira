@@ -80,6 +80,17 @@ func TestNewApplication_WithPrometheusMetrics(t *testing.T) {
 	if app.metricsCollector == nil {
 		t.Error("expected metricsCollector to be set")
 	}
+	if app.metricsServer == nil {
+		t.Error("expected metricsServer to be set")
+	}
+	for _, path := range []string{"/metrics", "/health", "/health/live", "/health/ready"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		app.metricsServer.Handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Errorf("GET %s status = %d, want 200", path, rec.Code)
+		}
+	}
 	// Give the goroutine a moment to start (then let it fail silently)
 	time.Sleep(5 * time.Millisecond)
 	app.Close()
@@ -209,7 +220,7 @@ func TestNewApplicationFromConfig_InvalidPath(t *testing.T) {
 	tmpCfg, _ := os.CreateTemp("", "mira_cfg_*.yaml")
 	dir := t.TempDir()
 	// Write a minimal config overriding Storage.Path
-	tmpCfg.WriteString("storage:\n  path: " + filepath.Join(dir, ".mira") + "\nembeddings:\n  use_simple_embedder: true\n  dimension: 16\n")
+	_, _ = tmpCfg.WriteString("storage:\n  path: " + filepath.Join(dir, ".mira") + "\nembeddings:\n  use_simple_embedder: true\n  dimension: 16\n")
 	tmpCfg.Close()
 	defer os.Remove(tmpCfg.Name())
 

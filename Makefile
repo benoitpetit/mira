@@ -1,24 +1,28 @@
-.PHONY: build test clean run deps lint install bench bench-full
+.PHONY: build test clean run deps lint install bench bench-full bench-locomo
 
 BINARY=mira
 GO=go
 GOFLAGS=-ldflags="-s -w"
+GOTAGS=fts5
 
 build:
 	mkdir -p bin
-	$(GO) build $(GOFLAGS) -o bin/$(BINARY) ./cmd/mira
+	$(GO) build -tags $(GOTAGS) $(GOFLAGS) -o bin/$(BINARY) ./cmd/mira
 
 test:
-	$(GO) test -v -race ./...
+	$(GO) test -tags $(GOTAGS) -v -race ./...
 
 test-short:
-	$(GO) test -v ./... -short
+	$(GO) test -tags $(GOTAGS) -v ./... -short
 
 bench:
-	$(GO) test -bench=. -benchmem -benchtime=100ms -count=1 ./...
+	$(GO) test -tags $(GOTAGS) -bench=. -benchmem -benchtime=100ms -count=1 ./...
 
 bench-full:
-	$(GO) test -bench=. -benchmem ./...
+	$(GO) test -tags $(GOTAGS) -bench=. -benchmem ./...
+
+bench-locomo:
+	./scripts/locomo_benchmark.sh
 
 clean:
 	rm -rf bin/ ./.mira/
@@ -31,8 +35,8 @@ deps:
 	$(GO) mod tidy
 
 lint:
-	golangci-lint run ./...
-	$(GO) vet ./...
+	golangci-lint run --build-tags $(GOTAGS) ./...
+	$(GO) vet -tags $(GOTAGS) ./...
 
 fmt:
 	$(GO) fmt ./...

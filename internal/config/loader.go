@@ -24,13 +24,13 @@ func LoadOrDefault(path string) (*Config, error) {
 
 // ResolveConfigPath finds the best configuration file path using multi-platform fallbacks.
 // Resolution order:
-//   1. preferred argument (if non-empty)
-//   2. MIRA_CONFIG environment variable
-//   3. ./config.yaml in current working directory
-//   4. $XDG_CONFIG_HOME/mira/config.yaml  (Linux)
-//   5. $HOME/.config/mira/config.yaml      (Linux fallback)
-//   6. ~/Library/Application Support/mira/config.yaml (macOS)
-//   7. %APPDATA%/mira/config.yaml         (Windows)
+//  1. preferred argument (if non-empty)
+//  2. MIRA_CONFIG environment variable
+//  3. ./config.yaml in current working directory
+//  4. $XDG_CONFIG_HOME/mira/config.yaml  (Linux)
+//  5. $HOME/.config/mira/config.yaml      (Linux fallback)
+//  6. ~/Library/Application Support/mira/config.yaml (macOS)
+//  7. %APPDATA%/mira/config.yaml         (Windows)
 func ResolveConfigPath(preferred string) string {
 	if preferred != "" {
 		return preferred

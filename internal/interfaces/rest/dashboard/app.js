@@ -1,19 +1,39 @@
 // MIRA Dashboard App
 const API_BASE = "/api/v1";
+const TOKEN_KEY = "mira.apiToken";
+
+function apiFetch(url, options = {}) {
+    const token = sessionStorage.getItem(TOKEN_KEY) || "";
+    const headers = new Headers(options.headers || {});
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    return fetch(url, { ...options, headers });
+}
 
 // Load stats on page load
 document.addEventListener("DOMContentLoaded", () => {
+    const savedToken = sessionStorage.getItem(TOKEN_KEY) || "";
+    document.getElementById("apiToken").value = savedToken;
+    updateAuthStatus(savedToken ? "Token active" : "");
     loadStats();
     loadWings();
     setupEventListeners();
 });
 function setupEventListeners() {
+	document.getElementById("saveTokenBtn").addEventListener("click", () => {
+		const token = document.getElementById("apiToken").value.trim();
+		if (token) sessionStorage.setItem(TOKEN_KEY, token);
+		else sessionStorage.removeItem(TOKEN_KEY);
+		updateAuthStatus(token ? "Token active" : "Token cleared");
+		loadStats();
+		loadWings();
+	});
     document.getElementById("refreshBtn").addEventListener("click", () => {
         loadStats();
         goToFirstPage();
     });
 
     document.getElementById("searchBtn").addEventListener("click", searchMemories);
+    document.getElementById("searchResults").addEventListener("click", showCausalExplanation);
     document.getElementById("searchInput").addEventListener("keypress", (e) => {
         if (e.key === "Enter") searchMemories();
     });
@@ -34,7 +54,8 @@ function setupEventListeners() {
 
 async function loadStats() {
     try {
-        const response = await fetch(`${API_BASE}/status`);
+        const response = await apiFetch(`${API_BASE}/status`);
+		if (!response.ok) throw new Error(`request failed (${response.status})`);
         const data = await response.json();
         
         if (data.stats) {
@@ -54,10 +75,12 @@ async function loadStats() {
 
 async function loadWings() {
     try {
-        const response = await fetch(`${API_BASE}/status`);
+        const response = await apiFetch(`${API_BASE}/status`);
+		if (!response.ok) throw new Error(`request failed (${response.status})`);
         const data = await response.json();
         
         const select = document.getElementById("timelineWing");
+		select.querySelectorAll("option:not(:first-child)").forEach(option => option.remove());
         if (data.stats && data.stats.active_wings) {
             data.stats.active_wings.forEach(wing => {
                 const option = document.createElement("option");
@@ -77,15 +100,16 @@ async function searchMemories() {
 
     const threshold = parseFloat(document.getElementById("thresholdSlider").value) || 0.15;
     const topK = parseInt(document.getElementById("topKInput").value) || 20;
+	const kind = document.getElementById("searchKind").value || undefined;
 
     const resultsDiv = document.getElementById("searchResults");
     resultsDiv.innerHTML = '<div class="loading">Searching...</div>';
 
     try {
-        const response = await fetch(`${API_BASE}/memories/search`, {
+        const response = await apiFetch(`${API_BASE}/memories/search`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ query, top_k: topK, threshold })
+			body: JSON.stringify({ query, top_k: topK, threshold, kind })
         });
 
         const data = await response.json();
@@ -107,12 +131,35 @@ function displaySearchResults(results) {
         <div class="result-item">
             <h4>${escapeHtml(r.content?.substring(0, 100) || "No content")}${r.content?.length > 100 ? "..." : ""}</h4>
             <div class="meta">
-                <span>Type: ${r.type || "unknown"}</span>
-                <span>Wing: ${r.wing || "unknown"}</span>
+				<span>Kind: ${escapeHtml(r.kind || "knowledge")}</span>
+				<span>Type: ${escapeHtml(r.type || "unknown")}</span>
+                <span>Wing: ${escapeHtml(r.wing || "unknown")}</span>
                 <span class="similarity ${similarityClass(r.similarity)}">Score: ${(r.similarity * 100).toFixed(1)}%</span>
             </div>
+			${r.fingerprint_id ? `<button class="why-button" type="button" data-fingerprint-id="${escapeHtml(r.fingerprint_id)}">Why this memory?</button>` : ""}
         </div>
     `).join("");
+}
+
+async function showCausalExplanation(event) {
+    const button = event.target.closest("[data-fingerprint-id]");
+    if (!button) return;
+    const panel = document.getElementById("causalPanel");
+    panel.hidden = false;
+    panel.innerHTML = '<p class="loading">Loading causal context…</p>';
+    try {
+        const response = await apiFetch(`${API_BASE}/causal/${encodeURIComponent(button.dataset.fingerprintId)}?max_depth=5&include_consequences=true`);
+        if (!response.ok) throw new Error(`request failed (${response.status})`);
+        const data = await response.json();
+        panel.innerHTML = `<h3>Why this memory?</h3>${renderCausalGroup("Context and causes", data.chain || [])}${renderCausalGroup("Consequences", data.consequences || [])}`;
+    } catch (error) {
+        panel.innerHTML = `<p class="error">Causal context could not be loaded: ${escapeHtml(error.message)}</p>`;
+    }
+}
+
+function renderCausalGroup(title, nodes) {
+    if (nodes.length === 0) return `<p class="empty-state">${title}: no linked memories.</p>`;
+    return `<h4>${title}</h4><ol class="causal-list">${nodes.map(node => `<li>${escapeHtml(node.summary || "Untitled memory")}</li>`).join("")}</ol>`;
 }
 
 // ── Timeline pagination state ─────────────────────────────────────────────
@@ -145,7 +192,8 @@ async function loadTimeline(cursor = null) {
     if (cursor)         url += `&cursor=${encodeURIComponent(cursor)}`;
 
     try {
-        const response = await fetch(url);
+        const response = await apiFetch(url);
+		if (!response.ok) throw new Error(`request failed (${response.status})`);
         const data = await response.json();
         const items = data.items || [];
 
@@ -204,9 +252,9 @@ function displayTimeline(items) {
         <div class="timeline-item">
             <div class="info">
                 <h4>${escapeHtml(item.summary || "No summary")}</h4>
-                <p>${item.timestamp || ""} &bull; Wing: ${item.wing || "—"}</p>
+                <p>${escapeHtml(item.timestamp || "")} &bull; Wing: ${escapeHtml(item.wing || "—")}</p>
             </div>
-            <span class="badge badge-${item.type || "unknown"}">${item.type || "unknown"}</span>
+            <span class="badge">${escapeHtml(item.type || "unknown")}</span>
         </div>
     `).join("");
 }
@@ -215,6 +263,10 @@ function escapeHtml(text) {
     const div = document.createElement("div");
     div.textContent = text;
     return div.innerHTML;
+}
+
+function updateAuthStatus(message) {
+	document.getElementById("authStatus").textContent = message;
 }
 
 function similarityClass(score) {

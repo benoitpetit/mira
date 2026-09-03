@@ -41,16 +41,16 @@ type recallMetricsSpy struct {
 	resultCalls int
 }
 
-func (m *recallMetricsSpy) IsEnabled() bool                             { return true }
-func (m *recallMetricsSpy) RecordStore(_ time.Duration)                 {}
-func (m *recallMetricsSpy) RecordRecall(_ time.Duration)                { m.recallCalls++ }
-func (m *recallMetricsSpy) RecordSearch(_ time.Duration, _ bool)        {}
-func (m *recallMetricsSpy) RecordEmbed(_ time.Duration)                 {}
-func (m *recallMetricsSpy) RecordError()                                {}
-func (m *recallMetricsSpy) RecordStoreResult(_ int)                     {}
-func (m *recallMetricsSpy) RecordRecallResult(_ int, _ float64)         { m.resultCalls++ }
-func (m *recallMetricsSpy) UpdateMemoryCount(_ int)                     {}
-func (m *recallMetricsSpy) UpdateVectorCount(_ int)                     {}
+func (m *recallMetricsSpy) IsEnabled() bool                      { return true }
+func (m *recallMetricsSpy) RecordStore(_ time.Duration)          {}
+func (m *recallMetricsSpy) RecordRecall(_ time.Duration)         { m.recallCalls++ }
+func (m *recallMetricsSpy) RecordSearch(_ time.Duration, _ bool) {}
+func (m *recallMetricsSpy) RecordEmbed(_ time.Duration)          {}
+func (m *recallMetricsSpy) RecordError()                         {}
+func (m *recallMetricsSpy) RecordStoreResult(_ int)              {}
+func (m *recallMetricsSpy) RecordRecallResult(_ int, _ float64)  { m.resultCalls++ }
+func (m *recallMetricsSpy) UpdateMemoryCount(_ int)              {}
+func (m *recallMetricsSpy) UpdateVectorCount(_ int)              {}
 func (m *recallMetricsSpy) GetReport(_ context.Context) ports.MetricsReport {
 	return ports.MetricsReport{}
 }
@@ -75,8 +75,8 @@ func makeCandidate(tokens int) *entities.Candidate {
 			TokenCount: tokens,
 			CreatedAt:  time.Now(),
 		},
-		Embedding:  emb,
-		Relevance:  0.9,
+		Embedding: emb,
+		Relevance: 0.9,
 	}
 }
 
@@ -388,8 +388,8 @@ func TestReciprocalRankFusion_TieBreak(t *testing.T) {
 
 	newC := func(id uuid.UUID) *entities.Candidate {
 		return &entities.Candidate{
-			Memory:  &entities.Fingerprint{ID: id, Type: valueobjects.TypeSessionNote},
-			Verbatim: &entities.Verbatim{ID: id, CreatedAt: time.Now()},
+			Memory:    &entities.Fingerprint{ID: id, Type: valueobjects.TypeSessionNote},
+			Verbatim:  &entities.Verbatim{ID: id, CreatedAt: time.Now()},
 			Embedding: []float32{1},
 		}
 	}

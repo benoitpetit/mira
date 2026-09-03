@@ -10,7 +10,7 @@ import (
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
 	"github.com/google/uuid"
-	_ "github.com/mutecomm/go-sqlcipher/v4"
+	_ "github.com/benoitpetit/go-sqlcipher/v4"
 )
 
 // ── mock repo for update extra tests ─────────────────────────────────────────

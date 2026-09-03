@@ -9,6 +9,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Default transport constants.
+const (
+	TransportStdio = "stdio"
+	TransportSSE   = "sse"
+	TransportHTTP  = "http"
+)
+
 // Config represents complete configuration
 type Config struct {
 	System            SystemConfig       `yaml:"system"`
@@ -38,7 +45,7 @@ type SoulConfig struct {
 	// Extraction controls how identity traits are extracted from conversations.
 	Extraction SoulExtractionConfig `yaml:"extraction"`
 
-	// Recall controls the identity prompt generation budget and behaviour.
+	// Recall controls the identity prompt generation budget and behavior.
 	Recall SoulRecallConfig `yaml:"recall"`
 
 	// DriftDetection configures identity drift monitoring.
@@ -171,17 +178,17 @@ type EmbeddingsConfig struct {
 }
 
 type AllocatorConfig struct {
-	DefaultBudget         int                  `yaml:"default_budget"`
-	MaxCandidates         int                  `yaml:"max_candidates"`
-	EarlyPruningThreshold float64              `yaml:"early_pruning_threshold"`
-	SessionWindowSeconds  int                  `yaml:"session_window_seconds"`
-	SessionBoostBeta      float64              `yaml:"session_boost_beta"`
-	SessionBoostMax       float64              `yaml:"session_boost_max"`
-	SessionMemoryBoost    float64              `yaml:"session_memory_boost"`
-	SessionCacheTTLSeconds int                 `yaml:"session_cache_ttl_seconds"`
-	CausalPenaltyAlpha    float64              `yaml:"causal_penalty_alpha"`
-	DiversityBoostAlpha   float64              `yaml:"diversity_boost_alpha"`
-	DensitySigmoid        DensitySigmoidConfig `yaml:"density_sigmoid"`
+	DefaultBudget          int                  `yaml:"default_budget"`
+	MaxCandidates          int                  `yaml:"max_candidates"`
+	EarlyPruningThreshold  float64              `yaml:"early_pruning_threshold"`
+	SessionWindowSeconds   int                  `yaml:"session_window_seconds"`
+	SessionBoostBeta       float64              `yaml:"session_boost_beta"`
+	SessionBoostMax        float64              `yaml:"session_boost_max"`
+	SessionMemoryBoost     float64              `yaml:"session_memory_boost"`
+	SessionCacheTTLSeconds int                  `yaml:"session_cache_ttl_seconds"`
+	CausalPenaltyAlpha     float64              `yaml:"causal_penalty_alpha"`
+	DiversityBoostAlpha    float64              `yaml:"diversity_boost_alpha"`
+	DensitySigmoid         DensitySigmoidConfig `yaml:"density_sigmoid"`
 }
 
 type DensitySigmoidConfig struct {
@@ -220,6 +227,12 @@ type MCPConfig struct {
 	Transport      string `yaml:"transport"`
 	TimeoutSeconds int    `yaml:"timeout_seconds"`
 	Address        string `yaml:"address"`
+
+	// Validation limits (configurable)
+	MaxContentLength int `yaml:"max_content_length,omitempty"`
+	MaxWingLength    int `yaml:"max_wing_length,omitempty"`
+	MaxRoomLength    int `yaml:"max_room_length,omitempty"`
+	MaxQueryLength   int `yaml:"max_query_length,omitempty"`
 }
 
 // CompressionConfig controls rule-based context compression for session_notes.
@@ -255,7 +268,7 @@ type APIConfig struct {
 func Default() *Config {
 	return &Config{
 		System: SystemConfig{
-			Version: "0.4.7",
+			Version: "0.5.0",
 		},
 		Storage: StorageConfig{
 			Type: "sqlite",
@@ -327,10 +340,14 @@ func Default() *Config {
 		},
 		MCP: MCPConfig{
 			Name:           "mira",
-			Version:        "0.4.7",
-			Transport:      "stdio",
+			Version:        "0.5.0",
+			Transport:      TransportStdio,
 			TimeoutSeconds: 30,
 			Address:        "localhost:3001",
+			MaxContentLength: 100000,
+			MaxWingLength:    100,
+			MaxRoomLength:    100,
+			MaxQueryLength:   10000,
 		},
 		// HNSW configuration - vector search index
 		// Note: EfConstruction is not supported by the underlying hnsw library (coder/hnsw v0.4.0).
@@ -434,7 +451,7 @@ func (c *Config) Save(path string) error {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0o600)
 }
 
 // MetricsConfig configures metrics export
@@ -700,23 +717,36 @@ func (c *Config) Validate() error {
 		c.MCP.Name = "mira"
 	}
 	if c.MCP.Version == "" {
-		c.MCP.Version = "0.4.7"
+		c.MCP.Version = "0.5.0"
 	}
 	if c.MCP.Transport == "" {
-		c.MCP.Transport = "stdio"
+		c.MCP.Transport = TransportStdio
 	}
 	// Validate transport
 	switch c.MCP.Transport {
-	case "stdio", "sse", "http":
+	case TransportStdio, TransportSSE, TransportHTTP:
 		// valid
 	default:
-		c.MCP.Transport = "stdio"
+		c.MCP.Transport = TransportStdio
 	}
 	if c.MCP.TimeoutSeconds <= 0 {
 		c.MCP.TimeoutSeconds = 30
 	}
 	if c.MCP.Address == "" {
 		c.MCP.Address = "localhost:3001"
+	}
+	// Validation limits defaults
+	if c.MCP.MaxContentLength <= 0 {
+		c.MCP.MaxContentLength = 100000
+	}
+	if c.MCP.MaxWingLength <= 0 {
+		c.MCP.MaxWingLength = 100
+	}
+	if c.MCP.MaxRoomLength <= 0 {
+		c.MCP.MaxRoomLength = 100
+	}
+	if c.MCP.MaxQueryLength <= 0 {
+		c.MCP.MaxQueryLength = 10000
 	}
 
 	// Embeddings validation - ModelHash

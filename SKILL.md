@@ -2,7 +2,7 @@
 name: mira
 description: Long-term memory guidance for MIRA MCP integration
 author: benoitpetit
-version: "0.4.7"
+version: "0.5.0"
 tags: [memory, mcp, mira]
 ---
 
@@ -10,13 +10,13 @@ tags: [memory, mcp, mira]
 
 You are augmented with **MIRA** (Memory with Information-theoretic Relevance Allocation), an external MCP server providing long-term, cross-session memory for LLMs. MIRA uses a **multi-stage retrieval pipeline** (Query Expansion → Dense HNSW Search → Lexical FTS5 Search → RRF Fusion → Search-Time Clustering → Tag Boost → Adaptive Threshold → CBA Greedy Allocation) to retrieve the most relevant context within a token budget.
 
-The detailed tool schemas for `mira_store`, `mira_recall`, `mira_load`, `mira_update`, `mira_search`, `mira_consolidate`, `mira_causal_chain`, `mira_status`, `mira_health`, `mira_archive`, `mira_compress`, `mira_timeline`, and `mira_clear_memory` are documented in the *External Tools Reference (MCP Servers)* section of your system prompt.
+The detailed tool schemas for `mira_store`, `mira_ingest`, `mira_recall`, `mira_load`, `mira_update`, `mira_search`, `mira_consolidate`, `mira_causal_chain`, `mira_status`, `mira_health`, `mira_archive`, `mira_compress`, `mira_timeline`, and `mira_clear_memory` are documented in the *External Tools Reference (MCP Servers)* section of your system prompt.
 
-> **SOUL Extension**: If MIRA is running with SOUL enabled (`--with-soul` or `soul.enabled: true`), 8 additional `soul_*` tools are available for identity capture, drift detection, and model-swap preservation. These are documented separately in the SOUL skill. When SOUL is enabled, MIRA provides **13 + 8 = 21 tools total**.
+> **SOUL Extension**: If MIRA is running with SOUL enabled (`--with-soul` or `soul.enabled: true`), 8 additional `soul_*` tools are available for identity capture, drift detection, and model-swap preservation. These are documented separately in the SOUL skill. When SOUL is enabled, MIRA provides **14 + 8 = 22 tools total**.
 
 **Rule #1**: Always recall before answering. **Rule #2**: Store progressively as you work.
 
-MIRA provides **13 MCP tools** by default:
+MIRA provides **14 MCP tools** by default:
 - `mira_store` — Store memories with T0/T1/T2 extraction
 - `mira_recall` — Context-aware retrieval with token budget (CBA)
 - `mira_load` — Load full verbatim by ID
@@ -30,6 +30,7 @@ MIRA provides **13 MCP tools** by default:
 - `mira_archive` — Clean old memories
 - `mira_clear_memory` — Delete memories
 - `mira_compress` — Rule-based context compression
+- `mira_ingest` — Extract history memories from structured conversation messages
 
 ---
 
@@ -39,7 +40,7 @@ If the user asks you to install MIRA, follow these steps exactly.
 
 ### 1. Prerequisites
 - Go 1.23+
-- GCC (for CGO, `go-sqlite3`)
+- A CGO C toolchain and OpenSSL development headers (`libssl-dev` on Debian/Ubuntu)
 - ~100 MB disk space (embedding model)
 
 ### 2. Clone and Build
@@ -58,7 +59,8 @@ cp config.example.yaml config.yaml
 Key defaults (no change required):
 - Storage: `.mira/mira.db` (SQLite + WAL)
 - Embedding model: `sentence-transformers/all-MiniLM-L6-v2` (384d)
-- MCP transport: `stdio` (for Claude Desktop, Cursor, etc.) or `sse` for HTTP Server-Sent Events
+- MCP transport: `stdio` (for Claude Desktop, Cursor, etc.), `sse` for
+  Server-Sent Events, or stateless `http` at `POST /mcp`
 
 ### 4. Run Migrations
 ```bash
@@ -69,77 +71,143 @@ This downloads the embedding model on first run (~80 MB).
 ### 5. Start the MCP Server
 ```bash
 # stdio mode (for Claude Desktop, Cursor, b0p, etc.)
-./mira --config config.yaml
+./mira --config config.yaml server
 
 # sse mode (for remote clients or web UIs)
-./mira --config config.yaml
+./mira --config config.yaml server
 # With mcp.transport: "sse" and mcp.address: "localhost:3001" in config.yaml
+
+# stateless JSON-RPC HTTP mode (POST requests to /mcp)
+./mira --config config.yaml server
+# With mcp.transport: "http" and mcp.address: "localhost:3001" in config.yaml
 ```
 
 ### 6. MCP Client Configuration
 
-**Claude Code** (`~/.config/claude/claude_desktop_config.json`):
-```json
-{
-  "mcpServers": {
-    "mira": {
-      "command": "/absolute/path/to/mira",
-      "args": ["--config", "/absolute/path/to/mira/config.yaml"]
-    }
-  }
-}
+**Claude Code** (official CLI, private to the current project by default):
+```bash
+./mira setup --client claude-code --scope local
 ```
 
-**Codex** (`~/.codex/config.yaml`):
-```yaml
-mcp_servers:
-  mira:
-    command: /absolute/path/to/mira
-    args: ["--config", "/absolute/path/to/mira/config.yaml"]
+Use `--scope project` to share the server through the project `.mcp.json`, or
+`--scope user` to make it available in every local project.
+
+To capture substantive user prompts automatically through Claude Code's local
+`UserPromptSubmit` hook, opt in explicitly:
+
+```bash
+./mira setup --client claude-code --automatic-memory --memory-wing my-project
 ```
 
-**Cursor** (`.cursor/mcp.json` in project root):
-```json
-{
-  "mcpServers": {
-    "mira": {
-      "command": "/absolute/path/to/mira",
-      "args": ["--config", "/absolute/path/to/mira/config.yaml"]
-    }
-  }
-}
+To also store the final response supplied by Claude Code's `Stop` event, opt in
+explicitly:
+
+```bash
+./mira setup --client claude-code --automatic-memory --include-assistant --memory-wing my-project
 ```
 
-**Windsurf** (`~/.codeium/windsurf/mcp_config.json`):
-```json
-{
-  "mcpServers": {
-    "mira": {
-      "command": "/absolute/path/to/mira",
-      "args": ["--config", "/absolute/path/to/mira/config.yaml"]
-    }
-  }
-}
+The hooks store `history` memories and never write successful output into the
+Claude conversation.
+
+**Codex** (`~/.codex/config.toml`, or `.codex/config.toml` for one trusted project):
+```toml
+[mcp_servers.mira]
+command = "/absolute/path/to/mira"
+args = ["--config", "/absolute/path/to/mira/config.yaml", "server"]
 ```
 
-**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
-```json
-{
-  "mcpServers": {
-    "mira": {
-      "command": "/absolute/path/to/mira",
-      "args": ["--config", "/absolute/path/to/mira/config.yaml"]
-    }
-  }
-}
+Or let MIRA call the official Codex CLI for you after `mira init`:
+
+```bash
+./mira setup --client codex
 ```
+
+To capture substantive user prompts automatically, opt in to the Codex
+`UserPromptSubmit` hook:
+
+```bash
+./mira setup --client codex --automatic-memory --memory-wing my-project
+```
+
+To additionally store the final response supplied by Codex's `Stop` event:
+
+```bash
+./mira setup --client codex --automatic-memory --include-assistant --memory-wing my-project
+```
+
+The hooks are merged into Codex's user hook file. Codex keeps its normal hook
+trust boundary, so approve the newly detected hooks when prompted.
+
+**Cursor** (project `.cursor/mcp.json`):
+```bash
+./mira setup --client cursor
+```
+
+Use `--dry-run` to inspect the JSON MIRA will merge. An existing different
+`mira` entry is never replaced unless `--force` is supplied.
+
+**Windsurf** (user `~/.codeium/windsurf/mcp_config.json`):
+```bash
+./mira setup --client windsurf
+```
+
+Use `--dry-run` to inspect the merged configuration first. Existing non-MIRA
+servers are preserved and a different MIRA entry requires `--force`.
+
+Windsurf also supports native Cascade hooks. Enable automatic user-prompt
+capture with:
+
+```bash
+./mira setup --client windsurf --automatic-memory --memory-wing my-project
+```
+
+To additionally store completed Cascade responses, opt in explicitly:
+
+```bash
+./mira setup --client windsurf --automatic-memory --include-assistant --memory-wing my-project
+```
+
+**Claude Desktop** (macOS or Windows):
+```bash
+./mira setup --client claude-desktop
+```
+
+MIRA merges its entry into the documented Claude Desktop configuration location
+and preserves other servers. On a platform without a documented default path,
+pass its path explicitly: `--client-config /path/to/claude_desktop_config.json`.
+Use `--dry-run` to preview and fully quit/restart Claude Desktop after setup.
+
+### Conversation ingestion stream
+
+When a local client hook or exporter emits one JSON object per line with
+`role` and `content`, pipe it into MIRA for immediate, controlled extraction:
+
+```bash
+conversation-hook --jsonl | ./mira ingest --stream --wing my-project
+```
+
+MIRA stores substantive user messages by default; add `--include-assistant`
+only when assistant replies should become `history` memories.
+
+### Cursor CLI stream
+
+Cursor does not expose a documented IDE lifecycle hook, but its CLI can emit
+structured `stream-json` events that MIRA consumes directly:
+
+```bash
+cursor-agent --output-format stream-json "Summarize the current task" | \
+  ./mira ingest --stream --wing my-project --include-assistant
+```
+
+Tool-call and partial assistant-delta events are ignored; MIRA stores only the
+complete user event and terminal result.
 
 ### 7. Optional: Enable SOUL (Identity Extension)
-SOUL is **opt-in and disabled by default**. To activate it alongside MIRA (17 tools total: 9 MIRA + 8 SOUL):
+SOUL is **opt-in and disabled by default**. To activate it alongside MIRA (22 tools total: 14 MIRA + 8 SOUL):
 
 ```bash
 # Option A: CLI flag
-./mira --config config.yaml --with-soul
+./mira --config config.yaml server --with-soul
 
 # Option B: edit config.yaml
 #   soul:
@@ -168,9 +236,9 @@ Every interaction with the user should follow this loop:
 | Situation | Action |
 |-----------|--------|
 | **Start of any task/session** | `mira_recall` to retrieve relevant context before answering or coding. |
-| **Before making architectural/design decisions** | `mira_recall` to check for existing decisions, then `mira_store(type="decision")` to record the new choice. |
-| **Important fact discovered** | `mira_store(type="fact")` for configs, constraints, credentials, docs, API contracts. |
-| **User preference expressed** | `mira_store(type="preference")` for style, conventions, formatting, subjective choices. |
+| **Before making architectural/design decisions** | `mira_recall` to check for existing decisions, then `mira_store(type="decision", kind="project")` to record the new choice. |
+| **Important fact discovered** | `mira_store(type="fact", kind="knowledge")` for configs, constraints, credentials, docs, API contracts. |
+| **User preference expressed** | `mira_store(type="preference", kind="user")` for style, conventions, formatting, subjective choices. |
 | **Bug resolved or debug insight gained** | `mira_store(type="debug_log")` for errors, stack traces, root causes, fixes. |
 | **End of significant work** | `mira_store(type="session_note")` summarizing what was done, files touched, and pending items. |
 | **Need historical timeline** | `mira_timeline` to see how a project or topic evolved over time. |
@@ -301,6 +369,18 @@ Store memories **progressively** as you work. Do not wait until the end of a lon
 
 > **Tip**: omit `type` if unsure — MIRA auto-detects it from content.
 
+`kind` is separate from `type`: use `identity`, `user`, `project`, `task`,
+`knowledge`, or `history` to describe the memory's role and filter recall. If
+omitted, MIRA assigns a default from the detected type.
+
+### Importing a Conversation
+
+For a portable JSON chat export, run `mira ingest --file conversation.json
+--wing <project> --dry-run` first. The command captures substantive user
+messages as `history` memories and applies normal T0/T1/T2 extraction; add
+`--include-assistant` only when assistant replies contain durable facts or
+decisions worth retaining.
+
 ---
 
 ## Working with IDs
@@ -337,7 +417,7 @@ Store memories **progressively** as you work. Do not wait until the end of a lon
 5. **Keep wing names consistent** — reuse the same canonical wing name across a project.
 6. **Do not translate queries** — MIRA handles cross-lingual retrieval automatically.
 7. **Do not store raw code without context** — store the *decision* or *fact* behind the code, not the code itself.
-8. **Do not assume SOUL is enabled** — MIRA runs solo by default (13 tools). Check tool availability before invoking `soul_*` tools.
+8. **Do not assume SOUL is enabled** — MIRA runs solo by default (14 tools). Check tool availability before invoking `soul_*` tools.
 
 ---
 

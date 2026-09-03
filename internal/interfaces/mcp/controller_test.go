@@ -193,7 +193,7 @@ func (m *mockClearMemory) Execute(ctx context.Context, input interactors.ClearMe
 // TestHandleStoreSuccess tests mira_store with a mock
 func TestHandleStoreSuccess(t *testing.T) {
 	mock := &mockStoreMemory{}
-	controller := &Controller{storeMemory: mock}
+	controller := newTestController(func(c *Controller) { c.storeMemory = mock })
 
 	args := map[string]interface{}{
 		"content": "Test content to store",
@@ -240,7 +240,7 @@ func TestHandleStoreSuccess(t *testing.T) {
 // TestHandleRecallSuccess tests mira_recall with a mock
 func TestHandleRecallSuccess(t *testing.T) {
 	mock := &mockRecallMemory{}
-	controller := &Controller{recallMemory: mock}
+	controller := newTestController(func(c *Controller) { c.recallMemory = mock })
 
 	args := map[string]interface{}{
 		"query":  "test query",
@@ -295,7 +295,7 @@ func TestHandleRecall_SanitizesInstructionLikeMemory(t *testing.T) {
 			return &interactors.RecallMemoryOutput{Memories: memories, TotalTokens: 42, BudgetUsed: 8.4}, nil
 		},
 	}
-	controller := &Controller{recallMemory: mock}
+	controller := newTestController(func(c *Controller) { c.recallMemory = mock })
 
 	ctx := context.Background()
 	result, err := controller.handleRecall(ctx, map[string]interface{}{"query": "test"})
@@ -328,7 +328,7 @@ func TestHandleLoadSuccess(t *testing.T) {
 	for _, idVariant := range variants {
 		t.Run(idVariant, func(t *testing.T) {
 			mock := &mockLoadMemory{}
-			controller := &Controller{loadMemory: mock}
+			controller := newTestController(func(c *Controller) { c.loadMemory = mock })
 			args := map[string]interface{}{"id": idVariant}
 
 			ctx := context.Background()
@@ -367,7 +367,7 @@ func TestHandleLoadSuccess(t *testing.T) {
 // TestHandleCausalChainSuccess tests mira_causal_chain with a mock
 func TestHandleCausalChainSuccess(t *testing.T) {
 	mock := &mockGetCausalChain{}
-	controller := &Controller{getCausalChain: mock}
+	controller := newTestController(func(c *Controller) { c.getCausalChain = mock })
 
 	testID := "550e8400-e29b-41d4-a716-446655440000"
 	args := map[string]interface{}{
@@ -407,7 +407,7 @@ func TestHandleCausalChainSuccess(t *testing.T) {
 // TestHandleTimelineSuccess tests mira_timeline with a mock
 func TestHandleTimelineSuccess(t *testing.T) {
 	mock := &mockGetTimeline{}
-	controller := &Controller{getTimeline: mock}
+	controller := newTestController(func(c *Controller) { c.getTimeline = mock })
 
 	args := map[string]interface{}{
 		"wing": "test-wing",
@@ -449,7 +449,7 @@ func TestHandleTimelineSuccess(t *testing.T) {
 // TestHandleStatusSuccess tests mira_status with a mock
 func TestHandleStatusSuccess(t *testing.T) {
 	mock := &mockGetStatus{}
-	controller := &Controller{getStatus: mock}
+	controller := newTestController(func(c *Controller) { c.getStatus = mock })
 
 	ctx := context.Background()
 	result, err := controller.handleStatus(ctx)
@@ -486,7 +486,7 @@ func TestHandleStatusSuccess(t *testing.T) {
 // TestHandleArchiveSuccess tests mira_archive with a mock
 func TestHandleArchiveSuccess(t *testing.T) {
 	mock := &mockArchiveMemories{}
-	controller := &Controller{archiveMemories: mock}
+	controller := newTestController(func(c *Controller) { c.archiveMemories = mock })
 
 	ctx := context.Background()
 	result, err := controller.handleArchive(ctx)
@@ -523,7 +523,7 @@ func TestHandleArchiveSuccess(t *testing.T) {
 // TestHandleClearMemoryGlobalSuccess tests mira_clear_memory in global mode
 func TestHandleClearMemoryGlobalSuccess(t *testing.T) {
 	mock := &mockClearMemory{}
-	controller := &Controller{clearMemory: mock}
+	controller := newTestController(func(c *Controller) { c.clearMemory = mock })
 
 	ctx := context.Background()
 	result, err := controller.handleClearMemory(ctx, map[string]interface{}{"mode": "global"})
@@ -553,7 +553,7 @@ func TestHandleClearMemoryRoomSuccess(t *testing.T) {
 			return &interactors.ClearMemoryOutput{DeletedCount: 7, Mode: "room"}, nil
 		},
 	}
-	controller := &Controller{clearMemory: mock}
+	controller := newTestController(func(c *Controller) { c.clearMemory = mock })
 
 	ctx := context.Background()
 	result, err := controller.handleClearMemory(ctx, map[string]interface{}{
@@ -611,7 +611,7 @@ func TestHandleClearMemoryValidation(t *testing.T) {
 	ctx := context.Background()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			controller := &Controller{clearMemory: &mockClearMemory{}}
+			controller := newTestController(func(c *Controller) { c.clearMemory = &mockClearMemory{} })
 			_, err := controller.handleClearMemory(ctx, tt.args)
 			if err == nil {
 				t.Errorf("Expected error containing '%s', got nil", tt.expectedErrMsg)
@@ -696,7 +696,7 @@ func TestHandleStoreValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Use empty StoreMemory - validation happens before Execute is called
-			controller := &Controller{storeMemory: &mockStoreMemory{}}
+			controller := newTestController(func(c *Controller) { c.storeMemory = &mockStoreMemory{} })
 
 			_, err := controller.handleStore(ctx, tt.args)
 
@@ -780,7 +780,7 @@ func TestHandleRecallValidation(t *testing.T) {
 	ctx := context.Background()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			controller := &Controller{recallMemory: &mockRecallMemory{}}
+			controller := newTestController(func(c *Controller) { c.recallMemory = &mockRecallMemory{} })
 
 			_, err := controller.handleRecall(ctx, tt.args)
 
@@ -905,7 +905,7 @@ func TestHandleLoadValidation(t *testing.T) {
 	ctx := context.Background()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			controller := &Controller{loadMemory: &mockLoadMemory{}}
+			controller := newTestController(func(c *Controller) { c.loadMemory = &mockLoadMemory{} })
 
 			_, err := controller.handleLoad(ctx, tt.args)
 
@@ -940,7 +940,7 @@ func TestHandleTimelineValidation(t *testing.T) {
 	ctx := context.Background()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			controller := &Controller{getTimeline: &mockGetTimeline{}}
+			controller := newTestController(func(c *Controller) { c.getTimeline = &mockGetTimeline{} })
 
 			_, err := controller.handleTimeline(ctx, tt.args)
 
@@ -982,7 +982,7 @@ func TestHandleCausalChainValidation(t *testing.T) {
 	ctx := context.Background()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			controller := &Controller{getCausalChain: &mockGetCausalChain{}}
+			controller := newTestController(func(c *Controller) { c.getCausalChain = &mockGetCausalChain{} })
 
 			_, err := controller.handleCausalChain(ctx, tt.args)
 
@@ -1066,7 +1066,7 @@ func TestValidationErrorsCombined(t *testing.T) {
 	ctx := context.Background()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			controller := &Controller{}
+			controller := newTestController()
 			var err error
 			switch tt.handler {
 			case "store":
@@ -1096,7 +1096,7 @@ func TestAllHandlersExist(t *testing.T) {
 	ctx := context.Background()
 
 	// Test store handler validation
-	controller := &Controller{storeMemory: &mockStoreMemory{}}
+	controller := newTestController(func(c *Controller) { c.storeMemory = &mockStoreMemory{} })
 	_, err := controller.handleStore(ctx, map[string]interface{}{
 		"content": "",
 		"wing":    "",
@@ -1106,7 +1106,7 @@ func TestAllHandlersExist(t *testing.T) {
 	}
 
 	// Test recall handler validation
-	controller = &Controller{recallMemory: &mockRecallMemory{}}
+	controller = newTestController(func(c *Controller) { c.recallMemory = &mockRecallMemory{} })
 	_, err = controller.handleRecall(ctx, map[string]interface{}{
 		"query": "",
 	})
@@ -1115,21 +1115,21 @@ func TestAllHandlersExist(t *testing.T) {
 	}
 
 	// Test load handler validation
-	controller = &Controller{loadMemory: &mockLoadMemory{}}
+	controller = newTestController(func(c *Controller) { c.loadMemory = &mockLoadMemory{} })
 	_, err = controller.handleLoad(ctx, map[string]interface{}{})
 	if err == nil {
 		t.Error("load handler should return validation error")
 	}
 
 	// Test timeline handler validation
-	controller = &Controller{getTimeline: &mockGetTimeline{}}
+	controller = newTestController(func(c *Controller) { c.getTimeline = &mockGetTimeline{} })
 	_, err = controller.handleTimeline(ctx, map[string]interface{}{})
 	if err == nil {
 		t.Error("timeline handler should return validation error")
 	}
 
 	// Test causal chain handler validation
-	controller = &Controller{getCausalChain: &mockGetCausalChain{}}
+	controller = newTestController(func(c *Controller) { c.getCausalChain = &mockGetCausalChain{} })
 	_, err = controller.handleCausalChain(ctx, map[string]interface{}{})
 	if err == nil {
 		t.Error("causal chain handler should return validation error")
@@ -1151,16 +1151,16 @@ type mockMCPServer struct {
 func (m *mockMCPServer) Request(_ context.Context, _ string, _ json.RawMessage) (interface{}, error) {
 	return nil, nil
 }
-func (m *mockMCPServer) HandleInitialize(f server.InitializeFunc)           {}
-func (m *mockMCPServer) HandlePing(f server.PingFunc)                       {}
-func (m *mockMCPServer) HandleListResources(f server.ListResourcesFunc)     {}
-func (m *mockMCPServer) HandleReadResource(f server.ReadResourceFunc)       {}
-func (m *mockMCPServer) HandleSubscribe(f server.SubscribeFunc)             {}
-func (m *mockMCPServer) HandleUnsubscribe(f server.UnsubscribeFunc)         {}
-func (m *mockMCPServer) HandleListPrompts(f server.ListPromptsFunc)         {}
-func (m *mockMCPServer) HandleGetPrompt(f server.GetPromptFunc)             {}
-func (m *mockMCPServer) HandleSetLevel(f server.SetLevelFunc)               {}
-func (m *mockMCPServer) HandleComplete(f server.CompleteFunc)               {}
+func (m *mockMCPServer) HandleInitialize(f server.InitializeFunc)               {}
+func (m *mockMCPServer) HandlePing(f server.PingFunc)                           {}
+func (m *mockMCPServer) HandleListResources(f server.ListResourcesFunc)         {}
+func (m *mockMCPServer) HandleReadResource(f server.ReadResourceFunc)           {}
+func (m *mockMCPServer) HandleSubscribe(f server.SubscribeFunc)                 {}
+func (m *mockMCPServer) HandleUnsubscribe(f server.UnsubscribeFunc)             {}
+func (m *mockMCPServer) HandleListPrompts(f server.ListPromptsFunc)             {}
+func (m *mockMCPServer) HandleGetPrompt(f server.GetPromptFunc)                 {}
+func (m *mockMCPServer) HandleSetLevel(f server.SetLevelFunc)                   {}
+func (m *mockMCPServer) HandleComplete(f server.CompleteFunc)                   {}
 func (m *mockMCPServer) HandleNotification(s string, f server.NotificationFunc) {}
 
 func (m *mockMCPServer) HandleListTools(f server.ListToolsFunc) {
@@ -1174,6 +1174,14 @@ func (m *mockMCPServer) HandleCallTool(f server.CallToolFunc) {
 // NewController
 // ============================================================================
 
+func newTestController(fields ...func(c *Controller)) *Controller {
+	c := &Controller{limits: DefaultValidationLimits()}
+	for _, f := range fields {
+		f(c)
+	}
+	return c
+}
+
 func TestNewController_NonNil(t *testing.T) {
 	c := NewController(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	if c == nil {
@@ -1186,14 +1194,14 @@ func TestNewController_NonNil(t *testing.T) {
 // ============================================================================
 
 func TestToolDefinitions_ContainsExpectedTools(t *testing.T) {
-	c := &Controller{}
+	c := newTestController()
 	tools := c.ToolDefinitions()
 	if len(tools) == 0 {
 		t.Fatal("ToolDefinitions returned empty list")
 	}
 
 	expected := []string{
-		"mira_store", "mira_recall", "mira_load",
+		"mira_store", "mira_ingest", "mira_recall", "mira_load",
 		"mira_causal_chain", "mira_health", "mira_status",
 		"mira_timeline", "mira_archive", "mira_clear_memory",
 	}
@@ -1208,18 +1216,47 @@ func TestToolDefinitions_ContainsExpectedTools(t *testing.T) {
 	}
 }
 
+func TestHandleIngestStoresSelectedConversationMessages(t *testing.T) {
+	var inputs []interactors.StoreMemoryInput
+	controller := newTestController(func(c *Controller) {
+		c.storeMemory = &mockStoreMemory{executeFunc: func(_ context.Context, input interactors.StoreMemoryInput) (*interactors.StoreMemoryOutput, error) {
+			inputs = append(inputs, input)
+			return &interactors.StoreMemoryOutput{}, nil
+		}}
+	})
+
+	result, err := controller.handleIngest(context.Background(), map[string]interface{}{
+		"messages": []interface{}{
+			map[string]interface{}{"role": "user", "content": "This user message contains a durable decision."},
+			map[string]interface{}{"role": "assistant", "content": "This assistant response is also durable."},
+		},
+		"wing":              "api",
+		"include_assistant": true,
+	})
+	if err != nil {
+		t.Fatalf("handleIngest failed: %v", err)
+	}
+	if len(inputs) != 2 || inputs[0].Kind == nil || *inputs[0].Kind != valueobjects.KindHistory {
+		t.Fatalf("stored inputs = %#v", inputs)
+	}
+	text := result.Content[0].(mcptypes.TextContent).Text
+	if !strings.Contains(text, "2 stored") {
+		t.Errorf("result = %q", text)
+	}
+}
+
 // ============================================================================
 // RegisterTools
 // ============================================================================
 
 func TestRegisterTools_RegistersHandlers(t *testing.T) {
 	mock := &mockMCPServer{}
-	c := &Controller{
-		storeMemory:  &mockStoreMemory{},
-		getStatus:    &mockGetStatus{},
-		clearMemory:  &mockClearMemory{},
-		archiveMemories: &mockArchiveMemories{},
-	}
+	c := newTestController(func(c *Controller) {
+		c.storeMemory = &mockStoreMemory{}
+		c.getStatus = &mockGetStatus{}
+		c.clearMemory = &mockClearMemory{}
+		c.archiveMemories = &mockArchiveMemories{}
+	})
 	c.RegisterTools(mock)
 
 	if mock.listToolsHandler == nil {
@@ -1244,7 +1281,7 @@ func TestRegisterTools_RegistersHandlers(t *testing.T) {
 // ============================================================================
 
 func TestCall_UnknownTool(t *testing.T) {
-	c := &Controller{}
+	c := newTestController()
 	_, err := c.Call(context.Background(), "mira_unknown", nil)
 	if err == nil {
 		t.Fatal("expected error for unknown tool")
@@ -1255,7 +1292,7 @@ func TestCall_UnknownTool(t *testing.T) {
 }
 
 func TestCall_DispatchStore(t *testing.T) {
-	c := &Controller{storeMemory: &mockStoreMemory{}}
+	c := newTestController(func(c *Controller) { c.storeMemory = &mockStoreMemory{} })
 	result, err := c.Call(context.Background(), "mira_store", map[string]interface{}{
 		"content": "hello world",
 		"wing":    "test-wing",
@@ -1269,7 +1306,7 @@ func TestCall_DispatchStore(t *testing.T) {
 }
 
 func TestCall_DispatchRecall(t *testing.T) {
-	c := &Controller{recallMemory: &mockRecallMemory{}}
+	c := newTestController(func(c *Controller) { c.recallMemory = &mockRecallMemory{} })
 	result, err := c.Call(context.Background(), "mira_recall", map[string]interface{}{
 		"query":  "something",
 		"budget": float64(500),
@@ -1283,7 +1320,7 @@ func TestCall_DispatchRecall(t *testing.T) {
 }
 
 func TestCall_DispatchHealth(t *testing.T) {
-	c := &Controller{getStatus: &mockGetStatus{}}
+	c := newTestController(func(c *Controller) { c.getStatus = &mockGetStatus{} })
 	result, err := c.Call(context.Background(), "mira_health", nil)
 	if err != nil {
 		t.Fatalf("Call mira_health: %v", err)
@@ -1294,7 +1331,7 @@ func TestCall_DispatchHealth(t *testing.T) {
 }
 
 func TestCall_DispatchStatus(t *testing.T) {
-	c := &Controller{getStatus: &mockGetStatus{}}
+	c := newTestController(func(c *Controller) { c.getStatus = &mockGetStatus{} })
 	result, err := c.Call(context.Background(), "mira_status", nil)
 	if err != nil {
 		t.Fatalf("Call mira_status: %v", err)
@@ -1305,7 +1342,7 @@ func TestCall_DispatchStatus(t *testing.T) {
 }
 
 func TestCall_DispatchArchive(t *testing.T) {
-	c := &Controller{archiveMemories: &mockArchiveMemories{}}
+	c := newTestController(func(c *Controller) { c.archiveMemories = &mockArchiveMemories{} })
 	result, err := c.Call(context.Background(), "mira_archive", nil)
 	if err != nil {
 		t.Fatalf("Call mira_archive: %v", err)
@@ -1316,7 +1353,7 @@ func TestCall_DispatchArchive(t *testing.T) {
 }
 
 func TestCall_DispatchClearMemory(t *testing.T) {
-	c := &Controller{clearMemory: &mockClearMemory{}}
+	c := newTestController(func(c *Controller) { c.clearMemory = &mockClearMemory{} })
 	result, err := c.Call(context.Background(), "mira_clear_memory", map[string]interface{}{
 		"mode": "global",
 	})
@@ -1333,7 +1370,7 @@ func TestCall_DispatchClearMemory(t *testing.T) {
 // ============================================================================
 
 func TestHandleHealth_Success(t *testing.T) {
-	c := &Controller{getStatus: &mockGetStatus{}}
+	c := newTestController(func(c *Controller) { c.getStatus = &mockGetStatus{} })
 	result, err := c.handleHealth(context.Background())
 	if err != nil {
 		t.Fatalf("handleHealth: %v", err)
@@ -1362,7 +1399,7 @@ func TestHandleHealth_EmptyMemory(t *testing.T) {
 			return &interactors.GetStatusOutput{Stats: stats}, nil
 		},
 	}
-	c := &Controller{getStatus: mock}
+	c := newTestController(func(c *Controller) { c.getStatus = mock })
 	result, err := c.handleHealth(context.Background())
 	if err != nil {
 		t.Fatalf("handleHealth (empty): %v", err)
@@ -1379,7 +1416,7 @@ func TestHandleHealth_Error(t *testing.T) {
 			return nil, fmt.Errorf("database unavailable")
 		},
 	}
-	c := &Controller{getStatus: mock}
+	c := newTestController(func(c *Controller) { c.getStatus = mock })
 	result, err := c.handleHealth(context.Background())
 	// Error case returns degraded status — no Go error returned
 	if err != nil {
@@ -1419,7 +1456,7 @@ func TestHandleTimeline_AllOptionalParams(t *testing.T) {
 			}, nil
 		},
 	}
-	controller := &Controller{getTimeline: mock}
+	controller := newTestController(func(c *Controller) { c.getTimeline = mock })
 	args := map[string]interface{}{
 		"wing":   "my-wing",
 		"room":   "my-room",
@@ -1445,7 +1482,7 @@ func TestHandleTimeline_AllOptionalParams(t *testing.T) {
 // TestHandleTimeline_LimitAsInt covers the `case int:` branch in the limit switch.
 func TestHandleTimeline_LimitAsInt(t *testing.T) {
 	mock := &mockGetTimeline{}
-	controller := &Controller{getTimeline: mock}
+	controller := newTestController(func(c *Controller) { c.getTimeline = mock })
 	args := map[string]interface{}{
 		"wing":  "test-wing",
 		"limit": int(25),
@@ -1466,7 +1503,7 @@ func TestHandleTimeline_ExecuteError(t *testing.T) {
 			return nil, fmt.Errorf("timeline db error")
 		},
 	}
-	controller := &Controller{getTimeline: mock}
+	controller := newTestController(func(c *Controller) { c.getTimeline = mock })
 	_, err := controller.handleTimeline(context.Background(), map[string]interface{}{"wing": "test"})
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -1478,7 +1515,7 @@ func TestHandleTimeline_ExecuteError(t *testing.T) {
 // ============================================================================
 
 func TestHandleStore_WingTooLong(t *testing.T) {
-	controller := &Controller{storeMemory: &mockStoreMemory{}}
+	controller := newTestController(func(c *Controller) { c.storeMemory = &mockStoreMemory{} })
 	_, err := controller.handleStore(context.Background(), map[string]interface{}{
 		"content": "hello",
 		"wing":    strings.Repeat("a", MaxWingLength+1),
@@ -1489,7 +1526,7 @@ func TestHandleStore_WingTooLong(t *testing.T) {
 }
 
 func TestHandleStore_WingInvalidChars(t *testing.T) {
-	controller := &Controller{storeMemory: &mockStoreMemory{}}
+	controller := newTestController(func(c *Controller) { c.storeMemory = &mockStoreMemory{} })
 	_, err := controller.handleStore(context.Background(), map[string]interface{}{
 		"content": "hello",
 		"wing":    "invalid wing!",
@@ -1500,7 +1537,7 @@ func TestHandleStore_WingInvalidChars(t *testing.T) {
 }
 
 func TestHandleStore_RoomTooLong(t *testing.T) {
-	controller := &Controller{storeMemory: &mockStoreMemory{}}
+	controller := newTestController(func(c *Controller) { c.storeMemory = &mockStoreMemory{} })
 	_, err := controller.handleStore(context.Background(), map[string]interface{}{
 		"content": "hello",
 		"wing":    "test-wing",
@@ -1512,7 +1549,7 @@ func TestHandleStore_RoomTooLong(t *testing.T) {
 }
 
 func TestHandleStore_RoomInvalidChars(t *testing.T) {
-	controller := &Controller{storeMemory: &mockStoreMemory{}}
+	controller := newTestController(func(c *Controller) { c.storeMemory = &mockStoreMemory{} })
 	_, err := controller.handleStore(context.Background(), map[string]interface{}{
 		"content": "hello",
 		"wing":    "test-wing",
@@ -1524,7 +1561,7 @@ func TestHandleStore_RoomInvalidChars(t *testing.T) {
 }
 
 func TestHandleStore_MetricsInvalidJSON(t *testing.T) {
-	controller := &Controller{storeMemory: &mockStoreMemory{}}
+	controller := newTestController(func(c *Controller) { c.storeMemory = &mockStoreMemory{} })
 	_, err := controller.handleStore(context.Background(), map[string]interface{}{
 		"content": "hello",
 		"wing":    "test-wing",
@@ -1541,7 +1578,7 @@ func TestHandleStore_ExecuteError(t *testing.T) {
 			return nil, fmt.Errorf("store failed")
 		},
 	}
-	controller := &Controller{storeMemory: mock}
+	controller := newTestController(func(c *Controller) { c.storeMemory = mock })
 	_, err := controller.handleStore(context.Background(), map[string]interface{}{
 		"content": "hello",
 		"wing":    "test-wing",
@@ -1556,7 +1593,7 @@ func TestHandleStore_ExecuteError(t *testing.T) {
 // ============================================================================
 
 func TestHandleRecall_BudgetAsInt(t *testing.T) {
-	controller := &Controller{recallMemory: &mockRecallMemory{}}
+	controller := newTestController(func(c *Controller) { c.recallMemory = &mockRecallMemory{} })
 	result, err := controller.handleRecall(context.Background(), map[string]interface{}{
 		"query":  "something",
 		"budget": int(200),
@@ -1570,7 +1607,7 @@ func TestHandleRecall_BudgetAsInt(t *testing.T) {
 }
 
 func TestHandleRecall_BudgetAsString(t *testing.T) {
-	controller := &Controller{recallMemory: &mockRecallMemory{}}
+	controller := newTestController(func(c *Controller) { c.recallMemory = &mockRecallMemory{} })
 	result, err := controller.handleRecall(context.Background(), map[string]interface{}{
 		"query":  "something",
 		"budget": "300",
@@ -1584,7 +1621,7 @@ func TestHandleRecall_BudgetAsString(t *testing.T) {
 }
 
 func TestHandleRecall_BudgetOutOfRange(t *testing.T) {
-	controller := &Controller{recallMemory: &mockRecallMemory{}}
+	controller := newTestController(func(c *Controller) { c.recallMemory = &mockRecallMemory{} })
 	// budget <= 0 → resets to 4000
 	result, err := controller.handleRecall(context.Background(), map[string]interface{}{
 		"query":  "something",
@@ -1610,7 +1647,7 @@ func TestHandleRecall_BudgetOutOfRange(t *testing.T) {
 }
 
 func TestHandleRecall_WithAllOptionalParams(t *testing.T) {
-	controller := &Controller{recallMemory: &mockRecallMemory{}}
+	controller := newTestController(func(c *Controller) { c.recallMemory = &mockRecallMemory{} })
 	result, err := controller.handleRecall(context.Background(), map[string]interface{}{
 		"query":          "test query",
 		"wing":           "my-wing",
@@ -1627,13 +1664,36 @@ func TestHandleRecall_WithAllOptionalParams(t *testing.T) {
 	}
 }
 
+func TestHandleRecall_IncludeGlobalAddsGeneralFallback(t *testing.T) {
+	var received interactors.RecallMemoryInput
+	controller := newTestController(func(c *Controller) {
+		c.recallMemory = &mockRecallMemory{
+			executeFunc: func(_ context.Context, input interactors.RecallMemoryInput) (*interactors.RecallMemoryOutput, error) {
+				received = input
+				return &interactors.RecallMemoryOutput{}, nil
+			},
+		}
+	})
+
+	if _, err := controller.handleRecall(context.Background(), map[string]interface{}{
+		"query":          "shared preference",
+		"wing":           "my-project",
+		"include_global": true,
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(received.FallbackWings) != 1 || received.FallbackWings[0] != "general" {
+		t.Errorf("fallback wings = %v, want [general]", received.FallbackWings)
+	}
+}
+
 func TestHandleRecall_ExecuteError(t *testing.T) {
 	mock := &mockRecallMemory{
 		executeFunc: func(ctx context.Context, input interactors.RecallMemoryInput) (*interactors.RecallMemoryOutput, error) {
 			return nil, fmt.Errorf("recall failed")
 		},
 	}
-	controller := &Controller{recallMemory: mock}
+	controller := newTestController(func(c *Controller) { c.recallMemory = mock })
 	_, err := controller.handleRecall(context.Background(), map[string]interface{}{
 		"query": "test",
 	})
@@ -1647,7 +1707,7 @@ func TestHandleRecall_ExecuteError(t *testing.T) {
 // ============================================================================
 
 func TestCall_DispatchTimeline(t *testing.T) {
-	c := &Controller{getTimeline: &mockGetTimeline{}}
+	c := newTestController(func(c *Controller) { c.getTimeline = &mockGetTimeline{} })
 	result, err := c.Call(context.Background(), "mira_timeline", map[string]interface{}{
 		"wing": "test-wing",
 	})
@@ -1660,7 +1720,7 @@ func TestCall_DispatchTimeline(t *testing.T) {
 }
 
 func TestCall_DispatchLoad(t *testing.T) {
-	c := &Controller{loadMemory: &mockLoadMemory{}}
+	c := newTestController(func(c *Controller) { c.loadMemory = &mockLoadMemory{} })
 	result, err := c.Call(context.Background(), "mira_load", map[string]interface{}{
 		"id": "550e8400-e29b-41d4-a716-446655440000",
 	})
@@ -1673,7 +1733,7 @@ func TestCall_DispatchLoad(t *testing.T) {
 }
 
 func TestCall_DispatchCausalChain(t *testing.T) {
-	c := &Controller{getCausalChain: &mockGetCausalChain{}}
+	c := newTestController(func(c *Controller) { c.getCausalChain = &mockGetCausalChain{} })
 	result, err := c.Call(context.Background(), "mira_causal_chain", map[string]interface{}{
 		"id": "550e8400-e29b-41d4-a716-446655440000",
 	})

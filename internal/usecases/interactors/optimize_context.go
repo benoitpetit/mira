@@ -18,7 +18,7 @@ type ContextMessage struct {
 
 // OptimizeContextInput is the input for OptimizeContext.
 type OptimizeContextInput struct {
-	Messages    []ContextMessage
+	Messages     []ContextMessage
 	BudgetTokens int
 	KeepLastN    int
 }
@@ -30,6 +30,17 @@ type OptimizeContextOutput struct {
 	OptimizedTokens int              `json:"optimized_tokens"`
 	TokensSaved     int              `json:"tokens_saved"`
 	Dropped         int              `json:"dropped"`
+}
+
+// ContextEfficiency measures how much explicitly required evidence survives a
+// context reduction. It is intentionally evidence coverage, not model-answer
+// accuracy: callers can reproduce it without an LLM or a subjective judge.
+type ContextEfficiency struct {
+	RequiredAssertions     int     `json:"required_assertions"`
+	RetainedAssertions     int     `json:"retained_assertions"`
+	CoveragePercent        float64 `json:"coverage_percent"`
+	CoveragePer1KTokens    float64 `json:"coverage_per_1k_tokens"`
+	OptimizedContextTokens int     `json:"optimized_context_tokens"`
 }
 
 const (
@@ -179,4 +190,40 @@ func jaccardOf(a, b map[string]struct{}) float64 {
 		return 0
 	}
 	return float64(intersection) / float64(union)
+}
+
+// MeasureContextEfficiency reports how much required evidence remains in a
+// pruned context. Assertions are matched case-insensitively after whitespace
+// normalization, making a JSON assertion set a small, portable evaluation
+// fixture for a real chat history.
+func MeasureContextEfficiency(messages []ContextMessage, assertions []string, optimizedTokens int) ContextEfficiency {
+	metric := ContextEfficiency{
+		RequiredAssertions:     len(assertions),
+		OptimizedContextTokens: optimizedTokens,
+	}
+	if len(assertions) == 0 {
+		return metric
+	}
+
+	var content strings.Builder
+	for _, message := range messages {
+		content.WriteString(" ")
+		content.WriteString(normalizeEvidenceText(message.Content))
+	}
+	selectedText := content.String()
+	for _, assertion := range assertions {
+		normalized := normalizeEvidenceText(assertion)
+		if normalized != "" && strings.Contains(selectedText, normalized) {
+			metric.RetainedAssertions++
+		}
+	}
+	metric.CoveragePercent = float64(metric.RetainedAssertions) / float64(metric.RequiredAssertions) * 100
+	if optimizedTokens > 0 {
+		metric.CoveragePer1KTokens = metric.CoveragePercent / float64(optimizedTokens) * 1000
+	}
+	return metric
+}
+
+func normalizeEvidenceText(text string) string {
+	return strings.Join(strings.Fields(strings.ToLower(text)), " ")
 }

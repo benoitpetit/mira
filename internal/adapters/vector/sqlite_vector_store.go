@@ -38,7 +38,7 @@ func (s *SQLiteVectorStore) Search(ctx context.Context, vector []float32, limit 
 	}
 
 	query := `
-		SELECT v.id, v.content, v.token_count, v.created_at, v.wing, v.room,
+		SELECT v.id, v.content, v.token_count, v.created_at, v.kind, v.wing, v.room,
 		       f.id, f.ftype, f.extracted_at, f.entities, f.subjects, f.decision, f.data, f.fact_count, f.token_estimate, f.model_hash,
 		       e.dim, e.vector
 		FROM verbatim v
@@ -55,6 +55,7 @@ func (s *SQLiteVectorStore) Search(ctx context.Context, vector []float32, limit 
 		query += " AND v.room = ?"
 		args = append(args, *room)
 	}
+	query += " AND (v.valid_from IS NULL OR v.valid_from <= strftime('%s','now')) AND (v.valid_until IS NULL OR v.valid_until >= strftime('%s','now'))"
 
 	query += " ORDER BY v.created_at DESC LIMIT ?"
 	args = append(args, fetchLimit)
@@ -82,7 +83,7 @@ func (s *SQLiteVectorStore) Search(ctx context.Context, vector []float32, limit 
 		var dim int
 
 		err := rows.Scan(
-			&vID, &v.Content, &v.TokenCount, &createdAt, &v.Wing, &room,
+			&vID, &v.Content, &v.TokenCount, &createdAt, &v.Kind, &v.Wing, &room,
 			&fpID, &fp.Type, &extractedAt, &entitiesJSON, &subjectsJSON, &decision, &dataJSON, &fp.FactCount, &fp.TokenEstimate, &fp.ModelHash,
 			&dim, &vectorBytes,
 		)
@@ -165,7 +166,7 @@ func (s *SQLiteVectorStore) SearchLexical(ctx context.Context, query string, lim
 	}
 
 	sqlQuery := `
-		SELECT v.id, v.content, v.token_count, v.created_at, v.wing, v.room,
+		SELECT v.id, v.content, v.token_count, v.created_at, v.kind, v.wing, v.room,
 		       f.id, f.ftype, f.extracted_at, f.entities, f.subjects, f.decision, f.data, f.fact_count, f.token_estimate, f.model_hash,
 		       e.dim, e.vector
 		FROM verbatim_fts fts
@@ -183,6 +184,7 @@ func (s *SQLiteVectorStore) SearchLexical(ctx context.Context, query string, lim
 		sqlQuery += " AND v.room = ?"
 		args = append(args, *room)
 	}
+	sqlQuery += " AND (v.valid_from IS NULL OR v.valid_from <= strftime('%s','now')) AND (v.valid_until IS NULL OR v.valid_until >= strftime('%s','now'))"
 
 	sqlQuery += " ORDER BY fts.rank LIMIT ?"
 	args = append(args, limit)
@@ -210,7 +212,7 @@ func (s *SQLiteVectorStore) SearchLexical(ctx context.Context, query string, lim
 		var dim int
 
 		err := rows.Scan(
-			&vID, &v.Content, &v.TokenCount, &createdAt, &v.Wing, &room,
+			&vID, &v.Content, &v.TokenCount, &createdAt, &v.Kind, &v.Wing, &room,
 			&fpID, &fp.Type, &extractedAt, &entitiesJSON, &subjectsJSON, &decision, &dataJSON, &fp.FactCount, &fp.TokenEstimate, &fp.ModelHash,
 			&dim, &vectorBytes,
 		)

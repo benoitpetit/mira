@@ -82,7 +82,7 @@ func TestOllamaExtractor_SuccessfulExtraction(t *testing.T) {
 
 func TestOllamaExtractor_ForcedType(t *testing.T) {
 	extracted := ollamaFingerprintResult{
-		Type:    "fact",
+		Type:     "fact",
 		Entities: []string{"system"},
 		Subject:  []string{"test"},
 	}
@@ -108,7 +108,7 @@ func TestOllamaExtractor_ForcedType(t *testing.T) {
 
 func TestOllamaExtractor_InvalidType_DefaultsToFact(t *testing.T) {
 	extracted := ollamaFingerprintResult{
-		Type:    "garbage_type",
+		Type:     "garbage_type",
 		Entities: []string{},
 		Subject:  []string{},
 	}
@@ -281,7 +281,7 @@ func TestExtractionPrompt(t *testing.T) {
 }
 
 func containsStr(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || len(sub) == 0 || findSub(s, sub))
+	return len(s) >= len(sub) && (s == sub || sub == "" || findSub(s, sub))
 }
 
 func findSub(s, sub string) bool {

@@ -14,12 +14,12 @@ import (
 type SimpleMetricsCollector struct {
 	mu sync.RWMutex
 
-	storeCount     int64
-	storeDuration  time.Duration
-	storeLast      time.Time
-	recallCount    int64
-	recallDuration time.Duration
-	recallLast     time.Time
+	storeCount       int64
+	storeDuration    time.Duration
+	storeLast        time.Time
+	recallCount      int64
+	recallDuration   time.Duration
+	recallLast       time.Time
 	searchCount      int64
 	searchDuration   time.Duration
 	searchLast       time.Time

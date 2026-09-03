@@ -18,11 +18,14 @@ import (
 
 // StoreMemoryInput contains the input for storing a memory
 type StoreMemoryInput struct {
-	Content string
-	Wing    string
-	Room    *string
-	Type    *valueobjects.MemoryType
-	Metrics map[string]any
+	Content    string
+	Wing       string
+	Room       *string
+	Type       *valueobjects.MemoryType
+	Kind       *valueobjects.MemoryKind
+	Metrics    map[string]any
+	ValidFrom  *time.Time
+	ValidUntil *time.Time
 }
 
 // WingRoomRe matches valid wing and room identifiers.
@@ -53,6 +56,12 @@ func (in StoreMemoryInput) Validate() error {
 	if in.Type != nil && !in.Type.IsValid() {
 		return fmt.Errorf("invalid memory type: %s", *in.Type)
 	}
+	if in.Kind != nil && !in.Kind.IsValid() {
+		return fmt.Errorf("invalid memory kind: %s", *in.Kind)
+	}
+	if in.ValidFrom != nil && in.ValidUntil != nil && in.ValidUntil.Before(*in.ValidFrom) {
+		return fmt.Errorf("valid_until must be greater than or equal to valid_from")
+	}
 	if len(in.Metrics) > 0 {
 		if b, err := json.Marshal(in.Metrics); err != nil {
 			return fmt.Errorf("metrics must be valid JSON: %w", err)
@@ -67,6 +76,7 @@ func (in StoreMemoryInput) Validate() error {
 type StoreMemoryOutput struct {
 	FingerprintID string `json:"fingerprint_id"`
 	Type          string `json:"type"`
+	Kind          string `json:"kind"`
 	FactCount     int    `json:"fact_count"`
 	TokenCount    int    `json:"token_count"`
 	ModelHash     string `json:"model_hash"`
@@ -152,6 +162,7 @@ func (uc *StoreMemory) Execute(ctx context.Context, input StoreMemoryInput) (*St
 			return &StoreMemoryOutput{
 				FingerprintID: exact[0].Memory.ID.String(),
 				Type:          string(exact[0].Memory.Type),
+				Kind:          string(exact[0].Verbatim.Kind),
 				FactCount:     exact[0].Memory.FactCount,
 				TokenCount:    exact[0].Verbatim.TokenCount,
 				ModelHash:     exact[0].Memory.ModelHash,
@@ -162,6 +173,8 @@ func (uc *StoreMemory) Execute(ctx context.Context, input StoreMemoryInput) (*St
 	// 1. Create verbatim
 	verbatim := entities.NewVerbatim(input.Content, input.Wing, input.Room)
 	verbatim.Metrics = input.Metrics
+	verbatim.ValidFrom = input.ValidFrom
+	verbatim.ValidUntil = input.ValidUntil
 
 	// 2. Extract T1 and T2
 	fp, emb, err := uc.extractor.ExtractPipeline(ctx, verbatim, input.Type)
@@ -176,6 +189,11 @@ func (uc *StoreMemory) Execute(ctx context.Context, input StoreMemoryInput) (*St
 			verbatim.Room = r
 		}
 	}
+	if input.Kind != nil {
+		verbatim.Kind = *input.Kind
+	} else {
+		verbatim.Kind = valueobjects.DefaultMemoryKindForType(fp.Type)
+	}
 
 	// 3. Atomic transaction for T0, T1, T2 storage
 	tx, err := uc.repository.Begin()
@@ -185,19 +203,19 @@ func (uc *StoreMemory) Execute(ctx context.Context, input StoreMemoryInput) (*St
 
 	// Store T0
 	if err := uc.repository.StoreVerbatimTx(ctx, tx, verbatim); err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		return nil, fmt.Errorf("failed to store verbatim: %w", err)
 	}
 
 	// Store T1
 	if err := uc.repository.StoreFingerprintTx(ctx, tx, fp); err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		return nil, fmt.Errorf("failed to store fingerprint: %w", err)
 	}
 
 	// Store T2
 	if err := uc.repository.StoreEmbeddingTx(ctx, tx, emb); err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		return nil, fmt.Errorf("failed to store embedding: %w", err)
 	}
 
@@ -241,8 +259,17 @@ func (uc *StoreMemory) Execute(ctx context.Context, input StoreMemoryInput) (*St
 		}(verbatim.ID, verbatim.Content, verbatim.TokenCount)
 	}
 
-	// 5. Create causal node (non-fatal)
-	node := entities.NewCausalNode(fp.ID, string(fp.Type), fp.Data.Subject[0], input.Wing, input.Room)
+	// 5. Create causal node (non-fatal). Extraction can legitimately yield no
+	// subject (for example for a terse debug note), so never index into Subject
+	// without a guard.
+	summary := fp.Data.Decision
+	if summary == "" && len(fp.Data.Subject) > 0 {
+		summary = fp.Data.Subject[0]
+	}
+	if summary == "" {
+		summary = fmt.Sprintf("Memory %s", verbatim.ID.String()[:8])
+	}
+	node := entities.NewCausalNode(fp.ID, string(fp.Type), summary, input.Wing, input.Room)
 	if err := uc.repository.AddNode(ctx, node); err != nil {
 		// Non-fatal: continue without causal node
 		if uc.logger != nil {
@@ -296,6 +323,7 @@ func (uc *StoreMemory) Execute(ctx context.Context, input StoreMemoryInput) (*St
 	return &StoreMemoryOutput{
 		FingerprintID: fp.ID.String(),
 		Type:          string(fp.Type),
+		Kind:          string(verbatim.Kind),
 		FactCount:     fp.FactCount,
 		TokenCount:    verbatim.TokenCount,
 		ModelHash:     fp.ModelHash,

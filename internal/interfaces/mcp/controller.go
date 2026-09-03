@@ -19,7 +19,26 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// Validation constants
+// ValidationLimits holds configurable validation limits for MCP tools.
+type ValidationLimits struct {
+	MaxContentLength int
+	MaxWingLength    int
+	MaxRoomLength    int
+	MaxQueryLength   int
+}
+
+// DefaultValidationLimits returns the default validation limits.
+func DefaultValidationLimits() ValidationLimits {
+	return ValidationLimits{
+		MaxContentLength: 100000,
+		MaxWingLength:    100,
+		MaxRoomLength:    100,
+		MaxQueryLength:   10000,
+	}
+}
+
+// Backward-compatible constants for tests and external code.
+// Deprecated: Use ValidationLimits instead.
 const (
 	MaxContentLength = 100000
 	MaxWingLength    = 100
@@ -143,19 +162,20 @@ type (
 
 // Controller handles MCP tool calls
 type Controller struct {
-	storeMemory       StoreMemoryExecutor
-	recallMemory      RecallMemoryExecutor
-	loadMemory        LoadMemoryExecutor
-	getTimeline       GetTimelineExecutor
-	getStatus         GetStatusExecutor
-	getCausalChain    GetCausalChainExecutor
-	archiveMemories   ArchiveMemoriesExecutor
-	clearMemory       ClearMemoryExecutor
-	compressMemories  CompressMemoriesExecutor
-	updateMemory      UpdateMemoryExecutor
-	searchSemantic    SearchSemanticExecutor
+	storeMemory         StoreMemoryExecutor
+	recallMemory        RecallMemoryExecutor
+	loadMemory          LoadMemoryExecutor
+	getTimeline         GetTimelineExecutor
+	getStatus           GetStatusExecutor
+	getCausalChain      GetCausalChainExecutor
+	archiveMemories     ArchiveMemoriesExecutor
+	clearMemory         ClearMemoryExecutor
+	compressMemories    CompressMemoriesExecutor
+	updateMemory        UpdateMemoryExecutor
+	searchSemantic      SearchSemanticExecutor
 	consolidateMemories ConsolidateMemoriesExecutor
-	fingerprintRepo   FingerprintLookup
+	fingerprintRepo     FingerprintLookup
+	limits              ValidationLimits
 }
 
 // NewController creates a new MCP controller
@@ -175,20 +195,47 @@ func NewController(
 	consolidateMemories *interactors.ConsolidateMemories,
 ) *Controller {
 	return &Controller{
-		storeMemory:       storeMemory,
-		recallMemory:      recallMemory,
-		loadMemory:        loadMemory,
-		getTimeline:       getTimeline,
-		getStatus:         getStatus,
-		getCausalChain:    getCausalChain,
-		archiveMemories:   archiveMemories,
-		clearMemory:       clearMemory,
-		fingerprintRepo:   fingerprintRepo,
-		compressMemories:  compressMemories,
-		updateMemory:      updateMemory,
-		searchSemantic:    searchSemantic,
+		storeMemory:         storeMemory,
+		recallMemory:        recallMemory,
+		loadMemory:          loadMemory,
+		getTimeline:         getTimeline,
+		getStatus:           getStatus,
+		getCausalChain:      getCausalChain,
+		archiveMemories:     archiveMemories,
+		clearMemory:         clearMemory,
+		fingerprintRepo:     fingerprintRepo,
+		compressMemories:    compressMemories,
+		updateMemory:        updateMemory,
+		searchSemantic:      searchSemantic,
 		consolidateMemories: consolidateMemories,
+		limits:              DefaultValidationLimits(),
 	}
+}
+
+// NewControllerWithLimits creates a new MCP controller with custom validation limits
+func NewControllerWithLimits(
+	storeMemory *interactors.StoreMemory,
+	recallMemory *interactors.RecallMemory,
+	loadMemory *interactors.LoadMemory,
+	getTimeline *interactors.GetTimeline,
+	getStatus *interactors.GetStatus,
+	getCausalChain *interactors.GetCausalChain,
+	archiveMemories *interactors.ArchiveMemories,
+	clearMemory *interactors.ClearMemory,
+	fingerprintRepo FingerprintLookup,
+	compressMemories *interactors.CompressMemories,
+	updateMemory *interactors.UpdateMemory,
+	searchSemantic *interactors.SearchSemantic,
+	consolidateMemories *interactors.ConsolidateMemories,
+	limits ValidationLimits,
+) *Controller {
+	c := NewController(
+		storeMemory, recallMemory, loadMemory, getTimeline, getStatus,
+		getCausalChain, archiveMemories, clearMemory, fingerprintRepo,
+		compressMemories, updateMemory, searchSemantic, consolidateMemories,
+	)
+	c.limits = limits
+	return c
 }
 
 // RegisterTools registers all MCP tools
@@ -202,13 +249,13 @@ func (c *Controller) RegisterTools(mcpServer server.MCPServer) {
 	})
 }
 
-// ToolDefinitions returns the 13 MIRA tool definitions.
+// ToolDefinitions returns the MIRA tool definitions.
 // Used for combined registration when SOUL is embedded.
 func (c *Controller) ToolDefinitions() []mcptypes.Tool {
 	return []mcptypes.Tool{
-			{
-				Name: "mira_store",
-				Description: `Store a memory in MIRA with automatic entity extraction and fingerprinting.
+		{
+			Name: "mira_store",
+			Description: `Store a memory in MIRA with automatic entity extraction and fingerprinting.
 
 The content is analyzed to extract entities, create a semantic fingerprint for similarity matching,
 and link to existing causal chains if applicable.
@@ -218,24 +265,57 @@ Parameters:
   - wing: Namespace/project for organization (e.g., "auth-service", "frontend", "infra")
   - room: Sub-category within the wing (e.g., "decisions", "bugs", "architecture")
   - type: Memory type - auto-detected if empty. Values: decision|fact|preference|session_note|debug_log
+  - kind: Business role. Values: identity|user|project|task|knowledge|history
+  - valid_from / valid_until: Optional RFC3339 bounds for temporal facts
 
 Examples:
   Store a decision:  {"content": "Use JWT tokens with RS256 for OAuth2", "wing": "auth-service", "room": "decisions", "type": "decision"}
   Store a debug log: {"content": "Fixed nil pointer in user.go:42", "wing": "api", "room": "debug", "type": "debug_log"}
   Store a fact:      {"content": "Database connection pool max is 100", "wing": "infra", "type": "fact"}`,
-				InputSchema: mcptypes.ToolInputSchema{
-					Type: "object",
-					Properties: map[string]interface{}{
-						"content": map[string]string{"type": "string", "description": "Text content to store"},
-						"wing":    map[string]string{"type": "string", "description": "Namespace/project (e.g., 'auth-service')"},
-						"room":    map[string]string{"type": "string", "description": "Sub-category (e.g., 'migration')"},
-						"type":    map[string]string{"type": "string", "description": "Forced type: decision|fact|preference|session_note|debug_log (auto-detect if empty)"},
-					},
+			InputSchema: mcptypes.ToolInputSchema{
+				Type: "object",
+				Properties: map[string]interface{}{
+					"content":     map[string]string{"type": "string", "description": "Text content to store"},
+					"wing":        map[string]string{"type": "string", "description": "Namespace/project (e.g., 'auth-service')"},
+					"room":        map[string]string{"type": "string", "description": "Sub-category (e.g., 'migration')"},
+					"type":        map[string]string{"type": "string", "description": "Forced type: decision|fact|preference|session_note|debug_log (auto-detect if empty)"},
+					"kind":        map[string]string{"type": "string", "description": "Business role: identity|user|project|task|knowledge|history"},
+					"valid_from":  map[string]string{"type": "string", "description": "RFC3339 start of the fact validity interval"},
+					"valid_until": map[string]string{"type": "string", "description": "RFC3339 end of the fact validity interval"},
 				},
 			},
-			{
-				Name: "mira_recall",
-				Description: `Retrieve relevant memories for a query using semantic similarity and session-aware ranking.
+		},
+		{
+			Name: "mira_ingest",
+			Description: `Extract history memories from a structured conversation using MIRA's normal storage pipeline.
+
+By default only substantive user messages are captured. Set include_assistant to
+true to include assistant replies as well. Tool and system messages are never
+captured. Every selected message is stored with kind=history and is still
+processed by the usual extraction and duplicate protection pipeline.
+
+Parameters:
+  - messages: Array of {role, content} conversation messages (required)
+  - wing: Namespace/project for the extracted memories (required)
+  - room: Optional sub-category
+  - include_assistant: Also capture assistant replies (default: false)
+  - min_chars: Minimum Unicode character count per captured message (default: 20)
+  - dry_run: Preview the number of selected messages without persisting (default: false)`,
+			InputSchema: mcptypes.ToolInputSchema{
+				Type: "object",
+				Properties: map[string]interface{}{
+					"messages":          map[string]string{"type": "array", "description": "Conversation messages, each with role and content"},
+					"wing":              map[string]string{"type": "string", "description": "Namespace/project for extracted memories"},
+					"room":              map[string]string{"type": "string", "description": "Optional room/sub-category"},
+					"include_assistant": map[string]string{"type": "boolean", "description": "Also capture assistant replies"},
+					"min_chars":         map[string]string{"type": "number", "description": "Minimum character count (default: 20)"},
+					"dry_run":           map[string]string{"type": "boolean", "description": "Preview without storing"},
+				},
+			},
+		},
+		{
+			Name: "mira_recall",
+			Description: `Retrieve relevant memories for a query using semantic similarity and session-aware ranking.
 
 Supports multilingual queries (English, French, Spanish, Italian, German, etc.) through cross-lingual embeddings.
 If the initial search yields sparse results, MIRA automatically broadens the search with relaxed thresholds.
@@ -250,7 +330,9 @@ Parameters:
   - budget: Max tokens to return (default: 4000)
   - wing: Filter to specific namespace/project
   - room: Filter to specific sub-category
+	  - kind: Filter to a business role: identity|user|project|task|knowledge|history
   - fallback_wings: Comma-separated fallback wings to search if primary wing yields no results
+  - include_global: Also search the shared "general" wing if the project has no results
   - session_id: Optional session identifier for multi-turn memory injection (boosts memories recalled in previous turns by +30%)
 
 Examples:
@@ -258,21 +340,23 @@ Examples:
   Filtered recall:     {"query": "database migration", "wing": "infra", "room": "decisions"}
   Multilingual (FR):   {"query": "règles de langue français anglais", "wing": "general"}
   Multilingual (ES):   {"query": "reglas de idioma español inglés", "wing": "general"}`,
-				InputSchema: mcptypes.ToolInputSchema{
-					Type: "object",
-					Properties: map[string]interface{}{
-						"query":          map[string]string{"type": "string", "description": "Query/search text (any language supported)"},
-						"budget":         map[string]string{"type": "number", "description": "Token budget (default: 4000)"},
-						"wing":           map[string]string{"type": "string", "description": "Filter by wing/namespace"},
-						"room":           map[string]string{"type": "string", "description": "Filter by room/sub-category"},
-						"fallback_wings": map[string]string{"type": "string", "description": "Comma-separated fallback wings to search if primary wing yields no results"},
-							"session_id":     map[string]string{"type": "string", "description": "Session ID for multi-turn memory injection (optional)"},
-					},
+			InputSchema: mcptypes.ToolInputSchema{
+				Type: "object",
+				Properties: map[string]interface{}{
+					"query":          map[string]string{"type": "string", "description": "Query/search text (any language supported)"},
+					"budget":         map[string]string{"type": "number", "description": "Token budget (default: 4000)"},
+					"wing":           map[string]string{"type": "string", "description": "Filter by wing/namespace"},
+					"room":           map[string]string{"type": "string", "description": "Filter by room/sub-category"},
+					"kind":           map[string]string{"type": "string", "description": "Filter by business role"},
+					"fallback_wings": map[string]string{"type": "string", "description": "Comma-separated fallback wings to search if primary wing yields no results"},
+					"include_global": map[string]string{"type": "boolean", "description": "Fall back to the shared general wing if the primary wing has no results"},
+					"session_id":     map[string]string{"type": "string", "description": "Session ID for multi-turn memory injection (optional)"},
 				},
 			},
-			{
-				Name: "mira_load",
-				Description: `Load a complete memory verbatim by its ID.
+		},
+		{
+			Name: "mira_load",
+			Description: `Load a complete memory verbatim by its ID.
 
 Retrieves the full content including metadata (creation time, type, wing, room, entities).
 Use when you have a verbatim ID from a previous recall or causal chain and need the complete details.
@@ -283,16 +367,16 @@ Parameters:
 Examples:
   Load by T0 ref:    {"id": "T0:auth-service-abc123"}
   Load by UUID:      {"id": "550e8400-e29b-41d4-a716-446655440000"}`,
-				InputSchema: mcptypes.ToolInputSchema{
-					Type: "object",
-					Properties: map[string]interface{}{
-						"id": map[string]string{"type": "string", "description": "Verbatim UUID or T0:xxx reference"},
-					},
+			InputSchema: mcptypes.ToolInputSchema{
+				Type: "object",
+				Properties: map[string]interface{}{
+					"id": map[string]string{"type": "string", "description": "Verbatim UUID or T0:xxx reference"},
 				},
 			},
-			{
-				Name: "mira_causal_chain",
-				Description: `Trace the causal chain of a decision or event through linked memories.
+		},
+		{
+			Name: "mira_causal_chain",
+			Description: `Trace the causal chain of a decision or event through linked memories.
 
 IMPORTANT: You must use the exact Fingerprint ID returned by mira_recall or mira_timeline.
 Do not invent or guess IDs. If you only have a T0: reference, it must be a valid UUID (e.g., T0:550e8400-e29b-41d4-a716-446655440000).
@@ -305,18 +389,18 @@ Parameters:
 Examples:
   Trace decision:    {"id": "550e8400-e29b-41d4-a716-446655440000", "max_depth": 3}
   Full chain:        {"id": "550e8400-e29b-41d4-a716-446655440000", "max_depth": 10, "include_consequences": true}`,
-				InputSchema: mcptypes.ToolInputSchema{
-					Type: "object",
-					Properties: map[string]interface{}{
-						"id":                   map[string]string{"type": "string", "description": "Exact Fingerprint ID from mira_recall or mira_timeline"},
-						"max_depth":            map[string]string{"type": "number", "description": "Max depth (default: 5)"},
-						"include_consequences": map[string]string{"type": "boolean", "description": "Include consequences/children"},
-					},
+			InputSchema: mcptypes.ToolInputSchema{
+				Type: "object",
+				Properties: map[string]interface{}{
+					"id":                   map[string]string{"type": "string", "description": "Exact Fingerprint ID from mira_recall or mira_timeline"},
+					"max_depth":            map[string]string{"type": "number", "description": "Max depth (default: 5)"},
+					"include_consequences": map[string]string{"type": "boolean", "description": "Include consequences/children"},
 				},
 			},
-			{
-				Name: "mira_status",
-				Description: `Get MIRA system statistics and health information.
+		},
+		{
+			Name: "mira_status",
+			Description: `Get MIRA system statistics and health information.
 
 Returns:
   - Total memories stored
@@ -326,14 +410,14 @@ Returns:
   - Storage usage
 
 No parameters required. Use to check system health before operations.`,
-				InputSchema: mcptypes.ToolInputSchema{
-					Type:       "object",
-					Properties: map[string]interface{}{},
-				},
+			InputSchema: mcptypes.ToolInputSchema{
+				Type:       "object",
+				Properties: map[string]interface{}{},
 			},
-			{
-				Name: "mira_timeline",
-				Description: `Reconstruct a chronological timeline of memories filtered by criteria.
+		},
+		{
+			Name: "mira_timeline",
+			Description: `Reconstruct a chronological timeline of memories filtered by criteria.
 
 Returns memories in chronological order, useful for seeing how a project or topic evolved over time.
 All filters are optional - use combinations to narrow results.
@@ -351,22 +435,22 @@ Examples:
   Project timeline:  {"wing": "auth-service", "since": "2024-01-01"}
   Sprint decisions:  {"wing": "frontend", "room": "sprint-5", "type": "decision"}
   Recent debug:      {"wing": "api", "type": "debug_log", "since": "2024-04-01"}`,
-				InputSchema: mcptypes.ToolInputSchema{
-					Type: "object",
-					Properties: map[string]interface{}{
-						"wing":   map[string]string{"type": "string", "description": "Required wing/namespace"},
-						"room":   map[string]string{"type": "string", "description": "Filter by room/sub-category"},
-						"since":  map[string]string{"type": "string", "description": "Start date ISO 8601 (e.g., 2024-01-15)"},
-						"until":  map[string]string{"type": "string", "description": "End date ISO 8601"},
-						"type":   map[string]string{"type": "string", "description": "Filter by type: decision|fact|preference|session_note|debug_log"},
-						"limit":  map[string]string{"type": "number", "description": "Max items to return (default: 100, max: 1000)"},
-						"cursor": map[string]string{"type": "string", "description": "Pagination cursor from previous call"},
-					},
+			InputSchema: mcptypes.ToolInputSchema{
+				Type: "object",
+				Properties: map[string]interface{}{
+					"wing":   map[string]string{"type": "string", "description": "Required wing/namespace"},
+					"room":   map[string]string{"type": "string", "description": "Filter by room/sub-category"},
+					"since":  map[string]string{"type": "string", "description": "Start date ISO 8601 (e.g., 2024-01-15)"},
+					"until":  map[string]string{"type": "string", "description": "End date ISO 8601"},
+					"type":   map[string]string{"type": "string", "description": "Filter by type: decision|fact|preference|session_note|debug_log"},
+					"limit":  map[string]string{"type": "number", "description": "Max items to return (default: 100, max: 1000)"},
+					"cursor": map[string]string{"type": "string", "description": "Pagination cursor from previous call"},
 				},
 			},
-			{
-				Name: "mira_archive",
-				Description: `Archive and clean old memories according to configured decay rates.
+		},
+		{
+			Name: "mira_archive",
+			Description: `Archive and clean old memories according to configured decay rates.
 
 Memories are archived based on:
   - Age (older memories decay faster)
@@ -377,14 +461,14 @@ This operation is safe - archived memories can be restored if needed.
 Returns statistics about what was archived.
 
 No parameters required. Use periodically to maintain database size.`,
-				InputSchema: mcptypes.ToolInputSchema{
-					Type:       "object",
-					Properties: map[string]interface{}{},
-				},
+			InputSchema: mcptypes.ToolInputSchema{
+				Type:       "object",
+				Properties: map[string]interface{}{},
 			},
-			{
-				Name: "mira_clear_memory",
-				Description: `Permanently delete all memories. Use with caution.
+		},
+		{
+			Name: "mira_clear_memory",
+			Description: `Permanently delete all memories. Use with caution.
 
 Supports two modes:
   - global: Deletes every memory across all wings and rooms. Requires no additional filters.
@@ -399,18 +483,18 @@ Examples:
   Clear everything: {"mode": "global"}
   Clear one room:   {"mode": "room", "wing": "auth-service", "room": "decisions"}
   Clear whole wing: {"mode": "room", "wing": "auth-service"}`,
-				InputSchema: mcptypes.ToolInputSchema{
-					Type: "object",
-					Properties: map[string]interface{}{
-						"mode": map[string]string{"type": "string", "description": "Clear mode: 'global' or 'room'"},
-						"wing": map[string]string{"type": "string", "description": "Wing/namespace (required for room mode)"},
-						"room": map[string]string{"type": "string", "description": "Room/sub-category (optional for room mode)"},
-					},
+			InputSchema: mcptypes.ToolInputSchema{
+				Type: "object",
+				Properties: map[string]interface{}{
+					"mode": map[string]string{"type": "string", "description": "Clear mode: 'global' or 'room'"},
+					"wing": map[string]string{"type": "string", "description": "Wing/namespace (required for room mode)"},
+					"room": map[string]string{"type": "string", "description": "Room/sub-category (optional for room mode)"},
 				},
 			},
-			{
-				Name: "mira_health",
-				Description: `Quick JSON health check for MIRA system.
+		},
+		{
+			Name: "mira_health",
+			Description: `Quick JSON health check for MIRA system.
 
 Returns lightweight JSON status for liveness/readiness probes:
   - status: "healthy" | "degraded"
@@ -419,14 +503,14 @@ Returns lightweight JSON status for liveness/readiness probes:
   - vector_index_ready: true | false
 
 No parameters required. Use for lightweight probes versus mira_status for full stats.`,
-				InputSchema: mcptypes.ToolInputSchema{
-					Type:       "object",
-					Properties: map[string]interface{}{},
-				},
+			InputSchema: mcptypes.ToolInputSchema{
+				Type:       "object",
+				Properties: map[string]interface{}{},
 			},
-			{
-				Name: "mira_compress",
-				Description: `Run rule-based context compression over session_note verbatims.
+		},
+		{
+			Name: "mira_compress",
+			Description: `Run rule-based context compression over session_note verbatims.
 
 Generates condensed summaries (stored alongside originals) that the recall engine
 surfaces automatically when the token budget is tight. No LLM required — compression
@@ -442,18 +526,18 @@ Examples:
   Compress one wing:         {"wing": "auth-service"}
   Preview without saving:    {"dry_run": true}
   Only long notes:           {"min_tokens": 200}`,
-				InputSchema: mcptypes.ToolInputSchema{
-					Type: "object",
-					Properties: map[string]interface{}{
-						"wing":       map[string]string{"type": "string", "description": "Limit to this wing (optional)"},
-						"min_tokens": map[string]string{"type": "number", "description": "Minimum token count to qualify (default: 100)"},
-						"dry_run":    map[string]string{"type": "boolean", "description": "Preview without persisting (default: false)"},
-					},
+			InputSchema: mcptypes.ToolInputSchema{
+				Type: "object",
+				Properties: map[string]interface{}{
+					"wing":       map[string]string{"type": "string", "description": "Limit to this wing (optional)"},
+					"min_tokens": map[string]string{"type": "number", "description": "Minimum token count to qualify (default: 100)"},
+					"dry_run":    map[string]string{"type": "boolean", "description": "Preview without persisting (default: false)"},
 				},
 			},
-			{
-				Name: "mira_update",
-				Description: `Update a memory's content and regenerate its fingerprint and embedding.
+		},
+		{
+			Name: "mira_update",
+			Description: `Update a memory's content and regenerate its fingerprint and embedding.
 
 The existing verbatim is replaced atomically: fingerprint, embedding, and vector
 index entries are all regenerated from the new content. Use when a stored memory
@@ -466,17 +550,17 @@ Parameters:
 Examples:
   Correct a fact:   {"id": "T0:auth-service-abc123", "content": "Updated: API rate limit is 5000 req/min"}
   Enrich a decision: {"id": "550e8400-e29b-41d4-a716-446655440000", "content": "Decision: Use PostgreSQL 16 for v2. Key reasons: JSONB support, partitioning, pgvector."}`,
-				InputSchema: mcptypes.ToolInputSchema{
-					Type: "object",
-					Properties: map[string]interface{}{
-						"id":      map[string]string{"type": "string", "description": "Verbatim UUID or T0:xxx reference"},
-						"content": map[string]string{"type": "string", "description": "New content for this memory"},
-					},
+			InputSchema: mcptypes.ToolInputSchema{
+				Type: "object",
+				Properties: map[string]interface{}{
+					"id":      map[string]string{"type": "string", "description": "Verbatim UUID or T0:xxx reference"},
+					"content": map[string]string{"type": "string", "description": "New content for this memory"},
 				},
 			},
-			{
-				Name: "mira_search",
-				Description: `Pure vector search without CBA (Context Budget Allocation).
+		},
+		{
+			Name: "mira_search",
+			Description: `Pure vector search without CBA (Context Budget Allocation).
 
 Returns raw semantic matches ranked by cosine similarity. Unlike mira_recall,
 this does not apply session boost, causal penalties, diversity weighting, or
@@ -491,18 +575,18 @@ Parameters:
 Examples:
   Quick search:    {"query": "authentication JWT"}
   High precision:  {"query": "database migration plan", "threshold": 0.7, "top_k": 5}`,
-				InputSchema: mcptypes.ToolInputSchema{
-					Type: "object",
-					Properties: map[string]interface{}{
-						"query":     map[string]string{"type": "string", "description": "Search text"},
-						"top_k":     map[string]string{"type": "number", "description": "Max results (default: 10)"},
-						"threshold": map[string]string{"type": "number", "description": "Min similarity 0.0–1.0 (default: 0.3)"},
-					},
+			InputSchema: mcptypes.ToolInputSchema{
+				Type: "object",
+				Properties: map[string]interface{}{
+					"query":     map[string]string{"type": "string", "description": "Search text"},
+					"top_k":     map[string]string{"type": "number", "description": "Max results (default: 10)"},
+					"threshold": map[string]string{"type": "number", "description": "Min similarity 0.0–1.0 (default: 0.3)"},
 				},
 			},
-			{
-				Name: "mira_consolidate",
-				Description: `Merge redundant session notes within a wing into synthesized facts.
+		},
+		{
+			Name: "mira_consolidate",
+			Description: `Merge redundant session notes within a wing into synthesized facts.
 
 Scans session notes, clusters highly similar items (default threshold: 0.92),
 creates a synthetic fact for each cluster, and removes the originals. Useful
@@ -515,14 +599,14 @@ Parameters:
 Examples:
   Consolidate a wing:          {"wing": "auth-service"}
   Aggressive merge:            {"wing": "api", "similarity_threshold": 0.85}`,
-				InputSchema: mcptypes.ToolInputSchema{
-					Type: "object",
-					Properties: map[string]interface{}{
-						"wing":                  map[string]string{"type": "string", "description": "Target wing to consolidate"},
-						"similarity_threshold":  map[string]string{"type": "number", "description": "Min similarity to merge (0.0–1.0, default: 0.92)"},
-					},
+			InputSchema: mcptypes.ToolInputSchema{
+				Type: "object",
+				Properties: map[string]interface{}{
+					"wing":                 map[string]string{"type": "string", "description": "Target wing to consolidate"},
+					"similarity_threshold": map[string]string{"type": "number", "description": "Min similarity to merge (0.0–1.0, default: 0.92)"},
 				},
 			},
+		},
 	}
 }
 
@@ -532,6 +616,8 @@ func (c *Controller) Call(ctx context.Context, name string, arguments map[string
 	switch name {
 	case "mira_store":
 		return c.handleStore(ctx, arguments)
+	case "mira_ingest":
+		return c.handleIngest(ctx, arguments)
 	case "mira_recall":
 		return c.handleRecall(ctx, arguments)
 	case "mira_load":
@@ -561,14 +647,66 @@ func (c *Controller) Call(ctx context.Context, name string, arguments map[string
 	}
 }
 
+func (c *Controller) handleIngest(ctx context.Context, args map[string]interface{}) (*mcptypes.CallToolResult, error) {
+	rawMessages, ok := args["messages"]
+	if !ok {
+		return nil, fmt.Errorf("messages is required")
+	}
+	raw, err := json.Marshal(rawMessages)
+	if err != nil {
+		return nil, fmt.Errorf("messages must be JSON serializable: %w", err)
+	}
+	messages, err := interactors.ParseConversationMessages(raw)
+	if err != nil {
+		return nil, err
+	}
+	wing, ok := args["wing"].(string)
+	if !ok || strings.TrimSpace(wing) == "" {
+		return nil, fmt.Errorf("wing is required")
+	}
+	var room *string
+	if value, ok := args["room"].(string); ok && strings.TrimSpace(value) != "" {
+		room = &value
+	}
+	includeAssistant, _ := args["include_assistant"].(bool)
+	minChars := 20
+	if value, ok := args["min_chars"].(float64); ok {
+		minChars = int(value)
+	}
+	inputs, err := interactors.ConversationMemoryInputs(messages, wing, room, includeAssistant, minChars)
+	if err != nil {
+		return nil, err
+	}
+	if len(inputs) == 0 {
+		return nil, fmt.Errorf("no messages matched the selected roles and min_chars=%d", minChars)
+	}
+	if dryRun, _ := args["dry_run"].(bool); dryRun {
+		return mcpTextResult(fmt.Sprintf("Dry-run: %d of %d conversation messages would be extracted as history memories.", len(inputs), len(messages))), nil
+	}
+
+	stored, failed := 0, 0
+	for _, input := range inputs {
+		if _, err := c.storeMemory.Execute(ctx, input); err != nil {
+			failed++
+			continue
+		}
+		stored++
+	}
+	return mcpTextResult(fmt.Sprintf("Conversation ingest complete: %d stored, %d failed (selected: %d)", stored, failed, len(inputs))), nil
+}
+
+func mcpTextResult(text string) *mcptypes.CallToolResult {
+	return &mcptypes.CallToolResult{Content: []mcptypes.Content{mcptypes.TextContent{Type: "text", Text: text}}}
+}
+
 func (c *Controller) handleStore(ctx context.Context, args map[string]interface{}) (*mcptypes.CallToolResult, error) {
 	content, ok := args["content"].(string)
 	if !ok {
 		return nil, fmt.Errorf("content is required")
 	}
 
-	if utf8.RuneCountInString(content) > MaxContentLength {
-		return nil, fmt.Errorf("content exceeds maximum length of %d characters", MaxContentLength)
+	if utf8.RuneCountInString(content) > c.limits.MaxContentLength {
+		return nil, fmt.Errorf("content exceeds maximum length of %d characters", c.limits.MaxContentLength)
 	}
 
 	wing, ok := args["wing"].(string)
@@ -576,8 +714,8 @@ func (c *Controller) handleStore(ctx context.Context, args map[string]interface{
 		return nil, fmt.Errorf("wing is required")
 	}
 
-	if utf8.RuneCountInString(wing) > MaxWingLength {
-		return nil, fmt.Errorf("wing exceeds maximum length of %d characters", MaxWingLength)
+	if utf8.RuneCountInString(wing) > c.limits.MaxWingLength {
+		return nil, fmt.Errorf("wing exceeds maximum length of %d characters", c.limits.MaxWingLength)
 	}
 	if !interactors.WingRoomRe.MatchString(wing) {
 		return nil, fmt.Errorf("wing must be alphanumeric, hyphens or underscores only")
@@ -586,8 +724,8 @@ func (c *Controller) handleStore(ctx context.Context, args map[string]interface{
 	var room *string
 	if r, ok := args["room"]; ok {
 		if rs, ok := r.(string); ok && rs != "" {
-			if utf8.RuneCountInString(rs) > MaxRoomLength {
-				return nil, fmt.Errorf("room exceeds maximum length of %d characters", MaxRoomLength)
+			if utf8.RuneCountInString(rs) > c.limits.MaxRoomLength {
+				return nil, fmt.Errorf("room exceeds maximum length of %d characters", c.limits.MaxRoomLength)
 			}
 			if !interactors.WingRoomRe.MatchString(rs) {
 				return nil, fmt.Errorf("room must be alphanumeric, hyphens or underscores only")
@@ -605,6 +743,16 @@ func (c *Controller) handleStore(ctx context.Context, args map[string]interface{
 			}
 		}
 	}
+	var memoryKind *valueobjects.MemoryKind
+	if k, ok := args["kind"]; ok {
+		if ks, ok := k.(string); ok && ks != "" {
+			kind := valueobjects.MemoryKind(ks)
+			if !kind.IsValid() {
+				return nil, fmt.Errorf("invalid kind %q; valid values: identity, user, project, task, knowledge, history", ks)
+			}
+			memoryKind = &kind
+		}
+	}
 
 	var metrics map[string]any
 	if m, ok := args["metrics"]; ok {
@@ -614,13 +762,24 @@ func (c *Controller) handleStore(ctx context.Context, args map[string]interface{
 			}
 		}
 	}
+	validFrom, err := temporalArgument(args, "valid_from")
+	if err != nil {
+		return nil, err
+	}
+	validUntil, err := temporalArgument(args, "valid_until")
+	if err != nil {
+		return nil, err
+	}
 
 	input := interactors.StoreMemoryInput{
-		Content: content,
-		Wing:    wing,
-		Room:    room,
-		Type:    memType,
-		Metrics: metrics,
+		Content:    content,
+		Wing:       wing,
+		Room:       room,
+		Type:       memType,
+		Kind:       memoryKind,
+		Metrics:    metrics,
+		ValidFrom:  validFrom,
+		ValidUntil: validUntil,
 	}
 
 	output, err := c.storeMemory.Execute(ctx, input)
@@ -628,12 +787,28 @@ func (c *Controller) handleStore(ctx context.Context, args map[string]interface{
 		return nil, err
 	}
 
-	result := fmt.Sprintf("Stored: %s\nType: %s\nFacts: %d\nTokens: %d\nModel: %s",
-		output.FingerprintID, output.Type, output.FactCount, output.TokenCount, output.ModelHash)
+	result := fmt.Sprintf("Stored: %s\nType: %s\nKind: %s\nFacts: %d\nTokens: %d\nModel: %s",
+		output.FingerprintID, output.Type, output.Kind, output.FactCount, output.TokenCount, output.ModelHash)
 
 	return &mcptypes.CallToolResult{
 		Content: []mcptypes.Content{mcptypes.TextContent{Type: "text", Text: result}},
 	}, nil
+}
+
+func temporalArgument(args map[string]interface{}, name string) (*time.Time, error) {
+	value, ok := args[name]
+	if !ok || value == nil || value == "" {
+		return nil, nil
+	}
+	text, ok := value.(string)
+	if !ok {
+		return nil, fmt.Errorf("%s must be an RFC3339 string", name)
+	}
+	parsed, err := time.Parse(time.RFC3339, text)
+	if err != nil {
+		return nil, fmt.Errorf("%s must be an RFC3339 timestamp: %w", name, err)
+	}
+	return &parsed, nil
 }
 
 func (c *Controller) handleRecall(ctx context.Context, args map[string]interface{}) (*mcptypes.CallToolResult, error) {
@@ -642,8 +817,8 @@ func (c *Controller) handleRecall(ctx context.Context, args map[string]interface
 		return nil, fmt.Errorf("query is required")
 	}
 
-	if utf8.RuneCountInString(query) > MaxQueryLength {
-		return nil, fmt.Errorf("query exceeds maximum length of %d characters", MaxQueryLength)
+	if utf8.RuneCountInString(query) > c.limits.MaxQueryLength {
+		return nil, fmt.Errorf("query exceeds maximum length of %d characters", c.limits.MaxQueryLength)
 	}
 	if strings.TrimSpace(query) == "" {
 		return nil, fmt.Errorf("query cannot be empty")
@@ -673,6 +848,16 @@ func (c *Controller) handleRecall(ctx context.Context, args map[string]interface
 			wing = &ws
 		}
 	}
+	var memoryKind *valueobjects.MemoryKind
+	if k, ok := args["kind"]; ok {
+		if ks, ok := k.(string); ok && ks != "" {
+			kind := valueobjects.MemoryKind(ks)
+			if !kind.IsValid() {
+				return nil, fmt.Errorf("invalid kind %q; valid values: identity, user, project, task, knowledge, history", ks)
+			}
+			memoryKind = &kind
+		}
+	}
 	if r, ok := args["room"]; ok {
 		if rs, ok := r.(string); ok && rs != "" {
 			room = &rs
@@ -688,6 +873,11 @@ func (c *Controller) handleRecall(ctx context.Context, args map[string]interface
 			}
 		}
 	}
+	if includeGlobal, ok := args["include_global"].(bool); ok && includeGlobal {
+		if wing == nil || *wing != "general" {
+			fallbackWings = append(fallbackWings, "general")
+		}
+	}
 
 	var sessionID *string
 	if sid, ok := args["session_id"]; ok {
@@ -701,6 +891,7 @@ func (c *Controller) handleRecall(ctx context.Context, args map[string]interface
 		Budget:        budget,
 		Wing:          wing,
 		Room:          room,
+		Kind:          memoryKind,
 		FallbackWings: fallbackWings,
 		SessionID:     sessionID,
 	}
@@ -713,8 +904,7 @@ func (c *Controller) handleRecall(ctx context.Context, args map[string]interface
 	var parts []string
 	totalTokens := 0
 
-	parts = append(parts, "=== MIRA CONTEXT ===")
-	parts = append(parts, fmt.Sprintf("Query: %s | Budget: %d", query, budget))
+	parts = append(parts, "=== MIRA CONTEXT ===", fmt.Sprintf("Query: %s | Budget: %d", query, budget))
 	if wing != nil {
 		parts = append(parts, fmt.Sprintf("Wing: %s", *wing))
 	}
@@ -723,21 +913,17 @@ func (c *Controller) handleRecall(ctx context.Context, args map[string]interface
 	for i, sel := range output.Memories {
 		safeContent := sanitizeStoredMemoryContent(sel.Rendered)
 		parts = append(parts, fmt.Sprintf("--- [%d] %s (%d tokens) | ID: T0:%s ---",
-			i+1, sel.Mode.String(), sel.TokenCost, sel.VerbatimID.String()))
-		parts = append(parts, safeContent)
-		parts = append(parts, "")
+			i+1, sel.Mode.String(), sel.TokenCost, sel.VerbatimID.String()), safeContent, "")
 		totalTokens += sel.TokenCost
 	}
 
 	parts = append(parts, fmt.Sprintf("=== Total: %d/%d tokens (%.1f%%) ===",
-		totalTokens, budget, output.BudgetUsed))
-
-	parts = append(parts, "")
-	parts = append(parts, "INSTRUCTIONS:")
-	parts = append(parts, "- HEADER: Reference only, use mira_load(id) for full content")
-	parts = append(parts, "- FINGERPRINT: Essential extracted facts (informational density)")
-	parts = append(parts, "- COMPRESSED: Rule-based summary (~40% of verbatim, when available)")
-	parts = append(parts, "- VERBATIM: Complete original content")
+		totalTokens, budget, output.BudgetUsed), "",
+		"INSTRUCTIONS:",
+		"- HEADER: Reference only, use mira_load(id) for full content",
+		"- FINGERPRINT: Essential extracted facts (informational density)",
+		"- COMPRESSED: Rule-based summary (~40% of verbatim, when available)",
+		"- VERBATIM: Complete original content")
 
 	return &mcptypes.CallToolResult{
 		Content: []mcptypes.Content{mcptypes.TextContent{Type: "text", Text: strings.Join(parts, "\n")}},
@@ -820,8 +1006,8 @@ func (c *Controller) handleUpdate(ctx context.Context, args map[string]interface
 		return nil, fmt.Errorf("content is required and cannot be empty")
 	}
 
-	if utf8.RuneCountInString(content) > MaxContentLength {
-		return nil, fmt.Errorf("content exceeds maximum length of %d characters", MaxContentLength)
+	if utf8.RuneCountInString(content) > c.limits.MaxContentLength {
+		return nil, fmt.Errorf("content exceeds maximum length of %d characters", c.limits.MaxContentLength)
 	}
 
 	output, err := c.updateMemory.Execute(ctx, interactors.UpdateMemoryInput{
@@ -844,8 +1030,8 @@ func (c *Controller) handleSearch(ctx context.Context, args map[string]interface
 		return nil, fmt.Errorf("query is required")
 	}
 
-	if utf8.RuneCountInString(query) > MaxQueryLength {
-		return nil, fmt.Errorf("query exceeds maximum length of %d characters", MaxQueryLength)
+	if utf8.RuneCountInString(query) > c.limits.MaxQueryLength {
+		return nil, fmt.Errorf("query exceeds maximum length of %d characters", c.limits.MaxQueryLength)
 	}
 
 	topK := 10
@@ -866,8 +1052,7 @@ func (c *Controller) handleSearch(ctx context.Context, args map[string]interface
 
 	threshold := 0.3
 	if th, ok := args["threshold"]; ok {
-		switch v := th.(type) {
-		case float64:
+		if v, ok := th.(float64); ok {
 			threshold = v
 		}
 	}
@@ -894,18 +1079,15 @@ func (c *Controller) handleSearch(ctx context.Context, args map[string]interface
 	}
 
 	var parts []string
-	parts = append(parts, fmt.Sprintf("=== VECTOR SEARCH RESULTS (%d) ===", len(results)))
-	parts = append(parts, fmt.Sprintf("Query: %s | Threshold: %.2f", query, threshold))
-	parts = append(parts, "")
+	parts = append(parts, fmt.Sprintf("=== VECTOR SEARCH RESULTS (%d) ===", len(results)),
+		fmt.Sprintf("Query: %s | Threshold: %.2f", query, threshold), "")
 	for i, r := range results {
-		parts = append(parts, fmt.Sprintf("[%d] T0:%s (%.3f) [%s] wing=%s",
-			i+1, r.ID, r.Similarity, r.Type, r.Wing))
 		safeContent := sanitizeStoredMemoryContent(r.Content)
 		if len(safeContent) > 200 {
 			safeContent = safeContent[:200] + "..."
 		}
-		parts = append(parts, safeContent)
-		parts = append(parts, "")
+		parts = append(parts, fmt.Sprintf("[%d] T0:%s (%.3f) [%s] wing=%s",
+			i+1, r.ID, r.Similarity, r.Type, r.Wing), safeContent, "")
 	}
 
 	return &mcptypes.CallToolResult{
@@ -921,8 +1103,7 @@ func (c *Controller) handleConsolidate(ctx context.Context, args map[string]inte
 
 	threshold := 0.92
 	if th, ok := args["similarity_threshold"]; ok {
-		switch v := th.(type) {
-		case float64:
+		if v, ok := th.(float64); ok {
 			threshold = v
 		}
 	}
@@ -1020,8 +1201,7 @@ func (c *Controller) handleCausalChain(ctx context.Context, args map[string]inte
 	}
 
 	if len(output.Consequences) > 0 {
-		parts = append(parts, "")
-		parts = append(parts, "=== CONSEQUENCES (Downstream) ===")
+		parts = append(parts, "", "=== CONSEQUENCES (Downstream) ===")
 		for i, node := range output.Consequences {
 			indent := strings.Repeat(" ", i)
 			parts = append(parts, fmt.Sprintf("%s→ [%s] %s",
@@ -1047,7 +1227,7 @@ func (c *Controller) handleHealth(ctx context.Context) (*mcptypes.CallToolResult
 		status = "healthy (empty)"
 	}
 
-	result := fmt.Sprintf(`{"status":"%s","db_connected":true,"memory_count":%d}`,
+	result := fmt.Sprintf(`{"status":"%s","db_connected":true,"memory_count":%d}`, //nolint:gocritic // JSON value, %q would break output
 		status, output.Stats.VerbatimCount)
 
 	return &mcptypes.CallToolResult{
@@ -1191,8 +1371,7 @@ func (c *Controller) handleTimeline(ctx context.Context, args map[string]interfa
 	}
 
 	if output.NextCursor != nil {
-		parts = append(parts, "")
-		parts = append(parts, fmt.Sprintf("next_cursor: %s", *output.NextCursor))
+		parts = append(parts, "", fmt.Sprintf("next_cursor: %s", *output.NextCursor))
 	}
 
 	return &mcptypes.CallToolResult{

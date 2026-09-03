@@ -63,7 +63,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           mkdir -p dist
-          go build -ldflags="-s -w" -o dist/mira-${{ matrix.suffix }} ./cmd/mira
+          go build -tags fts5 -ldflags="-s -w" -o dist/mira-${{ matrix.suffix }} ./cmd/mira
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -97,7 +97,7 @@ jobs:
           printf 'go 1.25.0\n\nuse ./soul\nuse .\n' > go.work
 
       - name: Run tests
-        run: go test -v -race ./...
+        run: go test -tags fts5 -v -race ./...
 
   release:
     name: Create Draft Release
