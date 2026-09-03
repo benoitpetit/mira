@@ -164,6 +164,10 @@ func (s *SQLiteVectorStore) SearchLexical(ctx context.Context, query string, lim
 	if err != nil {
 		return nil, fmt.Errorf("FTS5 not available")
 	}
+	ftsQuery := util.NormalizeFTS5Query(query)
+	if ftsQuery == "" {
+		return nil, nil
+	}
 
 	sqlQuery := `
 		SELECT v.id, v.content, v.token_count, v.created_at, v.kind, v.wing, v.room,
@@ -174,7 +178,7 @@ func (s *SQLiteVectorStore) SearchLexical(ctx context.Context, query string, lim
 		JOIN fingerprints f ON v.id = f.verbatim_id
 		JOIN embeddings e ON v.id = e.id
 		WHERE fts.content MATCH ?`
-	args := []interface{}{query}
+	args := []interface{}{ftsQuery}
 
 	if wing != nil {
 		sqlQuery += " AND v.wing = ?"
