@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Local MIRA memory explorer">
+  <title>MIRA Memory Explorer</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">LOCAL MEMORY EXPLORER</p>
+      <h1>MIRA</h1>
+    </div>
+    <div class="topbar-actions">
+      <label class="token-field" for="apiToken">API token
+        <input id="apiToken" type="password" autocomplete="off" placeholder="Optional bearer token">
+      </label>
+      <button id="saveTokenBtn" class="button button-secondary" type="button">Use token</button>
+      <span id="authStatus" class="auth-status" aria-live="polite"></span>
+      <button id="refreshBtn" class="button button-secondary" type="button">Refresh data</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="stats-grid" aria-label="Memory statistics">
+      <article class="stat-card"><span>Verbatims</span><strong id="verbCount">—</strong></article>
+      <article class="stat-card"><span>Fingerprints</span><strong id="fpCount">—</strong></article>
+      <article class="stat-card"><span>Embeddings</span><strong id="embCount">—</strong></article>
+      <article class="stat-card"><span>Stored tokens</span><strong id="totalTokens">—</strong></article>
+      <article id="soulAgentCard" class="stat-card" style="display:none"><span>SOUL agents</span><strong id="soulAgentCount">—</strong></article>
+    </section>
+
+    <section class="panel search-panel" aria-labelledby="search-heading">
+      <div class="section-heading">
+        <div><p class="eyebrow">RECALL EXPLORER</p><h2 id="search-heading">Search your memory</h2></div>
+        <p>Inspect semantic matches before placing them in an agent context.</p>
+      </div>
+      <div class="search-row">
+        <label class="visually-hidden" for="searchInput">Search memories</label>
+        <input id="searchInput" type="search" placeholder="e.g. Why did we choose PostgreSQL?" autocomplete="off">
+        <button id="searchBtn" class="button" type="button">Search</button>
+      </div>
+      <div class="controls">
+        <label>Minimum score <input id="thresholdSlider" type="range" min="0" max="1" step="0.05" value="0.15"> <output id="thresholdVal">0.15</output></label>
+        <label>Results <input id="topKInput" type="number" min="1" max="100" value="20"></label>
+		<label>Kind <select id="searchKind"><option value="">All kinds</option><option value="identity">Identity</option><option value="user">User</option><option value="project">Project</option><option value="task">Task</option><option value="knowledge">Knowledge</option><option value="history">History</option></select></label>
+      </div>
+      <div id="searchResults" class="results" aria-live="polite"><p class="empty-state">Run a search to inspect relevant memories.</p></div>
+      <aside id="causalPanel" class="causal-panel" aria-live="polite" hidden></aside>
+    </section>
+
+    <section class="panel" aria-labelledby="timeline-heading">
+      <div class="section-heading">
+        <div><p class="eyebrow">HISTORY</p><h2 id="timeline-heading">Memory timeline</h2></div>
+        <p>Browse all stored decisions, facts, preferences and notes.</p>
+      </div>
+      <div class="filters">
+        <label>Wing <select id="timelineWing"><option value="">All wings</option></select></label>
+        <label>Type <select id="timelineType"><option value="">All types</option><option value="decision">Decision</option><option value="fact">Fact</option><option value="preference">Preference</option><option value="session_note">Session note</option><option value="debug_log">Debug log</option></select></label>
+        <label>Page size <select id="timelinePageSize"><option value="10">10</option><option value="20" selected>20</option><option value="50">50</option></select></label>
+        <button id="loadTimelineBtn" class="button button-secondary" type="button">Load timeline</button>
+      </div>
+      <div id="timelineResults" class="timeline" aria-live="polite"><p class="empty-state">Choose filters and load the timeline.</p></div>
+      <nav id="timelinePagination" class="pagination" aria-label="Timeline pages" style="display:none">
+        <button id="prevPageBtn" class="button button-secondary" type="button">Previous</button>
+        <span id="pageIndicator">Page 1</span>
+        <button id="nextPageBtn" class="button button-secondary" type="button">Next</button>
+      </nav>
+    </section>
+
+    <section id="soulSection" class="panel" aria-labelledby="soul-heading" style="display:none">
+      <div class="section-heading"><div><p class="eyebrow">IDENTITY</p><h2 id="soul-heading">SOUL profiles</h2></div></div>
+      <div id="soulAgents" class="soul-agents"></div>
+    </section>
+  </main>
+  <footer>Private local data · served by your MIRA instance</footer>
+  <script src="/app.js" defer></script>
+</body>
+</html>

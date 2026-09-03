@@ -3,12 +3,12 @@ module github.com/benoitpetit/mira
 go 1.25.0
 
 require (
+	github.com/benoitpetit/go-sqlcipher/v4 v4.17.0-mira.2
 	github.com/benoitpetit/soul v0.0.6
 	github.com/coder/hnsw v0.4.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/mark3labs/mcp-go v0.2.0
-	github.com/mutecomm/go-sqlcipher/v4 v4.4.2
 	github.com/nlpodyssey/cybertron v0.1.0
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/prometheus/client_golang v1.23.2
@@ -68,4 +68,6 @@ require (
 	google.golang.org/protobuf v1.36.8 // indirect
 )
 
+// Local replace for development — remove before publishing.
+// Ensure soul is released to a proper module registry first.
 replace github.com/benoitpetit/soul => ../soul

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	mira "github.com/benoitpetit/mira/pkg/mira"
+	"github.com/google/uuid"
 )
 
 func TestDefaultConfig_ReturnsNonNil(t *testing.T) {
@@ -32,7 +32,7 @@ func TestLoadConfig_WithValidFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	content := "storage:\n  path: /tmp/mira-test\n"
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write temp config: %v", err)
 	}
 	cfg, err := mira.LoadConfig(path)
@@ -113,7 +113,7 @@ func TestApplication_Load(t *testing.T) {
 func TestApplication_GetTimeline(t *testing.T) {
 	app := newTestApp(t)
 	ctx := context.Background()
-	app.Store(ctx, "timeline entry", "wing", nil, nil)
+	_, _ = app.Store(ctx, "timeline entry", "wing", nil, nil)
 
 	out, err := app.GetTimeline(ctx, "wing", nil, nil, nil, nil, 10, nil)
 	if err != nil {
@@ -155,7 +155,7 @@ func TestApplication_Archive(t *testing.T) {
 func TestApplication_Clear(t *testing.T) {
 	app := newTestApp(t)
 	ctx := context.Background()
-	app.Store(ctx, "clear me", "wing", nil, nil)
+	_, _ = app.Store(ctx, "clear me", "wing", nil, nil)
 
 	out, err := app.Clear(ctx, "wing", nil)
 	if err != nil {
@@ -190,7 +190,7 @@ func TestApplication_Delete(t *testing.T) {
 func TestApplication_Search(t *testing.T) {
 	app := newTestApp(t)
 	ctx := context.Background()
-	app.Store(ctx, "search test content", "wing", nil, nil)
+	_, _ = app.Store(ctx, "search test content", "wing", nil, nil)
 	time.Sleep(20 * time.Millisecond)
 
 	results, err := app.Search(ctx, "search test", 10, 0.0)
@@ -228,4 +228,3 @@ func TestApplication_SoulApp_Nil(t *testing.T) {
 		t.Error("expected nil SoulApp when soul disabled")
 	}
 }
-

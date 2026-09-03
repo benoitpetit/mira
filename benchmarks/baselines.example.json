@@ -1,0 +1,20 @@
+[
+  {
+    "name": "Mem0",
+    "p95_latency_ms": 0,
+    "extraction_cost_usd_per_interaction": 0,
+    "dataset": "REPLACE with the exact dataset and version",
+    "hardware": "REPLACE with CPU/GPU, RAM, OS and runtime version",
+    "protocol": "REPLACE with the shared session count, token budget and query protocol",
+    "notes": "Replace placeholder values with results measured under the same dataset, hardware, model, and protocol."
+  },
+  {
+    "name": "Zep",
+    "p95_latency_ms": 0,
+    "extraction_cost_usd_per_interaction": 0,
+    "dataset": "REPLACE with the exact dataset and version",
+    "hardware": "REPLACE with CPU/GPU, RAM, OS and runtime version",
+    "protocol": "REPLACE with the shared session count, token budget and query protocol",
+    "notes": "Replace placeholder values with results measured under the same dataset, hardware, model, and protocol."
+  }
+]

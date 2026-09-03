@@ -49,7 +49,7 @@ MIRA follows **Uncle Bob's Clean Architecture** with strict dependency direction
 │   │  • vector: HNSWStore, SQLiteVectorStore, FallbackVectorStore│   │
 │   │  • extraction: NativeExtractor, CybertronEmbedder           │   │
 │   │  • webhook, metrics, logging                                │   │
-│   │  • mcp: MCP controller (stdio / SSE)                        │   │
+│   │  • mcp: MCP controller (stdio / SSE / HTTP)                 │   │
 │   │  • rest: REST HTTP API (optional, :8080)                    │   │
 │   │  ✓ Implements ports                                         │   │
 │   └─────────────────────────────────────────────────────────────┘   │
@@ -85,7 +85,7 @@ mira/
 │   │   ├── metrics/             # Prometheus and simple collectors
 │   │   └── webhook/             # HTTP notifications
 │   ├── interfaces/              # External protocol adapters
-│   │   ├── mcp/                 # MCP controller (stdio / SSE)
+│   │   ├── mcp/                 # MCP controller (stdio / SSE / HTTP)
 │   │   └── rest/                # Optional REST HTTP API (:8080)
 │   │       ├── handler.go       # 13 route handlers (Go 1.22+ method+path ServeMux)
 │   │       ├── middleware.go    # recovery, structured logging, Bearer auth

@@ -36,7 +36,7 @@ jobs:
         run: go mod download
 
       - name: Run tests
-        run: go test -v -race ./...
+        run: go test -tags fts5 -v -race ./...
 
   build:
     name: Build
@@ -72,7 +72,7 @@ jobs:
         run: |
           EXT=""
           if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
-          go build -ldflags="-s -w" -o mira-${GOOS}-${GOARCH}${EXT} ./cmd/mira
+          go build -tags fts5 -ldflags="-s -w" -o mira-${GOOS}-${GOARCH}${EXT} ./cmd/mira
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

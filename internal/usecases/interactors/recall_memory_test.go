@@ -116,19 +116,19 @@ func (m *mockRecallRenderer) RenderFingerprint(candidate *entities.Candidate) st
 // mockRecallMetricsCollector is a mock for the metrics collector
 type mockRecallMetricsCollector struct{}
 
-func (m *mockRecallMetricsCollector) IsEnabled() bool { return false }
-func (m *mockRecallMetricsCollector) RecordStore(duration time.Duration) {}
-func (m *mockRecallMetricsCollector) RecordRecall(duration time.Duration) {}
+func (m *mockRecallMetricsCollector) IsEnabled() bool                                    { return false }
+func (m *mockRecallMetricsCollector) RecordStore(duration time.Duration)                 {}
+func (m *mockRecallMetricsCollector) RecordRecall(duration time.Duration)                {}
 func (m *mockRecallMetricsCollector) RecordSearch(duration time.Duration, usedHNSW bool) {}
-func (m *mockRecallMetricsCollector) RecordEmbed(duration time.Duration) {}
+func (m *mockRecallMetricsCollector) RecordEmbed(duration time.Duration)                 {}
 func (m *mockRecallMetricsCollector) GetReport(ctx context.Context) ports.MetricsReport {
 	return ports.MetricsReport{}
 }
-func (m *mockRecallMetricsCollector) RecordError() {}
-func (m *mockRecallMetricsCollector) RecordStoreResult(factCount int) {}
+func (m *mockRecallMetricsCollector) RecordError()                                             {}
+func (m *mockRecallMetricsCollector) RecordStoreResult(factCount int)                          {}
 func (m *mockRecallMetricsCollector) RecordRecallResult(selectedCount int, budgetUsed float64) {}
-func (m *mockRecallMetricsCollector) UpdateMemoryCount(count int) {}
-func (m *mockRecallMetricsCollector) UpdateVectorCount(count int) {}
+func (m *mockRecallMetricsCollector) UpdateMemoryCount(count int)                              {}
+func (m *mockRecallMetricsCollector) UpdateVectorCount(count int)                              {}
 
 // createTestInteractor creates a RecallMemory interactor with mock dependencies
 func createTestInteractor(candidates []*entities.Candidate) *RecallMemory {
@@ -158,11 +158,11 @@ func TestExecute(t *testing.T) {
 	interactor.earlyPruningThreshold = 0.5 // Lower threshold to include more candidates
 
 	tests := []struct {
-		name           string
-		input          RecallMemoryInput
-		expectResults  bool
-		maxBudgetUsed  float64
-		minMemories    int
+		name          string
+		input         RecallMemoryInput
+		expectResults bool
+		maxBudgetUsed float64
+		minMemories   int
 	}{
 		{
 			name: "successful recall with budget",
@@ -674,10 +674,10 @@ func TestAdaptiveThreshold(t *testing.T) {
 	interactor := createTestInteractor(nil)
 
 	tests := []struct {
-		name     string
-		scores   []float64
-		wantMin  float64
-		wantMax  float64
+		name    string
+		scores  []float64
+		wantMin float64
+		wantMax float64
 	}{
 		{"sparse corpus", []float64{0.9, 0.8}, 0.3, 0.3}, // < 3 scores -> fixed 0.3
 		{"tight cluster", []float64{0.6, 0.62, 0.58, 0.61}, 0.15, 0.75},
@@ -726,9 +726,9 @@ func TestExecute_ExtremeBudgets(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name         string
-		budget       int
-		expectZero   bool
+		name       string
+		budget     int
+		expectZero bool
 	}{
 		{"budget zero uses default", 0, false},
 		{"budget one too small", 1, true},
@@ -1260,5 +1260,35 @@ func TestApplyReranker_TopKLimitsInput(t *testing.T) {
 
 	if receivedCount != 2 {
 		t.Errorf("expected reranker to receive 2 candidates (topK=2), got %d", receivedCount)
+	}
+}
+
+func TestFilterCandidatesValidAt(t *testing.T) {
+	now := time.Date(2026, 4, 15, 12, 0, 0, 0, time.UTC)
+	expired := createTestCandidateWithRelevance("expired", now, 0.9)
+	expiresAt := now.Add(-time.Second)
+	expired.Verbatim.ValidUntil = &expiresAt
+	future := createTestCandidateWithRelevance("future", now, 0.8)
+	startsAt := now.Add(time.Second)
+	future.Verbatim.ValidFrom = &startsAt
+	current := createTestCandidateWithRelevance("current", now, 0.7)
+
+	got := filterCandidatesValidAt([]*entities.Candidate{expired, future, current}, now)
+	if len(got) != 1 || got[0].ID() != current.ID() {
+		t.Fatalf("current candidates = %v, want only %s", got, current.ID())
+	}
+}
+
+func TestFilterCandidatesByKind(t *testing.T) {
+	now := time.Now()
+	user := createTestCandidateWithRelevance("user", now, 0.9)
+	user.Verbatim.Kind = valueobjects.KindUser
+	project := createTestCandidateWithRelevance("project", now, 0.8)
+	project.Verbatim.Kind = valueobjects.KindProject
+
+	kind := valueobjects.KindUser
+	got := filterCandidatesByKind([]*entities.Candidate{user, project}, &kind)
+	if len(got) != 1 || got[0].ID() != user.ID() {
+		t.Fatalf("filtered candidates = %v, want only %s", got, user.ID())
 	}
 }

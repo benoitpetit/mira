@@ -168,7 +168,7 @@ func BenchmarkSimpleEmbedderEncode(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		s.Encode(context.Background(), "benchmark text for embedding generation")
+		_, _ = s.Encode(context.Background(), "benchmark text for embedding generation")
 	}
 }
 

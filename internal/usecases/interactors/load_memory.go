@@ -22,7 +22,7 @@ type LoadMemoryOutput struct {
 
 // LoadMemory implements the load memory use case
 type LoadMemory struct {
-	verbatimRepo   ports.VerbatimRepository
+	verbatimRepo    ports.VerbatimRepository
 	fingerprintRepo ports.FingerprintRepository
 }
 

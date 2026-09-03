@@ -93,17 +93,17 @@ func runGenericMigrations(db *sql.DB, fs embed.FS, dir string, createTableSQL st
 			return fmt.Errorf("failed to apply migration %d: %w", f.version, err)
 		}
 
-	// Insert into schema_migrations. PostgreSQL uses $1, SQLite uses ?
-	// Also set applied_at to current timestamp.
-	insertSQL := "INSERT INTO schema_migrations (version, applied_at) VALUES (?, strftime('%s','now'))"
-	if dir == "migrations_postgres" {
-		insertSQL = "INSERT INTO schema_migrations (version, applied_at) VALUES ($1, CURRENT_TIMESTAMP)"
-	}
+		// Insert into schema_migrations. PostgreSQL uses $1, SQLite uses ?
+		// Also set applied_at to current timestamp.
+		insertSQL := "INSERT INTO schema_migrations (version, applied_at) VALUES (?, strftime('%s','now'))"
+		if dir == "migrations_postgres" {
+			insertSQL = "INSERT INTO schema_migrations (version, applied_at) VALUES ($1, CURRENT_TIMESTAMP)"
+		}
 
-	if _, err := tx.Exec(insertSQL, f.version); err != nil {
-		_ = tx.Rollback()
-		return fmt.Errorf("failed to record migration %d: %w", f.version, err)
-	}
+		if _, err := tx.Exec(insertSQL, f.version); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("failed to record migration %d: %w", f.version, err)
+		}
 
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("failed to commit migration %d: %w", f.version, err)

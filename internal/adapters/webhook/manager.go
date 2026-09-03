@@ -192,7 +192,7 @@ func (m *SimpleWebhookManager) Trigger(ctx context.Context, eventType string, pa
 				// Event queued successfully
 			default:
 				// Queue is full, persist to DLQ
-				if err := m.saveToDLQ(event); err != nil {
+				if err := m.saveToDLQ(&event); err != nil {
 					log.Printf("[Webhook] Failed to save event to DLQ: %v", err)
 				}
 			}
@@ -229,7 +229,7 @@ func (m *SimpleWebhookManager) worker() {
 	for {
 		select {
 		case event := <-m.queue:
-			m.sendWebhook(event)
+			m.sendWebhook(&event)
 		case <-m.stopChan:
 			return
 		}
@@ -237,7 +237,7 @@ func (m *SimpleWebhookManager) worker() {
 }
 
 // sendWebhook sends a webhook event to the endpoint using circuit breaker
-func (m *SimpleWebhookManager) sendWebhook(event ports.WebhookEvent) {
+func (m *SimpleWebhookManager) sendWebhook(event *ports.WebhookEvent) {
 	// Find the endpoint for this event
 	m.mu.RLock()
 	endpoint, ok := m.endpoints[event.EndpointID]
@@ -268,7 +268,7 @@ func (m *SimpleWebhookManager) sendWebhook(event ports.WebhookEvent) {
 }
 
 // doSendWebhook performs the actual HTTP request
-func (m *SimpleWebhookManager) doSendWebhook(endpoint *ports.WebhookEndpoint, event ports.WebhookEvent) error {
+func (m *SimpleWebhookManager) doSendWebhook(endpoint *ports.WebhookEndpoint, event *ports.WebhookEvent) error {
 	payload, err := json.Marshal(map[string]interface{}{
 		"id":        event.ID,
 		"type":      event.Type,
@@ -320,14 +320,14 @@ func computeHMAC(payload []byte, secret string) string {
 }
 
 // verifyHMAC verifies an HMAC signature
-func verifyHMAC(payload []byte, signature string, secret string) bool {
+func verifyHMAC(payload []byte, signature, secret string) bool {
 	expectedMAC := computeHMAC(payload, secret)
 	return hmac.Equal([]byte(signature), []byte(expectedMAC))
 }
 
 // VerifyWebhookSignature verifies a webhook signature
 // Useful for tests or if MIRA receives webhooks
-func (m *SimpleWebhookManager) VerifyWebhookSignature(payload []byte, signatureHeader string, secret string) bool {
+func (m *SimpleWebhookManager) VerifyWebhookSignature(payload []byte, signatureHeader, secret string) bool {
 	if signatureHeader == "" || secret == "" {
 		return false
 	}
@@ -342,7 +342,7 @@ func (m *SimpleWebhookManager) VerifyWebhookSignature(payload []byte, signatureH
 }
 
 // saveToDLQ persists a failed event to the dead-letter queue
-func (m *SimpleWebhookManager) saveToDLQ(event ports.WebhookEvent) error {
+func (m *SimpleWebhookManager) saveToDLQ(event *ports.WebhookEvent) error {
 	if m.db == nil {
 		return nil
 	}
@@ -369,7 +369,9 @@ func (m *SimpleWebhookManager) dlqRetryLoop() {
 	for {
 		select {
 		case <-ticker.C:
-			m.RetryDLQ(context.Background())
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			m.RetryDLQ(ctx)
+			cancel()
 		case <-m.stopChan:
 			return
 		}

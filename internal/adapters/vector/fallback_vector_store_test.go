@@ -23,10 +23,14 @@ func (m *mockPrimaryStore) SearchLexical(ctx context.Context, query string, limi
 	return nil, m.searchLexicalErr
 }
 
-func (m *mockPrimaryStore) AddCandidate(ctx context.Context, candidate *entities.Candidate) error { return nil }
-func (m *mockPrimaryStore) Delete(ctx context.Context, id uuid.UUID) error                       { return nil }
-func (m *mockPrimaryStore) ClearAll(ctx context.Context) error                                    { return nil }
-func (m *mockPrimaryStore) ClearByRoom(ctx context.Context, wing string, room *string) error     { return nil }
+func (m *mockPrimaryStore) AddCandidate(ctx context.Context, candidate *entities.Candidate) error {
+	return nil
+}
+func (m *mockPrimaryStore) Delete(ctx context.Context, id uuid.UUID) error { return nil }
+func (m *mockPrimaryStore) ClearAll(ctx context.Context) error             { return nil }
+func (m *mockPrimaryStore) ClearByRoom(ctx context.Context, wing string, room *string) error {
+	return nil
+}
 
 type mockFallbackStore struct {
 	candidates []*entities.Candidate
@@ -40,10 +44,14 @@ func (m *mockFallbackStore) SearchLexical(ctx context.Context, query string, lim
 	return m.candidates, nil
 }
 
-func (m *mockFallbackStore) AddCandidate(ctx context.Context, candidate *entities.Candidate) error { return nil }
-func (m *mockFallbackStore) Delete(ctx context.Context, id uuid.UUID) error                       { return nil }
-func (m *mockFallbackStore) ClearAll(ctx context.Context) error                                    { return nil }
-func (m *mockFallbackStore) ClearByRoom(ctx context.Context, wing string, room *string) error     { return nil }
+func (m *mockFallbackStore) AddCandidate(ctx context.Context, candidate *entities.Candidate) error {
+	return nil
+}
+func (m *mockFallbackStore) Delete(ctx context.Context, id uuid.UUID) error { return nil }
+func (m *mockFallbackStore) ClearAll(ctx context.Context) error             { return nil }
+func (m *mockFallbackStore) ClearByRoom(ctx context.Context, wing string, room *string) error {
+	return nil
+}
 
 func TestFallbackVectorStore_Search_FallbackOnNotReady(t *testing.T) {
 	v := entities.NewVerbatim("test", "w", nil)

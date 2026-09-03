@@ -11,6 +11,15 @@ import (
 	"github.com/benoitpetit/mira/internal/adapters/vector"
 )
 
+const (
+	statusUnhealthy    = "unhealthy"
+	statusHealthy      = "healthy"
+	statusDegraded     = "degraded"
+	statusFail         = "fail"
+	statusNotInit      = "not_initialized"
+	typeHNSW           = "hnsw"
+)
+
 // HealthStatus represents the health status of the system
 type HealthStatus struct {
 	Status    string                 `json:"status"` // "healthy", "degraded", "unhealthy"
@@ -53,22 +62,22 @@ func (h *HealthChecker) Check(ctx context.Context) HealthStatus {
 	// Check database
 	dbCheck := h.checkDatabase(ctx)
 	status.Checks["database"] = dbCheck
-	if dbCheck.Status == "fail" {
-		status.Status = "unhealthy"
+	if dbCheck.Status == statusFail {
+		status.Status = statusUnhealthy
 	}
 
 	// Check vector store
 	vectorCheck := h.checkVectorStore()
 	status.Checks["vector_store"] = vectorCheck
-	if vectorCheck.Status == "fail" && status.Status == "healthy" {
-		status.Status = "degraded"
+	if vectorCheck.Status == statusFail && status.Status == statusHealthy {
+		status.Status = statusDegraded
 	}
 
 	// Check embedder
 	embedderCheck := h.checkEmbedder(ctx)
 	status.Checks["embedder"] = embedderCheck
-	if embedderCheck.Status == "fail" && status.Status == "healthy" {
-		status.Status = "degraded"
+	if embedderCheck.Status == statusFail && status.Status == statusHealthy {
+		status.Status = statusDegraded
 	}
 
 	return status
@@ -122,13 +131,13 @@ func (h *HealthChecker) Handler() http.Handler {
 
 		// Determine HTTP code
 		code := http.StatusOK
-		if status.Status == "unhealthy" {
+		if status.Status == statusUnhealthy {
 			code = http.StatusServiceUnavailable
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(code)
-		json.NewEncoder(w).Encode(status)
+		_ = json.NewEncoder(w).Encode(status)
 	})
 }
 
@@ -137,7 +146,7 @@ func (h *HealthChecker) LivenessHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"status": "alive",
 		})
 	})
@@ -150,16 +159,16 @@ func (h *HealthChecker) ReadinessHandler() http.Handler {
 
 		// For readiness, we consider both "healthy" and "degraded" as ready
 		code := http.StatusOK
-		if status.Status == "unhealthy" {
+		if status.Status == statusUnhealthy {
 			code = http.StatusServiceUnavailable
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(code)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":   status.Status,
-			"ready":    status.Status != "unhealthy",
-			"checks":   status.Checks,
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": status.Status,
+			"ready":  status.Status != statusUnhealthy,
+			"checks": status.Checks,
 		})
 	})
 }
@@ -173,7 +182,12 @@ func (a *Application) RunWithHealthCheck(addr string) error {
 	mux.Handle("/health/live", healthChecker.LivenessHandler())
 	mux.Handle("/health/ready", healthChecker.ReadinessHandler())
 
-	return http.ListenAndServe(addr, mux)
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	return srv.ListenAndServe()
 }
 
 // Health returns the current health status
@@ -197,13 +211,13 @@ func (a *Application) GetVectorStoreStats() map[string]interface{} {
 	}
 
 	if a.vectorStore == nil {
-		stats["status"] = "not_initialized"
+		stats["status"] = statusNotInit
 		return stats
 	}
 
 	// Check if it's an HNSWStore
 	if a.hnswIndex != nil {
-		stats["type"] = "hnsw"
+		stats["type"] = typeHNSW
 		stats["ready"] = a.hnswIndex.IsReady()
 		stats["count"] = a.hnswIndex.Stats()
 	} else {

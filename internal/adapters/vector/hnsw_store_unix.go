@@ -92,7 +92,7 @@ func NewHNSWStore(store ports.EmbeddingSource, dimension int, indexPath string, 
 
 	// Create index directory if needed
 	if indexPath != "" {
-		if err := os.MkdirAll(filepath.Dir(indexPath), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(indexPath), 0o755); err != nil {
 			return nil, fmt.Errorf("failed to create index directory: %w", err)
 		}
 	}
@@ -418,7 +418,7 @@ func (h *HNSWStore) Save() error {
 			continue // Node not found in graph
 		}
 
-	// Copy embedding
+		// Copy embedding
 		embedding := make([]float32, len(n.Embedding()))
 		copy(embedding, n.Embedding())
 
@@ -460,7 +460,7 @@ func (h *HNSWStore) Save() error {
 
 	// Atomic save: write to .tmp then rename
 	tmpPath := h.indexPath + ".tmp"
-	if err := os.WriteFile(tmpPath, payload, 0600); err != nil {
+	if err := os.WriteFile(tmpPath, payload, 0o600); err != nil {
 		return fmt.Errorf("failed to write temp index file: %w", err)
 	}
 
@@ -477,7 +477,7 @@ func (h *HNSWStore) Save() error {
 	}
 	hash := sha256.Sum256(written)
 	checksumPath := h.indexPath + ".sha256"
-	if err := os.WriteFile(checksumPath, []byte(hex.EncodeToString(hash[:])), 0644); err != nil {
+	if err := os.WriteFile(checksumPath, []byte(hex.EncodeToString(hash[:])), 0o644); err != nil {
 		return fmt.Errorf("failed to write checksum file: %w", err)
 	}
 

@@ -62,7 +62,7 @@ func (m *mockUpdateVectorStore) AddCandidate(_ context.Context, _ *entities.Cand
 	return nil
 }
 func (m *mockUpdateVectorStore) Delete(_ context.Context, _ uuid.UUID) error { return nil }
-func (m *mockUpdateVectorStore) ClearAll(_ context.Context) error             { return nil }
+func (m *mockUpdateVectorStore) ClearAll(_ context.Context) error            { return nil }
 func (m *mockUpdateVectorStore) ClearByRoom(_ context.Context, _ string, _ *string) error {
 	return nil
 }
@@ -86,15 +86,15 @@ func insertTestVerbatimForUpdate(t *testing.T, repo *storage.SQLiteRepository, c
 		t.Fatalf("begin tx: %v", err)
 	}
 	if err := repo.StoreVerbatimTx(ctx, tx, v); err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		t.Fatalf("store verbatim: %v", err)
 	}
 	if err := repo.StoreFingerprintTx(ctx, tx, fp); err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		t.Fatalf("store fingerprint: %v", err)
 	}
 	if err := repo.StoreEmbeddingTx(ctx, tx, emb); err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		t.Fatalf("store embedding: %v", err)
 	}
 	if err := tx.Commit(); err != nil {

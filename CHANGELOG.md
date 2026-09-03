@@ -5,6 +5,32 @@ All notable changes to MIRA will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Stateless MCP HTTP transport**: `transport: http` serves JSON-RPC requests
+  at `POST /mcp`, alongside the existing stdio and SSE transports.
+- **Operational endpoints**: Prometheus metrics and `/health`, `/health/live`,
+  and `/health/ready` are served from the application-owned metrics server.
+
+### Changed
+- **SQLCipher runtime**: Mira now uses the maintained
+  `github.com/benoitpetit/go-sqlcipher/v4` fork at `v4.17.0-mira.2`, bundling
+  SQLCipher 4.17.0, SQLite 3.53.3, OpenSSL, and optional FTS5 support.
+- **Dashboard authentication**: The dashboard shell remains accessible when
+  REST authentication is enabled; API requests use a session-scoped Bearer
+  token supplied by the user.
+
+### Fixed
+- **Encrypted SQLite creation**: A configured SQLCipher key is applied before
+  WAL and other connection options, preventing a new database from being
+  initialized in plaintext. Passphrases with quotes are covered by regression
+  tests.
+- **Storage errors**: Missing memories and fingerprints now map to typed
+  not-found errors, so REST clients receive HTTP 404 responses.
+- **Embedding cache recovery**: Incomplete Cybertron model downloads are
+  discarded and retried rather than becoming a permanent fallback state.
+
 ## [0.4.7] - 2026-04-30
 
 ### Added

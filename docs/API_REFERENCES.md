@@ -25,8 +25,9 @@ Practical examples for using MIRA's MCP tools and optional REST HTTP API.
 
 | Tool | Description | Arguments |
 |------|-------------|-----------|
-| `mira_store` | Store a memory with T0/T1/T2 extraction | `content` (required), `wing` (required), `room` (optional), `type` (optional) |
-| `mira_recall` | Retrieve optimal context with budget via multi-stage pipeline (expansion, hybrid search, clustering, reranker). Supports multi-turn session injection | `query` (required), `budget` (optional), `wing` (optional), `room` (optional), `fallback_wings` (optional), `session_id` (optional) |
+| `mira_store` | Store a memory with T0/T1/T2 extraction | `content` (required), `wing` (required), `room`, `type`, `kind`, `valid_from`, `valid_until` (optional RFC3339 bounds) |
+| `mira_ingest` | Extract history memories from structured conversation messages | `messages` and `wing` (required), `room`, `include_assistant`, `min_chars`, `dry_run` (optional) |
+| `mira_recall` | Retrieve optimal context with budget via multi-stage pipeline (expansion, hybrid search, clustering, reranker). Supports multi-turn session injection | `query` (required), `budget` (optional), `wing` (optional), `room` (optional), `kind` (optional), `fallback_wings` (optional), `include_global` (optional), `session_id` (optional) |
 | `mira_load` | Load full verbatim by ID | `id` (required) |
 | `mira_causal_chain` | Trace causal chain | `id` (required), `max_depth` (optional), `include_consequences` (optional) |
 | `mira_timeline` | Chronological reconstruction | `wing` (required), `room` (optional), `since` (optional), `until` (optional), `type` (optional) |
@@ -34,6 +35,10 @@ Practical examples for using MIRA's MCP tools and optional REST HTTP API.
 | `mira_archive` | Archive old memories | none |
 | `mira_health` | Quick health check — returns JSON `status`, `db_connected`, `memory_count` | none |
 | `mira_clear_memory` | Permanently delete all or room-scoped memories | `mode` (`global` or `room`), `wing` (required for room), `room` (optional for room) |
+| `mira_compress` | Create rule-based summaries for eligible session notes | `wing`, `min_tokens`, `dry_run` (optional) |
+| `mira_update` | Replace a memory's content and regenerate its derived data | `id`, `content` (required) |
+| `mira_search` | Return raw semantic matches without CBA allocation | `query` (required), `top_k`, `threshold` (optional) |
+| `mira_consolidate` | Merge redundant session notes into a synthesized memory | `wing` (required), `similarity_threshold` (optional) |
 
 **Note on `room`**: If omitted, MIRA automatically assigns a standard room based on the detected memory type:
 - `decision` → `decisions`
@@ -156,6 +161,7 @@ Model: a1b2c3d4
 - `wing` (optional): Filter by wing/namespace
 - `room` (optional): Filter by room/sub-category
 - `fallback_wings` (optional): Comma-separated fallback wings to search if primary wing yields no results
+- `include_global` (optional): Search the shared `general` wing if the primary wing yields no results
 
 **Internal Pipeline:**
 1. **Query Expansion** — generates semantic variants and averages their embeddings
@@ -551,7 +557,7 @@ mira_recall(query="How should I handle payment retries?", wing="payment-service"
 ```
 MIRA System Status
 ═══════════════════════════════════════
-Version: 0.4.7
+Version: 0.5.0
 Uptime: 2h15m30s
 
 Storage:
@@ -624,6 +630,7 @@ The `GET /openapi.json` endpoint is always public — no token required.
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/api/v1/memories` | Store a memory with T0/T1/T2 extraction |
+| `POST` | `/api/v1/memories/ingest` | Extract history memories from structured conversation messages |
 | `GET` | `/api/v1/memories/{id}` | Load full verbatim by UUID |
 | `PUT` | `/api/v1/memories/{id}` | Update memory content |
 | `DELETE` | `/api/v1/memories/{id}` | Delete a single memory |
@@ -661,6 +668,8 @@ Store a memory with automatic T0/T1/T2 extraction.
 | `room` | no | Sub-category within wing |
 | `type` | no | `decision`, `fact`, `preference`, `session_note`, `debug_log` (auto-detected if omitted) |
 | `metrics` | no | Arbitrary key-value map attached to the fingerprint |
+| `valid_from` | no | RFC3339 instant from which the fact is recalled |
+| `valid_until` | no | RFC3339 instant after which the fact is excluded from recall |
 
 **Response: 201 Created**
 
@@ -686,6 +695,35 @@ curl -s -X POST http://localhost:8080/api/v1/memories \
     "room": "architecture",
     "type": "decision"
   }'
+```
+
+---
+
+### POST /api/v1/memories/ingest — Conversation ingestion
+
+Select substantive conversation messages and store them through the normal
+T0/T1/T2 pipeline as `history` memories. User messages are selected by default;
+set `include_assistant` to also store assistant replies. `dry_run` validates and
+counts the selection without writing any memory.
+
+**Request body:**
+
+```json
+{
+  "wing": "backend",
+  "messages": [
+    {"role": "user", "content": "We chose PostgreSQL for v2 because JSONB is required."}
+  ],
+  "include_assistant": false,
+  "min_chars": 20,
+  "dry_run": false
+}
+```
+
+**Response: 201 Created**
+
+```json
+{"selected": 1, "stored": 1, "failed": 0, "dry_run": false}
 ```
 
 ---
@@ -752,6 +790,7 @@ Retrieve an optimally budget-allocated context for a query using the full CBA pi
   "wing": "backend",
   "room": "architecture",
   "fallback_wings": ["platform-team", "dba-team"],
+  "include_global": true,
   "session_id": "session-abc123"
 }
 ```
@@ -763,6 +802,7 @@ Retrieve an optimally budget-allocated context for a query using the full CBA pi
 | `wing` | no | Filter by wing |
 | `room` | no | Filter by room |
 | `fallback_wings` | no | Searched if primary wing returns no results |
+| `include_global` | no | Adds the shared `general` wing as a fallback |
 | `session_id` | no | Multi-turn session ID for cross-turn memory boosting |
 
 **Response: 200 OK**
@@ -972,7 +1012,7 @@ Returns system statistics identical to the `mira_status` MCP tool.
 
 ```json
 {
-  "version": "0.4.7",
+  "version": "0.5.0",
   "uptime": "2h15m30s",
   "stats": {
     "verbatim_count": 1250,
@@ -1040,7 +1080,7 @@ curl http://localhost:9090/health
 {
   "status": "healthy",
   "timestamp": "2026-04-10T14:30:00Z",
-  "version": "0.4.7",
+  "version": "0.5.0",
   "checks": {
     "database": {"status": "pass", "message": "connected"},
     "vector_store": {"status": "pass", "message": "HNSW ready"},
@@ -1198,4 +1238,4 @@ recall:
 | `reranker.enabled` | `false` | Enable heuristic lexical reranking |
 
 *Last updated: 2026-04-30*
-*Version: 0.4.7*
+*Version: 0.5.0*

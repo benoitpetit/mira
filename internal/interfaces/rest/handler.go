@@ -159,6 +159,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/memories/recall", h.handleRecall)
 	mux.HandleFunc("POST /api/v1/memories/search", h.handleSearch)
 	mux.HandleFunc("POST /api/v1/memories/consolidate", h.handleConsolidate)
+	mux.HandleFunc("POST /api/v1/memories/ingest", h.handleIngest)
 
 	// CRUD
 	mux.HandleFunc("POST /api/v1/memories", h.handleStore)
@@ -206,11 +207,14 @@ func parseUUID(s string) (uuid.UUID, error) {
 // POST /api/v1/memories
 func (h *Handler) handleStore(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Content string         `json:"content"`
-		Wing    string         `json:"wing"`
-		Room    *string        `json:"room"`
-		Type    *string        `json:"type"`
-		Metrics map[string]any `json:"metrics"`
+		Content    string         `json:"content"`
+		Wing       string         `json:"wing"`
+		Room       *string        `json:"room"`
+		Type       *string        `json:"type"`
+		Kind       *string        `json:"kind"`
+		Metrics    map[string]any `json:"metrics"`
+		ValidFrom  *time.Time     `json:"valid_from"`
+		ValidUntil *time.Time     `json:"valid_until"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
@@ -218,14 +222,20 @@ func (h *Handler) handleStore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	input := interactors.StoreMemoryInput{
-		Content: body.Content,
-		Wing:    body.Wing,
-		Room:    body.Room,
-		Metrics: body.Metrics,
+		Content:    body.Content,
+		Wing:       body.Wing,
+		Room:       body.Room,
+		Metrics:    body.Metrics,
+		ValidFrom:  body.ValidFrom,
+		ValidUntil: body.ValidUntil,
 	}
 	if body.Type != nil {
 		mt := valueobjects.MemoryType(*body.Type)
 		input.Type = &mt
+	}
+	if body.Kind != nil {
+		kind := valueobjects.MemoryKind(*body.Kind)
+		input.Kind = &kind
 	}
 
 	if err := input.Validate(); err != nil {
@@ -239,6 +249,56 @@ func (h *Handler) handleStore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, out)
+}
+
+// POST /api/v1/memories/ingest
+func (h *Handler) handleIngest(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Messages         []interactors.ConversationMessage `json:"messages"`
+		Wing             string                            `json:"wing"`
+		Room             *string                           `json:"room"`
+		IncludeAssistant bool                              `json:"include_assistant"`
+		MinChars         int                               `json:"min_chars"`
+		DryRun           bool                              `json:"dry_run"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	if _, err := interactors.ValidateConversationMessages(body.Messages); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	if body.MinChars == 0 {
+		body.MinChars = 20
+	}
+	inputs, err := interactors.ConversationMemoryInputs(body.Messages, body.Wing, body.Room, body.IncludeAssistant, body.MinChars)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	if len(inputs) == 0 {
+		writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("no messages matched the selected roles and min_chars=%d", body.MinChars))
+		return
+	}
+	response := struct {
+		Selected int  `json:"selected"`
+		Stored   int  `json:"stored"`
+		Failed   int  `json:"failed"`
+		DryRun   bool `json:"dry_run"`
+	}{Selected: len(inputs), DryRun: body.DryRun}
+	if body.DryRun {
+		writeJSON(w, http.StatusOK, response)
+		return
+	}
+	for _, input := range inputs {
+		if _, err := h.store.Execute(r.Context(), input); err != nil {
+			response.Failed++
+			continue
+		}
+		response.Stored++
+	}
+	writeJSON(w, http.StatusCreated, response)
 }
 
 // GET /api/v1/memories/{id}
@@ -322,7 +382,9 @@ func (h *Handler) handleRecall(w http.ResponseWriter, r *http.Request) {
 		Budget        int      `json:"budget"`
 		Wing          *string  `json:"wing"`
 		Room          *string  `json:"room"`
+		Kind          *string  `json:"kind"`
 		FallbackWings []string `json:"fallback_wings"`
+		IncludeGlobal bool     `json:"include_global"`
 		SessionID     *string  `json:"session_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -333,13 +395,28 @@ func (h *Handler) handleRecall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "query is required")
 		return
 	}
+	var memoryKind *valueobjects.MemoryKind
+	if body.Kind != nil {
+		kind := valueobjects.MemoryKind(*body.Kind)
+		if !kind.IsValid() {
+			writeError(w, http.StatusUnprocessableEntity, "invalid kind: "+*body.Kind)
+			return
+		}
+		memoryKind = &kind
+	}
+
+	fallbackWings := body.FallbackWings
+	if body.IncludeGlobal && (body.Wing == nil || *body.Wing != "general") {
+		fallbackWings = append(fallbackWings, "general")
+	}
 
 	out, err := h.recall.Execute(r.Context(), interactors.RecallMemoryInput{
 		Query:         body.Query,
 		Budget:        body.Budget,
 		Wing:          body.Wing,
 		Room:          body.Room,
-		FallbackWings: body.FallbackWings,
+		Kind:          memoryKind,
+		FallbackWings: fallbackWings,
 		SessionID:     body.SessionID,
 	})
 	if err != nil {
@@ -355,6 +432,7 @@ func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
 		Query     string  `json:"query"`
 		TopK      int     `json:"top_k"`
 		Threshold float64 `json:"threshold"`
+		Kind      *string `json:"kind"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
@@ -364,11 +442,21 @@ func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "query is required")
 		return
 	}
+	var memoryKind *valueobjects.MemoryKind
+	if body.Kind != nil {
+		kind := valueobjects.MemoryKind(*body.Kind)
+		if !kind.IsValid() {
+			writeError(w, http.StatusUnprocessableEntity, "invalid kind: "+*body.Kind)
+			return
+		}
+		memoryKind = &kind
+	}
 
 	results, err := h.search.Execute(r.Context(), interactors.SearchSemanticInput{
 		Query:     body.Query,
 		TopK:      body.TopK,
 		Threshold: body.Threshold,
+		Kind:      memoryKind,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

@@ -102,7 +102,7 @@ func TestRetry_ContextCancellation(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	// Cancel context immediately
 	cancel()
 
@@ -167,7 +167,7 @@ func TestRetry_ExponentialBackoff(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	Retry(ctx, config, fn)
+	_ = Retry(ctx, config, fn)
 
 	// Calculate delays between attempts
 	for i := 1; i < len(startTimes); i++ {
@@ -184,7 +184,7 @@ func TestRetry_ExponentialBackoff(t *testing.T) {
 	for i, delay := range delays {
 		expectedDelay := time.Duration(float64(config.InitialDelay) * math.Pow(config.Multiplier, float64(i)))
 		tolerance := time.Duration(float64(expectedDelay) * 0.3)
-		
+
 		if delay < expectedDelay-tolerance || delay > expectedDelay+tolerance {
 			t.Errorf("delay %d: expected ~%v, got %v (tolerance: ±%v)", i+1, expectedDelay, delay, tolerance)
 		}

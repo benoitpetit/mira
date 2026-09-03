@@ -8,7 +8,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-s -w" -o /mira ./cmd/mira
+RUN CGO_ENABLED=1 GOOS=linux go build -tags fts5 -ldflags="-s -w" -o /mira ./cmd/mira
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
 FROM alpine:3.20

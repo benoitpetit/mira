@@ -27,11 +27,11 @@ func ServeSpec(w http.ResponseWriter, _ *http.Request) {
 // ── OpenAPI types ─────────────────────────────────────────────────────────────
 
 type oaDocument struct {
-	OpenAPI    string                 `json:"openapi"`
-	Info       oaInfo                 `json:"info"`
-	Servers    []oaServer             `json:"servers"`
-	Paths      map[string]oaPathItem  `json:"paths"`
-	Components oaComponents           `json:"components"`
+	OpenAPI    string                `json:"openapi"`
+	Info       oaInfo                `json:"info"`
+	Servers    []oaServer            `json:"servers"`
+	Paths      map[string]oaPathItem `json:"paths"`
+	Components oaComponents          `json:"components"`
 }
 
 type oaInfo struct {
@@ -53,11 +53,11 @@ type oaPathItem struct {
 }
 
 type oaOperation struct {
-	Summary     string               `json:"summary"`
-	OperationID string               `json:"operationId"`
-	Tags        []string             `json:"tags,omitempty"`
-	Parameters  []oaParameter        `json:"parameters,omitempty"`
-	RequestBody *oaRequestBody       `json:"requestBody,omitempty"`
+	Summary     string                `json:"summary"`
+	OperationID string                `json:"operationId"`
+	Tags        []string              `json:"tags,omitempty"`
+	Parameters  []oaParameter         `json:"parameters,omitempty"`
+	RequestBody *oaRequestBody        `json:"requestBody,omitempty"`
 	Responses   map[string]oaResponse `json:"responses"`
 }
 
@@ -139,6 +139,20 @@ func buildSpec() oaDocument {
 			{URL: "/", Description: "Current host"},
 		},
 		Paths: map[string]oaPathItem{
+			"/api/v1/memories/ingest": {
+				Post: &oaOperation{
+					Summary:     "Extract history memories from a conversation",
+					OperationID: "ingestConversation",
+					Tags:        tags("memories"),
+					RequestBody: jsonBody("ConversationIngestRequest"),
+					Responses: map[string]oaResponse{
+						"200": jsonResp("Dry-run preview", "ConversationIngestResponse"),
+						"201": jsonResp("Conversation ingested", "ConversationIngestResponse"),
+						"400": errResp("Bad request"),
+						"422": errResp("Validation error"),
+					},
+				},
+			},
 			"/api/v1/memories": {
 				Post: &oaOperation{
 					Summary:     "Store a memory",
@@ -322,6 +336,7 @@ func buildSchemas() map[string]oaSchema {
 	str := func() oaSchema { return oaSchema{Type: "string"} }
 	integer := func() oaSchema { return oaSchema{Type: "integer"} }
 	number := func() oaSchema { return oaSchema{Type: "number"} }
+	boolean := func() oaSchema { return oaSchema{Type: "boolean"} }
 	uuid := func() oaSchema { return oaSchema{Type: "string", Format: "uuid"} }
 	arr := func(item oaSchema) oaSchema { return oaSchema{Type: "array", Items: &item} }
 
@@ -340,15 +355,21 @@ func buildSchemas() map[string]oaSchema {
 				"room":        str(),
 				"token_count": integer(),
 				"created_at":  str(),
+				"valid_from":  str(),
+				"valid_until": str(),
+				"kind":        str(),
 			},
 		},
 		"StoreMemoryRequest": {
 			Type: "object",
 			Properties: map[string]oaSchema{
-				"content": str(),
-				"wing":    str(),
-				"room":    str(),
-				"type":    str(),
+				"content":     str(),
+				"wing":        str(),
+				"room":        str(),
+				"type":        str(),
+				"kind":        str(),
+				"valid_from":  str(),
+				"valid_until": str(),
 			},
 			Required: []string{"content", "wing"},
 		},
@@ -357,9 +378,39 @@ func buildSchemas() map[string]oaSchema {
 			Properties: map[string]oaSchema{
 				"fingerprint_id": str(),
 				"type":           str(),
+				"kind":           str(),
 				"fact_count":     integer(),
 				"token_count":    integer(),
 				"model_hash":     str(),
+			},
+		},
+		"ConversationMessage": {
+			Type: "object",
+			Properties: map[string]oaSchema{
+				"role":    str(),
+				"content": str(),
+			},
+			Required: []string{"role", "content"},
+		},
+		"ConversationIngestRequest": {
+			Type: "object",
+			Properties: map[string]oaSchema{
+				"messages":          arr(ref("ConversationMessage")),
+				"wing":              str(),
+				"room":              str(),
+				"include_assistant": boolean(),
+				"min_chars":         integer(),
+				"dry_run":           boolean(),
+			},
+			Required: []string{"messages", "wing"},
+		},
+		"ConversationIngestResponse": {
+			Type: "object",
+			Properties: map[string]oaSchema{
+				"selected": integer(),
+				"stored":   integer(),
+				"failed":   integer(),
+				"dry_run":  boolean(),
 			},
 		},
 		"UpdateMemoryRequest": {
@@ -374,7 +425,9 @@ func buildSchemas() map[string]oaSchema {
 				"budget":         integer(),
 				"wing":           str(),
 				"room":           str(),
+				"kind":           str(),
 				"fallback_wings": arr(str()),
+				"include_global": boolean(),
 				"session_id":     str(),
 			},
 			Required: []string{"query"},
@@ -404,6 +457,7 @@ func buildSchemas() map[string]oaSchema {
 				"query":     str(),
 				"top_k":     integer(),
 				"threshold": number(),
+				"kind":      str(),
 			},
 			Required: []string{"query"},
 		},
@@ -414,12 +468,14 @@ func buildSchemas() map[string]oaSchema {
 		"SearchResult": {
 			Type: "object",
 			Properties: map[string]oaSchema{
-				"id":         uuid(),
-				"content":    str(),
-				"similarity": number(),
-				"type":       str(),
-				"wing":       str(),
-				"room":       str(),
+				"id":             uuid(),
+				"fingerprint_id": uuid(),
+				"content":        str(),
+				"similarity":     number(),
+				"type":           str(),
+				"kind":           str(),
+				"wing":           str(),
+				"room":           str(),
 			},
 		},
 		"ConsolidateRequest": {

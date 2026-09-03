@@ -204,8 +204,8 @@ func TestNegationDetection(t *testing.T) {
 	e := newTestExtractor(t)
 
 	tests := []struct {
-		content  string
-		negated  bool
+		content string
+		negated bool
 	}{
 		{"I do not like this approach.", true},
 		{"We decided to use Kubernetes.", false},
@@ -492,7 +492,7 @@ func TestValidateCrossT0T1_TokenRatioExceeded(t *testing.T) {
 	alerts := e.validateCrossT0T1(v, fp)
 	found := false
 	for _, a := range alerts {
-		if len(a) > 0 && a[:2] == "T1" {
+		if a != "" && a[:2] == "T1" {
 			found = true
 		}
 	}

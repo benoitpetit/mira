@@ -12,10 +12,10 @@
 
   [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.4.7-blue?style=flat-square)]()
+  [![Version](https://img.shields.io/badge/Version-0.5.0-blue?style=flat-square)]()
   [![Tests](https://img.shields.io/badge/Tests-~70%25-yellow?style=flat-square)]()
 
-  [API Reference](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [Français](README_FR.md) • [SOUL Extension](https://github.com/benoitpetit/soul)
+  [Documentation](docs/INDEX.md) • [API Reference](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [Français](README_FR.md) • [SOUL Extension](https://github.com/benoitpetit/soul)
 
 </div>
 
@@ -393,7 +393,8 @@ This reveals not just **what** was decided, but **why** — and what it **led to
 ### Prerequisites
 
 - Go 1.25+ (if building from source)
-- SQLite3 (included)
+- CGO C toolchain and OpenSSL development headers (`libssl-dev` on Debian/Ubuntu)
+- SQLite is bundled through SQLCipher; no system SQLite package is required
 - ~100 MB disk space for the embedding model
 
 ### From Source
@@ -401,7 +402,7 @@ This reveals not just **what** was decided, but **why** — and what it **led to
 ```bash
 git clone https://github.com/benoitpetit/mira.git
 cd mira
-go build -o mira ./cmd/mira
+go build -tags fts5 -o mira ./cmd/mira
 ./mira --version
 ```
 
@@ -433,15 +434,32 @@ unzip mira-windows-amd64.zip
 ### 1. Initialize
 
 ```bash
-cp config.example.yaml config.yaml
-nano config.yaml
+# Creates .mira/config.yaml and a project-local data directory
+./mira init
+
+# Verify the local database, embeddings and effective configuration
+./mira --config .mira/config.yaml doctor
+
+# Register the project-local MIRA server in your MCP client (optional)
+./mira setup --client codex
+./mira setup --client claude-code --scope local
+./mira setup --client codex --automatic-memory --memory-wing api
+./mira setup --client claude-code --automatic-memory --memory-wing api
+./mira setup --client windsurf --automatic-memory --memory-wing api
+# Capture completed replies too, when supported (explicit opt-in)
+./mira setup --client codex --automatic-memory --include-assistant --memory-wing api
+./mira setup --client claude-code --automatic-memory --include-assistant --memory-wing api
+./mira setup --client windsurf --automatic-memory --include-assistant --memory-wing api
+./mira setup --client cursor
+./mira setup --client windsurf
+./mira setup --client claude-desktop
 ```
 
 ### 2. Start the MCP Server
 
 ```bash
 # Stdio mode — for Claude Desktop, Cursor, etc.
-./mira server
+./mira --config .mira/config.yaml start
 
 # With a custom config file
 ./mira --config ./config.yaml server
@@ -449,8 +467,9 @@ nano config.yaml
 # With a custom storage path (also: MIRA_DATA_PATH env var)
 ./mira --storage-path /data/mira server
 
-# MCP transport modes: stdio (default), sse
+# Network MCP transports: SSE or stateless JSON-RPC HTTP
 ./mira server --transport sse --mcp-addr localhost:3001
+./mira server --transport http --mcp-addr localhost:3001 # POST requests to /mcp
 
 # Enable the optional REST API
 ./mira server --with-api --api-addr :8080 --api-token my-secret
@@ -489,19 +508,43 @@ nano config.yaml
 # Store a single memory from CLI
 ./mira store --content "PostgreSQL chosen for primary DB" --wing backend-team --type decision
 
+# Keep a historical fact without recalling it after its validity ends
+./mira store --content "MySQL was the primary DB" --wing backend-team --type fact --valid-until 2026-04-14T23:59:59Z
+
 # Delete a memory by UUID
 ./mira delete 5a159ddf-bc11-46a6-8a0d-f39f25853cb4
 
-# Export memories to JSON
+# Export memories to JSON (round-trippable with mira import)
 ./mira export --wing backend-team --output memories.json
 
-# Import memories from JSON (with optional dry-run)
+# Export a human-readable Markdown snapshot (also importable)
+./mira export --wing backend-team --format markdown --output memories.md
+
+# Export a Mem0 V3 list-compatible JSON envelope
+./mira export --wing backend-team --format mem0 --output memories.mem0.json
+
+# Import memories from JSON or MIRA Markdown (validate first with --dry-run)
 ./mira import --file memories.json
+./mira import --file memories.md
 ./mira import --file memories.json --dry-run
 
 # Optimize a chat history file to fit a token budget (no LLM calls)
 ./mira optimize --file history.json --budget 2000
 ./mira optimize --file history.json --stats-only
+
+# Measure evidence coverage retained after compression (JSON array of strings)
+./mira optimize --file history.json --assertions expected-evidence.json --stats-only
+
+# Extract memories from an exported JSON conversation (preview first)
+./mira ingest --file conversation.json --wing api --dry-run
+./mira ingest --file conversation.json --wing api --include-assistant
+
+# Receive live JSON Lines events from a local hook/exporter
+conversation-hook --jsonl | ./mira ingest --stream --wing api
+
+# Consume Cursor CLI structured events (assistant output requires opt-in)
+cursor-agent --output-format stream-json "Summarize the database decision" | \
+  ./mira ingest --stream --wing api --include-assistant
 
 # Config validation and inspection
 ./mira config validate
@@ -522,11 +565,11 @@ MIRA supports full data portability. Your memories belong to you.
 # Export specific wing only
 ./mira export --wing backend-team --output backend-memories.json
 
-# Export with filters
-./mira export --wing backend-team --type decision --output decisions.json
+# Limit the export size
+./mira export --wing backend-team --limit 500 --output recent-memories.json
 
-# Preview what would be exported
-./mira export --wing backend-team --output memories.json --dry-run
+# Export a portable, human-readable snapshot
+./mira export --wing backend-team --format markdown --output backend-memories.md
 ```
 
 #### Import
@@ -538,18 +581,24 @@ MIRA supports full data portability. Your memories belong to you.
 # Import for real
 ./mira import --file memories.json
 
+# Restore an exported MIRA Markdown snapshot
+./mira import --file backend-memories.md --format markdown
+
+# Import a Mem0 V3 list response or an array of Mem0 records
+./mira import --file memories.mem0.json --format mem0
+
 # Import with wing remapping
-./mira import --file old-project.json --target-wing new-project
+./mira import --file old-project.json --wing new-project
 ```
 
 #### Backup & Restore
 
 ```bash
-# Full backup
-cp -r ~/.mira ~/.mira.backup.$(date +%Y%m%d)
+# Full project-local backup
+cp -r .mira .mira.backup.$(date +%Y%m%d)
 
 # Restore from backup
-cp -r ~/.mira.backup.20260901 ~/.mira
+cp -r .mira.backup.20260901 .mira
 ```
 
 > **Your AI memory belongs to you.** No lock-in, no cloud dependency. Export, backup, or migrate at any time.
@@ -623,7 +672,7 @@ We decided to migrate to PostgreSQL for v2...
 
 ```yaml
 system:
-  version: "0.4.7"
+  version: "0.5.0"
 
 storage:
   path: ".mira"
@@ -633,6 +682,7 @@ storage:
     cache_size: -64000
     mmap_size: 268435456
     temp_store: MEMORY
+    encryption_key: "" # Prefer MIRA_SQLITE_KEY; never commit a real key
 
 embeddings:
   current_model: "sentence-transformers/all-MiniLM-L6-v2"
@@ -703,8 +753,8 @@ soul:
 
 mcp:
   name: "mira"
-  version: "0.4.7"
-  transport: "stdio"   # "stdio" for Claude Desktop/Cursor, "sse" for HTTP SSE
+  version: "0.5.0"
+  transport: "stdio"   # "stdio", "sse", or stateless "http" at /mcp
   address: "localhost:3001"
   timeout_seconds: 30
 
@@ -730,6 +780,10 @@ webhooks:
   timeout_seconds: 30
   endpoints: []
 ```
+
+Set `MIRA_SQLITE_KEY` to encrypt the SQLite database with SQLCipher. The key
+is applied before WAL is enabled, so a newly created database is encrypted from
+its first page. Keep the key outside the configuration file whenever possible.
 
 ---
 
@@ -818,6 +872,7 @@ Choose the right memory type based on what you're storing:
 | Tool | Description |
 |------|-------------|
 | `mira_store` | Store a memory with T0/T1/T2 extraction |
+| `mira_ingest` | Extract history memories from structured conversation messages |
 | `mira_recall` | Retrieve optimal context within a token budget |
 | `mira_load` | Load the full verbatim by UUID |
 | `mira_causal_chain` | Trace causal chain from a memory |
@@ -843,6 +898,38 @@ When recalling from a specific wing yields no results, `mira_recall` supports co
   }
 }
 ```
+
+### Project and global memory
+
+Use a project name as the `wing` for project-specific memories. Shared preferences
+and conventions belong in the reserved `general` wing. A project recall can include
+that shared memory only when it has no useful project result:
+
+```bash
+# Store a shared preference
+./mira store --content "User prefers French" --global --type preference
+
+# Search the project first, then the shared general wing
+./mira query -q "preferred language" --wing api --include-global
+```
+
+The MCP and REST `mira_recall` requests also accept `include_global: true`.
+
+### Memory kinds
+
+`type` is the technical classification inferred by MIRA (`fact`, `decision`,
+`preference`, …). `kind` is the business role of the memory: `identity`,
+`user`, `project`, `task`, `knowledge`, or `history`. Use it to retrieve only
+the role relevant to an agent step:
+
+```bash
+./mira store --content "The user prefers concise French answers" --global --type preference --kind user
+./mira query -q "response style" --wing api --include-global --kind user
+```
+
+If omitted, MIRA assigns a sensible kind from the detected type. The same
+`kind` field is supported by `mira_store`, `mira_recall`, REST search/recall,
+and the JSON, Markdown, and Mem0 export/import formats.
 
 ### Multilingual Search
 
@@ -878,6 +965,16 @@ curl http://localhost:9090/metrics       # Prometheus metrics
 
 MIRA ships an optional REST HTTP API for scripting, dashboards, or non-MCP integrations. Disabled by default.
 
+### Local Memory Explorer
+
+Open [http://127.0.0.1:8080/](http://127.0.0.1:8080/) to browse memory statistics, semantic search results, the timeline, and causal context with **Why this memory?**.
+
+```bash
+./mira server --transport sse --with-api --api-addr 127.0.0.1:8080
+```
+
+When REST bearer authentication is enabled, enter the same token in the explorer's **API token** field. The token is kept in browser session storage and attached only to API requests.
+
 ### Enable
 
 ```bash
@@ -899,13 +996,14 @@ When `auth_token` is set, every request must carry:
 Authorization: Bearer my-secret
 ```
 
-The `/openapi.json` endpoint is always public.
+The `/openapi.json` endpoint and dashboard shell/assets are public; all `/api/v1` data endpoints remain protected.
 
 ### Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/api/v1/memories` | Store a memory |
+| `POST` | `/api/v1/memories/ingest` | Extract history memories from a structured conversation |
 | `GET` | `/api/v1/memories/{id}` | Load full verbatim by UUID |
 | `PUT` | `/api/v1/memories/{id}` | Update memory content |
 | `DELETE` | `/api/v1/memories/{id}` | Delete a single memory |
@@ -933,6 +1031,12 @@ curl -s -X POST http://localhost:8080/api/v1/memories/recall \
   -H "Authorization: Bearer my-secret" \
   -H "Content-Type: application/json" \
   -d '{"query":"Why PostgreSQL?","budget":2000,"wing":"backend"}'
+
+# Ingest selected conversation messages (use dry_run first to preview)
+curl -s -X POST http://localhost:8080/api/v1/memories/ingest \
+  -H "Authorization: Bearer my-secret" \
+  -H "Content-Type: application/json" \
+  -d '{"wing":"backend","messages":[{"role":"user","content":"We chose PostgreSQL for v2 because of JSONB support."}]}'
 
 # Get OpenAPI spec (no auth required)
 curl -s http://localhost:8080/openapi.json | jq .info
@@ -1031,7 +1135,7 @@ mira/
 │   │   ├── webhook/       # HTTP notifications
 │   │   └── metrics/       # Prometheus metrics
 │   ├── interfaces/
-│   │   ├── mcp/           # MCP controller (stdio / SSE)
+│   │   ├── mcp/           # MCP controller (stdio / SSE / HTTP)
 │   │   └── rest/          # Optional REST HTTP API (:8080)
 │   ├── config/
 │   └── app/               # Composition root (dependency injection)
@@ -1039,7 +1143,8 @@ mira/
 │   ├── INDEX.md
 │   ├── ARCHITECTURE.md
 │   ├── FEATURES.md
-│   └── API_REFERENCES.md
+│   ├── API_REFERENCES.md
+│   └── MARKET_REFERENCES.md
 ├── SKILL.md
 ├── config.example.yaml
 └── README.md
@@ -1052,10 +1157,10 @@ mira/
 ### Testing
 
 ```bash
-go test -v ./...            # Unit tests
-go test -race ./...         # With race detector
-go test -bench=. -benchmem ./...  # Benchmarks
-go test -cover ./...        # Coverage
+go test -tags fts5 -v ./...            # Unit tests
+go test -tags fts5 -race ./...         # With race detector
+go test -tags fts5 -bench=. -benchmem ./...  # Benchmarks
+go test -tags fts5 -cover ./...        # Coverage
 ```
 
 ### Make Commands
@@ -1066,6 +1171,7 @@ make test         # Tests (with race detector)
 make test-short   # Quick tests
 make bench        # Benchmarks
 make bench-full   # Full benchmarks
+make bench-locomo # Reproducible LoCoMo-style recall report
 make run          # Build and run with config.yaml
 make clean        # Clean build artifacts and data
 make lint         # Run linters

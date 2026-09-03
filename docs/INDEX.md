@@ -13,6 +13,7 @@ MIRA is a **long-term memory system for Large Language Models (LLMs)** designed 
 - **Context is finite** — LLM windows range from 4K to 128K tokens, but projects span thousands of interactions.
 - **Not all memories are equal** — information density, recency, causal links, and narrative coherence matter.
 - **Local-first** — 100% local execution, deterministic, no external APIs required.
+- **[Market benchmark references](MARKET_REFERENCES.md)** — published competitor figures with explicit non-comparability guidance.
 
 ---
 
@@ -25,6 +26,7 @@ MIRA is a **long-term memory system for Large Language Models (LLMs)** designed 
 | [API_REFERENCES.md](API_REFERENCES.md) | MCP tool examples, REST HTTP API (13 endpoints), integration patterns |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Clean Architecture, T0/T1/T2 memory model, CBA algorithm, causal graph |
 | [FEATURES.md](FEATURES.md) | Complete feature catalog |
+| [MARKET_REFERENCES.md](MARKET_REFERENCES.md) | Published market context and fair-comparison protocol |
 | [CHANGELOG.md](../CHANGELOG.md) | Full release history and version notes |
 | [SKILL.md](../SKILL.md) | Agent guidelines for MCP memory loops |
 
@@ -52,12 +54,15 @@ MIRA is a **long-term memory system for Large Language Models (LLMs)** designed 
 - **Multi-Turn Session Injection**: `session_id` boost recalls memories selected in previous turns
 
 ### Operations & Observability
-- **9 MCP Tools**: store, recall, load, causal_chain, timeline, status, health, archive, clear_memory
+- **14 MCP Tools**: store, ingest, recall, load, update, search, consolidate,
+  causal_chain, timeline, status, health, archive, clear_memory, and compress
 - **REST HTTP API**: Optional HTTP server on `:8080` — 13 endpoints with OpenAPI 3.1 spec, Bearer token auth, and graceful shutdown
 - **Prometheus Metrics**: `/metrics`, `/health`, `/health/live`, `/health/ready` — counters for store/recall/search/embed/errors, gauges for memory/vector counts
 - **Webhook Notifications**: HMAC-signed HTTP callbacks with circuit breaker resilience and DLQ retry
 - **Zero-Config Startup**: Runs without `config.yaml` using embedded defaults
-- **SSE Transport**: MCP server can run over Server-Sent Events (`transport: sse`) in addition to stdio
+- **Network MCP transports**: Server-Sent Events (`transport: sse`) and
+  stateless JSON-RPC at `POST /mcp` (`transport: http`) are available in
+  addition to stdio
 - **cobra CLI**: `server`, `migrate`, `doctor`, `query`, `export`, `import` subcommands
 
 ---
@@ -73,5 +78,5 @@ MIRA is a **long-term memory system for Large Language Models (LLMs)** designed 
 
 ---
 
-*Version documented: 0.4.7*  
-*Last updated: 2026-04-30*
+*Version documented: 0.5.0*  
+*Last updated: 2026-09-02*

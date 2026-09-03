@@ -23,7 +23,9 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"runtime"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,21 +38,67 @@ var compareBaselinesPath = flag.String("mira.compare", "", "optional path to a J
 // Populate this yourself (e.g. from your own Mem0/Zep benchmark run) and pass
 // it via -mira.compare; MIRA's own numbers are always measured locally.
 type BaselineResult struct {
-	Name                 string  `json:"name"`
-	P95LatencyMs         float64 `json:"p95_latency_ms"`
-	ExtractionCostUSD     float64 `json:"extraction_cost_usd_per_interaction"`
-	Notes                string  `json:"notes,omitempty"`
+	Name              string  `json:"name"`
+	P95LatencyMs      float64 `json:"p95_latency_ms"`
+	ExtractionCostUSD float64 `json:"extraction_cost_usd_per_interaction"`
+	Dataset           string  `json:"dataset"`
+	Hardware          string  `json:"hardware"`
+	Protocol          string  `json:"protocol"`
+	Notes             string  `json:"notes,omitempty"`
+}
+
+// loadBaselineResults accepts only measured, attributable competitor numbers.
+// This prevents a placeholder or a context-free value from looking like a fair
+// head-to-head result in the generated public report.
+func loadBaselineResults(path string) ([]BaselineResult, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read baselines: %w", err)
+	}
+	var baselines []BaselineResult
+	if err := json.Unmarshal(data, &baselines); err != nil {
+		return nil, fmt.Errorf("parse baselines: %w", err)
+	}
+	if len(baselines) == 0 {
+		return nil, fmt.Errorf("baselines must contain at least one measured result")
+	}
+	names := make(map[string]struct{}, len(baselines))
+	for index, baseline := range baselines {
+		name := strings.TrimSpace(baseline.Name)
+		if name == "" || baseline.P95LatencyMs <= 0 || baseline.ExtractionCostUSD < 0 || strings.TrimSpace(baseline.Dataset) == "" || strings.TrimSpace(baseline.Hardware) == "" || strings.TrimSpace(baseline.Protocol) == "" {
+			return nil, fmt.Errorf("baseline %d must include name, positive p95_latency_ms, non-negative extraction_cost_usd_per_interaction, dataset, hardware, and protocol", index+1)
+		}
+		key := strings.ToLower(name)
+		if _, exists := names[key]; exists {
+			return nil, fmt.Errorf("baseline %d duplicates %q", index+1, baseline.Name)
+		}
+		names[key] = struct{}{}
+	}
+	return baselines, nil
 }
 
 // LoCoMoReport is the JSON artifact produced by BenchmarkLoCoMoRecall.
 type LoCoMoReport struct {
-	GeneratedAt    time.Time         `json:"generated_at"`
-	Sessions       int               `json:"sessions"`
+	Benchmark       string           `json:"benchmark"`
+	Dataset         string           `json:"dataset"`
+	Protocol        string           `json:"protocol"`
+	Environment     BenchmarkRuntime `json:"environment"`
+	GeneratedAt     time.Time        `json:"generated_at"`
+	Sessions        int              `json:"sessions"`
 	FactsPerSession int              `json:"facts_per_session"`
-	NoiseRatio     float64           `json:"noise_ratio"`
-	Queries        int               `json:"queries"`
-	MIRA           LoCoMoMetrics     `json:"mira"`
-	Baselines      []BaselineResult  `json:"baselines,omitempty"`
+	NoiseRatio      float64          `json:"noise_ratio"`
+	Queries         int              `json:"queries"`
+	MIRA            LoCoMoMetrics    `json:"mira"`
+	Baselines       []BaselineResult `json:"baselines,omitempty"`
+}
+
+// BenchmarkRuntime records enough host detail to reproduce local measurements
+// without making a CPU-model claim that Go cannot portably establish.
+type BenchmarkRuntime struct {
+	GOOS      string `json:"goos"`
+	GOARCH    string `json:"goarch"`
+	GoVersion string `json:"go_version"`
+	CPUs      int    `json:"logical_cpus"`
 }
 
 // LoCoMoMetrics captures MIRA's measured performance for the run.
@@ -89,9 +137,9 @@ func genLoCoMoCorpus(sessions, factsPerSession int, noiseRatio float64) []*entit
 
 // BenchmarkLoCoMoRecall measures MIRA's CBA recall latency distribution over
 // a synthetic LoCoMo-style corpus (200 sessions x 20 facts/session = 4000
-// candidate memories, 70% noise), then writes a JSON report to stdout (via
-// -mira.report) so numbers can be compared against externally-measured
-// Mem0/Zep baselines.
+// candidate memories, 70% noise), then writes a self-describing JSON report.
+// It is a local retrieval benchmark, not an end-to-end LoCoMo answer-accuracy
+// or third-party comparison report.
 func BenchmarkLoCoMoRecall(b *testing.B) {
 	const sessions = 200
 	const factsPerSession = 20
@@ -120,6 +168,10 @@ func BenchmarkLoCoMoRecall(b *testing.B) {
 	metrics := computeLatencyMetrics(durations)
 
 	report := LoCoMoReport{
+		Benchmark:       "mira-synthetic-long-conversation-recall-v1",
+		Dataset:         "synthetic-locomo-style-v1",
+		Protocol:        "deterministic CBA recall only; 200 sessions; 20 candidates/session; 70% distractors; 2000-token budget; no LLM calls",
+		Environment:     currentBenchmarkRuntime(),
 		GeneratedAt:     time.Now(),
 		Sessions:        sessions,
 		FactsPerSession: factsPerSession,
@@ -128,15 +180,26 @@ func BenchmarkLoCoMoRecall(b *testing.B) {
 		MIRA:            metrics,
 	}
 	if *compareBaselinesPath != "" {
-		if data, err := os.ReadFile(*compareBaselinesPath); err == nil {
-			_ = json.Unmarshal(data, &report.Baselines)
+		baselines, err := loadBaselineResults(*compareBaselinesPath)
+		if err != nil {
+			b.Fatalf("invalid third-party baseline file: %v", err)
 		}
+		report.Baselines = baselines
 	}
 
 	data, _ := json.MarshalIndent(report, "", "  ")
 	b.Logf("LoCoMo benchmark report:\n%s", data)
 	if reportPath := os.Getenv("MIRA_LOCOMO_REPORT"); reportPath != "" {
 		_ = os.WriteFile(reportPath, data, 0o644)
+	}
+}
+
+func currentBenchmarkRuntime() BenchmarkRuntime {
+	return BenchmarkRuntime{
+		GOOS:      runtime.GOOS,
+		GOARCH:    runtime.GOARCH,
+		GoVersion: runtime.Version(),
+		CPUs:      runtime.NumCPU(),
 	}
 }
 

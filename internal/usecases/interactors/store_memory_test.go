@@ -11,7 +11,7 @@ import (
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
 	"github.com/google/uuid"
-	_ "github.com/mutecomm/go-sqlcipher/v4"
+	_ "github.com/benoitpetit/go-sqlcipher/v4"
 )
 
 // Mock Transaction
@@ -422,6 +422,11 @@ func TestStoreMemoryInputValidate(t *testing.T) {
 		{
 			name:    "invalid type",
 			input:   StoreMemoryInput{Content: "Hello", Wing: "test", Type: func() *valueobjects.MemoryType { mt := valueobjects.MemoryType("unknown"); return &mt }()},
+			wantErr: true,
+		},
+		{
+			name:    "invalid kind",
+			input:   StoreMemoryInput{Content: "Hello", Wing: "test", Kind: func() *valueobjects.MemoryKind { kind := valueobjects.MemoryKind("unknown"); return &kind }()},
 			wantErr: true,
 		},
 	}

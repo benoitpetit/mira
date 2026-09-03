@@ -79,7 +79,7 @@ else
 fi
 
 echo -e "${YELLOW}Step 3/6: Running tests...${NC}"
-go test -race ./... > /tmp/test.log 2>&1
+go test -tags fts5 -race ./... > /tmp/test.log 2>&1
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}✓ All tests passed${NC}\n"
 else
@@ -90,7 +90,7 @@ fi
 
 echo -e "${YELLOW}Step 4/6: Running benchmarks...${NC}"
 echo -e "${BLUE}This may take a minute...${NC}"
-go test -bench=. -benchmem -benchtime=100ms -count=1 ./... > /tmp/bench.log 2>&1
+go test -tags fts5 -bench=. -benchmem -benchtime=100ms -count=1 ./... > /tmp/bench.log 2>&1
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}✓ Benchmarks completed${NC}\n"
     # Show summary

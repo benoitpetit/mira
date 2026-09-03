@@ -25,6 +25,7 @@ Complete inventory of MIRA capabilities.
 | Feature | Description |
 |---------|-------------|
 | Auto Type Detection | Detects decision, fact, preference, session_note, debug_log |
+| Business Memory Kinds | Persistent `identity`, `user`, `project`, `task`, `knowledge`, and `history` roles, independently filterable from type |
 | Decay Rate System | Per-type exponential decay (λ from 0.001 to 0.5) |
 | Auto-Archive | Session notes (>30d) and debug logs (>7d) automatically archived |
 | Archive Tool (`mira_archive`) | Manual archive trigger with token-freed stats |
@@ -126,8 +127,9 @@ Complete inventory of MIRA capabilities.
 | Feature | Description |
 |---------|-------------|
 | Optional REST Server | Disabled by default; enable via `api.enabled: true` or `--with-api` flag |
-| 13 Endpoints | `POST /memories`, `GET/PUT/DELETE /memories/{id}`, `POST /memories/recall`, `POST /memories/search`, `POST /memories/consolidate`, `DELETE /memories`, `GET /timeline`, `POST /archive`, `GET /causal/{id}`, `GET /status`, `GET /openapi.json` |
-| Bearer Token Auth | Optional `Authorization: Bearer <token>` — `/openapi.json` always public |
+| Local Memory Explorer | Embedded dashboard at `/` with statistics, semantic search, timeline filters, causal context and session-scoped bearer-token support |
+| 14 Endpoints | `POST /memories`, `POST /memories/ingest`, `GET/PUT/DELETE /memories/{id}`, `POST /memories/recall`, `POST /memories/search`, `POST /memories/consolidate`, `DELETE /memories`, `GET /timeline`, `POST /archive`, `GET /causal/{id}`, `GET /status`, `GET /openapi.json` |
+| Bearer Token Auth | Optional `Authorization: Bearer <token>` — `/openapi.json` and dashboard assets are public while `/api/v1` data stays protected |
 | OpenAPI 3.1 Spec | Machine-generated Go struct spec served at `GET /openapi.json` (zero external deps) |
 | Middleware Stack | Recovery (panic → 500), structured access logging, auth — all composable |
 | Configurable Timeouts | `read_timeout_seconds` and `write_timeout_seconds` (default 30s each) |
@@ -139,12 +141,15 @@ Complete inventory of MIRA capabilities.
 
 | Feature | Description |
 |---------|-------------|
-| `server` subcommand | Start the MCP server (stdio/SSE); flags: `--with-api`, `--api-addr`, `--api-token`, `--with-soul` |
+| `server` subcommand | Start the MCP server (stdio/SSE/stateless HTTP at `/mcp`); flags: `--with-api`, `--api-addr`, `--api-token`, `--with-soul` |
 | `migrate` subcommand | Run SQLite schema migrations and exit |
 | `doctor` subcommand | Check system health and print a human-readable configuration summary |
-| `query` subcommand | One-shot recall query from the terminal (`--query`, `--wing`, `--room`, `--budget`) |
-| `export` subcommand | Export memories to a JSON file (`--wing`, `--output`, `--limit`) |
-| `import` subcommand | Import memories from a JSON file (`--file`, `--wing`) |
+| `setup` subcommand | One-click MCP registration for Codex and Claude Code (`--automatic-memory` prompt hook plus optional final-response `Stop` hook; Claude scope `local|project|user`), Windsurf (native prompt hook, optional response hook), Cursor and Claude Desktop, with dry-run and protected JSON merges |
+| `query` subcommand | One-shot recall query from the terminal (`--query`, `--wing`, `--room`, `--kind`, `--budget`) |
+| `export` subcommand | Export MIRA JSON, portable Markdown, or a Mem0 V3 list-compatible JSON envelope (`--format`, `--wing`, `--output`, `--limit`) |
+| `import` subcommand | Import JSON, MIRA Markdown, or Mem0 V3 list exports, with auto-detection and dry-run (`--format`, `--file`, `--wing`) |
+| `ingest` subcommand | Extract T0/T1/T2 history memories from JSON exports or an immediate JSONL stdin stream (`--stream`); previews selected messages and can include assistant replies explicitly |
+| Context-efficiency evaluation | `mira optimize --assertions expected.json --stats-only` measures retained evidence coverage and coverage per 1K optimized tokens without an LLM |
 | Global `--config` / `-c` flag | Resolves config path: flag → `MIRA_CONFIG` env → `./config.yaml` → OS config dir |
 | `--version` flag | Print MIRA version and exit |
 
@@ -161,6 +166,7 @@ Complete inventory of MIRA capabilities.
 | Project-Scoped Storage | Default `.mira/` per project with auto-gitignore |
 | Config Validation | Sensible defaults applied for all missing/invalid fields |
 | SSE Transport | MCP server can run over Server-Sent Events (`transport: sse`) in addition to stdio |
+| HTTP Transport | Stateless JSON-RPC MCP requests are served at `POST /mcp` (`transport: http`) |
 | REST API Config | `api.enabled`, `api.address`, `api.auth_token`, `api.read_timeout_seconds`, `api.write_timeout_seconds` |
 
 ---
@@ -184,12 +190,12 @@ Complete inventory of MIRA capabilities.
 | Feature | Description |
 |---------|-------------|
 | Unit Tests | ~77% coverage across domain, usecases, adapters |
-| Race Detector Tests | `go test -race ./...` |
-| Benchmarks | Go benchmarks + HTML dashboard (`scripts/benchmark.sh`) |
+| Race Detector Tests | `go test -tags fts5 -race ./...` |
+| Benchmarks | Go benchmarks + HTML dashboard (`scripts/benchmark.sh`) and reproducible LoCoMo-style recall report (`make bench-locomo`) |
 | Benchmark Visualization | HTML dashboard with performance insights |
 | Health Check Tests | Tests for liveness, readiness, component status |
 
 ---
 
-*Version: 0.4.7*  
+*Version: 0.5.0*  
 *Last updated: 2026-04-30*

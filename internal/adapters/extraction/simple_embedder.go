@@ -23,7 +23,7 @@ func (s *SimpleEmbedder) Encode(ctx context.Context, text string) ([]float32, er
 	vec := make([]float32, s.dim)
 	seed := hashString(text)
 	for i := 0; i < s.dim; i++ {
-		vec[i] = float32((seed+uint64(i)*6364136223846793005)&0xFFFFFFFF) / float32(0xFFFFFFFF)
+		vec[i] = float32((seed+uint64(i)*6364136223846793005)&0xFFFFFFFF) / float32(0xFFFFFFFF) //nolint:gosec // G115: safe — i is bounded by dim which is small
 	}
 	return s.normalizeL2(vec), nil
 }

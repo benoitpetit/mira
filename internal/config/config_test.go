@@ -29,8 +29,8 @@ func TestValidate(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "valid config",
-			cfg:  Default(),
+			name:    "valid config",
+			cfg:     Default(),
 			wantErr: false,
 		},
 		{
@@ -144,7 +144,7 @@ func TestLoad_NotExist(t *testing.T) {
 func TestLoad_BadYAML(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "bad.yaml")
-	if err := os.WriteFile(path, []byte(": : : invalid yaml :::"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(": : : invalid yaml :::"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	_, err := Load(path)
@@ -238,7 +238,7 @@ func TestResolveConfigPath_Default(t *testing.T) {
 func TestFallbackConfigDir_HomeSet(t *testing.T) {
 	t.Setenv("HOME", "/home/testuser")
 	got := fallbackConfigDir()
-	want := filepath.Join("/home/testuser", ".config")
+	want := "/home/testuser/.config"
 	if got != want {
 		t.Errorf("fallbackConfigDir() = %q, want %q", got, want)
 	}

@@ -8,13 +8,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/url"
 	"strings"
 	"time"
 
+	_ "github.com/benoitpetit/go-sqlcipher/v4"
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/google/uuid"
-	_ "github.com/mutecomm/go-sqlcipher/v4"
 )
 
 // SQLiteRepository implements all repository interfaces using SQLite
@@ -48,18 +49,17 @@ func NewSQLiteRepository(dbPath string, opts SQLiteOptions) (*SQLiteRepository, 
 		opts.DebugLogArchiveDays = 7
 	}
 
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=-64000&_mmap_size=268435456&_busy_timeout=5000")
-	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
+	dsn := dbPath + "?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=-64000&_mmap_size=268435456&_busy_timeout=5000"
+	if opts.EncryptionKey != "" {
+		// The driver applies _pragma_key before the connection options. This is
+		// essential: opening a new file in WAL mode before setting the key would
+		// create it in plaintext. QueryEscape preserves arbitrary passphrases.
+		dsn = dbPath + "?_pragma_key=" + url.QueryEscape(opts.EncryptionKey) + "&_journal_mode=WAL&_synchronous=NORMAL&_cache_size=-64000&_mmap_size=268435456&_busy_timeout=5000"
 	}
 
-	if opts.EncryptionKey != "" {
-		// Securely set the key using PRAGMA key with parameter binding
-		_, err = db.Exec("PRAGMA key = ?;", opts.EncryptionKey)
-		if err != nil {
-			db.Close()
-			return nil, fmt.Errorf("failed to set encryption key: %w", err)
-		}
+	db, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
 	db.SetMaxOpenConns(1)
@@ -103,7 +103,7 @@ func (r *SQLiteRepository) StoreVerbatim(ctx context.Context, verbatim *entities
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
 
 	if err := r.StoreVerbatimTx(ctx, tx, verbatim); err != nil {
 		return err
@@ -122,9 +122,9 @@ func (r *SQLiteRepository) StoreVerbatimTx(ctx context.Context, tx *sql.Tx, v *e
 	metricsJSON, _ := json.Marshal(v.Metrics)
 
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO verbatim (id, content, token_count, created_at, wing, room, metadata, metrics)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		v.ID[:], v.Content, v.TokenCount, float64(v.CreatedAt.Unix()), v.Wing, v.Room, string(metadataJSON), string(metricsJSON),
+		`INSERT INTO verbatim (id, content, token_count, created_at, valid_from, valid_until, kind, wing, room, metadata, metrics)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		v.ID[:], v.Content, v.TokenCount, float64(v.CreatedAt.Unix()), unixTimeOrNil(v.ValidFrom), unixTimeOrNil(v.ValidUntil), v.Kind, v.Wing, v.Room, string(metadataJSON), string(metricsJSON),
 	)
 	return err
 }
@@ -135,7 +135,7 @@ func (r *SQLiteRepository) DeleteVerbatimByID(ctx context.Context, id uuid.UUID)
 	if err != nil {
 		return fmt.Errorf("failed to begin delete transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
 
 	if err := r.DeleteVerbatimByIDTx(ctx, tx, id); err != nil {
 		return err
@@ -181,7 +181,7 @@ func (r *SQLiteRepository) DeleteVerbatimByIDTx(ctx context.Context, tx *sql.Tx,
 // GetVerbatimByID implements VerbatimRepository
 func (r *SQLiteRepository) GetVerbatimByID(ctx context.Context, id uuid.UUID) (*entities.Verbatim, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, content, token_count, created_at, wing, room, metadata, metrics, summary, summary_tokens FROM verbatim WHERE id = ?`,
+		`SELECT id, content, token_count, created_at, valid_from, valid_until, kind, wing, room, metadata, metrics, summary, summary_tokens FROM verbatim WHERE id = ?`,
 		id[:],
 	)
 
@@ -192,11 +192,12 @@ func (r *SQLiteRepository) GetVerbatimByID(ctx context.Context, id uuid.UUID) (*
 	var room sql.NullString
 	var summary sql.NullString
 	var createdAt float64
+	var validFrom, validUntil sql.NullFloat64
 
-	err := row.Scan(&idBytes, &v.Content, &v.TokenCount, &createdAt, &v.Wing, &room, &metadataJSON, &metricsJSON, &summary, &v.SummaryTokenCount)
+	err := row.Scan(&idBytes, &v.Content, &v.TokenCount, &createdAt, &validFrom, &validUntil, &v.Kind, &v.Wing, &room, &metadataJSON, &metricsJSON, &summary, &v.SummaryTokenCount)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("verbatim not found")
+			return nil, &NotFoundError{Resource: "verbatim"}
 		}
 		return nil, err
 	}
@@ -206,6 +207,8 @@ func (r *SQLiteRepository) GetVerbatimByID(ctx context.Context, id uuid.UUID) (*
 		return nil, fmt.Errorf("invalid verbatim UUID: %w", err)
 	}
 	v.CreatedAt = time.Unix(int64(createdAt), 0)
+	v.ValidFrom = nullableUnixTime(validFrom)
+	v.ValidUntil = nullableUnixTime(validUntil)
 	if room.Valid {
 		v.Room = &room.String
 	}
@@ -237,7 +240,7 @@ func (r *SQLiteRepository) StoreFingerprint(ctx context.Context, fp *entities.Fi
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
 
 	if err := r.StoreFingerprintTx(ctx, tx, fp); err != nil {
 		return err
@@ -286,7 +289,7 @@ func (r *SQLiteRepository) GetFingerprintByID(ctx context.Context, id uuid.UUID)
 	err := row.Scan(&idBytes, &verbatimIDBytes, &ftype, &extractedAt, &entitiesJSON, &subjectsJSON, &decision, &dataJSON, &fp.FactCount, &fp.TokenEstimate, &fp.ModelHash)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("fingerprint not found")
+			return nil, &NotFoundError{Resource: "fingerprint"}
 		}
 		return nil, err
 	}
@@ -334,7 +337,7 @@ func (r *SQLiteRepository) GetFingerprintByVerbatimID(ctx context.Context, verba
 	err := row.Scan(&idBytes, &verbatimIDBytes, &ftype, &extractedAt, &entitiesJSON, &subjectsJSON, &decision, &dataJSON, &fp.FactCount, &fp.TokenEstimate, &fp.ModelHash)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("fingerprint not found")
+			return nil, &NotFoundError{Resource: "fingerprint"}
 		}
 		return nil, err
 	}
@@ -369,7 +372,7 @@ func (r *SQLiteRepository) GetRecentFingerprintsByWing(ctx context.Context, wing
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
 	return r.GetRecentFingerprintsByWingTx(ctx, tx, wing, excludeID, limit)
 }
 
@@ -426,7 +429,7 @@ func (r *SQLiteRepository) StoreEmbedding(ctx context.Context, emb *entities.Emb
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
 
 	if err := r.StoreEmbeddingTx(ctx, tx, emb); err != nil {
 		return err
@@ -488,7 +491,7 @@ func (r *SQLiteRepository) AddNode(ctx context.Context, node *entities.CausalNod
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
 
 	if err := r.AddNodeTx(ctx, tx, node); err != nil {
 		return err
@@ -513,7 +516,7 @@ func (r *SQLiteRepository) AddEdge(ctx context.Context, edge *entities.CausalEdg
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
 
 	if err := r.AddEdgeTx(ctx, tx, edge); err != nil {
 		return err
@@ -854,7 +857,7 @@ func (r *SQLiteRepository) GetTimeline(ctx context.Context, wing string, room *s
 		}
 
 		var data valueobjects.FingerprintData
-		json.Unmarshal(dataJSON, &data)
+		_ = json.Unmarshal(dataJSON, &data)
 
 		summary := ""
 		if len(data.Subject) > 0 {
@@ -888,7 +891,7 @@ func (r *SQLiteRepository) ArchiveOldMemories(ctx context.Context) (*valueobject
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin archive transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
 
 	// Archive session notes
 	sessionThreshold := now - float64(r.opts.SessionNoteArchiveDays*24*60*60)
@@ -928,7 +931,7 @@ func (r *SQLiteRepository) ClearAll(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to begin clear transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
 
 	_, _ = tx.ExecContext(ctx, `DELETE FROM causal_edges`)
 	_, _ = tx.ExecContext(ctx, `DELETE FROM causal_nodes`)
@@ -950,7 +953,7 @@ func (r *SQLiteRepository) ClearByIDs(ctx context.Context, ids []uuid.UUID) (int
 	if err != nil {
 		return 0, fmt.Errorf("failed to begin clear transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
 
 	count := len(ids)
 
@@ -1009,7 +1012,7 @@ func (r *SQLiteRepository) ClearByRoom(ctx context.Context, wing string, room *s
 	if err != nil {
 		return 0, fmt.Errorf("failed to begin clear transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
 
 	var roomCondition string
 	args := []interface{}{wing}
@@ -1171,7 +1174,7 @@ func (r *SQLiteRepository) SearchLexical(ctx context.Context, query string, limi
 	}
 
 	sqlQuery := `
-		SELECT v.id, v.content, v.wing, v.room, v.token_count, v.created_at,
+		SELECT v.id, v.content, v.wing, v.room, v.token_count, v.created_at, v.valid_from, v.valid_until, v.kind,
 			   v.summary, v.summary_tokens,
 			   f.id, f.ftype, f.fact_count, f.token_estimate, f.model_hash, f.data,
 			   e.vector, e.dim
@@ -1203,16 +1206,17 @@ func (r *SQLiteRepository) SearchLexical(ctx context.Context, query string, limi
 	var candidates []*entities.Candidate
 	for rows.Next() {
 		var vID, fID []byte
-		var vContent, vWing, fType, fModelHash string
+		var vContent, vWing, vKind, fType, fModelHash string
 		var vRoom sql.NullString
 		var vSummary sql.NullString
 		var vTokenCount, vSummaryTokens, fFactCount, fTokenEstimate, eDim int
 		var vCreatedAt float64
+		var vValidFrom, vValidUntil sql.NullFloat64
 		var fData []byte
 		var eVector []byte
 
 		err := rows.Scan(
-			&vID, &vContent, &vWing, &vRoom, &vTokenCount, &vCreatedAt,
+			&vID, &vContent, &vWing, &vRoom, &vTokenCount, &vCreatedAt, &vValidFrom, &vValidUntil, &vKind,
 			&vSummary, &vSummaryTokens,
 			&fID, &fType, &fFactCount, &fTokenEstimate, &fModelHash, &fData,
 			&eVector, &eDim,
@@ -1243,6 +1247,9 @@ func (r *SQLiteRepository) SearchLexical(ctx context.Context, query string, limi
 			TokenCount:        vTokenCount,
 			SummaryTokenCount: vSummaryTokens,
 			CreatedAt:         time.Unix(int64(vCreatedAt), 0),
+			ValidFrom:         nullableUnixTime(vValidFrom),
+			ValidUntil:        nullableUnixTime(vValidUntil),
+			Kind:              valueobjects.MemoryKind(vKind),
 		}
 		if vRoom.Valid {
 			verbatim.Room = &vRoom.String
@@ -1279,7 +1286,7 @@ func (r *SQLiteRepository) SearchExact(ctx context.Context, query string, limit 
 	}
 
 	sqlQuery := `
-		SELECT v.id, v.content, v.wing, v.room, v.token_count, v.created_at,
+		SELECT v.id, v.content, v.wing, v.room, v.token_count, v.created_at, v.kind,
 			   f.id, f.ftype, f.fact_count, f.token_estimate, f.model_hash, f.data,
 			   e.vector, e.dim
 		FROM verbatim v
@@ -1309,7 +1316,7 @@ func (r *SQLiteRepository) SearchExact(ctx context.Context, query string, limit 
 	var candidates []*entities.Candidate
 	for rows.Next() {
 		var vID, fID []byte
-		var vContent, vWing, fType, fModelHash string
+		var vContent, vWing, vKind, fType, fModelHash string
 		var vRoom sql.NullString
 		var vTokenCount, fFactCount, fTokenEstimate, eDim int
 		var vCreatedAt float64
@@ -1317,7 +1324,7 @@ func (r *SQLiteRepository) SearchExact(ctx context.Context, query string, limit 
 		var eVector []byte
 
 		err := rows.Scan(
-			&vID, &vContent, &vWing, &vRoom, &vTokenCount, &vCreatedAt,
+			&vID, &vContent, &vWing, &vRoom, &vTokenCount, &vCreatedAt, &vKind,
 			&fID, &fType, &fFactCount, &fTokenEstimate, &fModelHash, &fData,
 			&eVector, &eDim,
 		)
@@ -1346,6 +1353,7 @@ func (r *SQLiteRepository) SearchExact(ctx context.Context, query string, limit 
 			Wing:       vWing,
 			TokenCount: vTokenCount,
 			CreatedAt:  time.Unix(int64(vCreatedAt), 0),
+			Kind:       valueobjects.MemoryKind(vKind),
 		}
 		if vRoom.Valid {
 			verbatim.Room = &vRoom.String
@@ -1381,7 +1389,7 @@ func (r *SQLiteRepository) StoreTags(ctx context.Context, verbatimID uuid.UUID, 
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
 
 	for _, tag := range tags {
 		if tag == "" {
@@ -1469,7 +1477,7 @@ func (r *SQLiteRepository) GetCandidatesWithEmbeddings(ctx context.Context, ids 
 	}
 
 	query := fmt.Sprintf(`
-		SELECT v.id, v.content, v.wing, v.room, v.token_count, v.created_at,
+		SELECT v.id, v.content, v.wing, v.room, v.token_count, v.created_at, v.valid_from, v.valid_until, v.kind,
 			   v.summary, v.summary_tokens,
 			   f.id, f.ftype, f.fact_count, f.token_estimate, f.model_hash, f.data,
 			   e.vector, e.dim
@@ -1488,16 +1496,17 @@ func (r *SQLiteRepository) GetCandidatesWithEmbeddings(ctx context.Context, ids 
 	var candidates []*entities.Candidate
 	for rows.Next() {
 		var vID, fID []byte
-		var vContent, vWing, fType, fModelHash string
+		var vContent, vWing, vKind, fType, fModelHash string
 		var vRoom sql.NullString
 		var vSummary sql.NullString
 		var vTokenCount, vSummaryTokens, fFactCount, fTokenEstimate, eDim int
 		var vCreatedAt float64
+		var vValidFrom, vValidUntil sql.NullFloat64
 		var fData []byte
 		var eVector []byte
 
 		err := rows.Scan(
-			&vID, &vContent, &vWing, &vRoom, &vTokenCount, &vCreatedAt,
+			&vID, &vContent, &vWing, &vRoom, &vTokenCount, &vCreatedAt, &vValidFrom, &vValidUntil, &vKind,
 			&vSummary, &vSummaryTokens,
 			&fID, &fType, &fFactCount, &fTokenEstimate, &fModelHash, &fData,
 			&eVector, &eDim,
@@ -1539,6 +1548,9 @@ func (r *SQLiteRepository) GetCandidatesWithEmbeddings(ctx context.Context, ids 
 			TokenCount:        vTokenCount,
 			SummaryTokenCount: vSummaryTokens,
 			CreatedAt:         time.Unix(int64(vCreatedAt), 0),
+			ValidFrom:         nullableUnixTime(vValidFrom),
+			ValidUntil:        nullableUnixTime(vValidUntil),
+			Kind:              valueobjects.MemoryKind(vKind),
 		}
 		if vRoom.Valid {
 			verbatim.Room = &vRoom.String

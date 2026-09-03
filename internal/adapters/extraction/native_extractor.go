@@ -44,7 +44,6 @@ type NativeExtractor struct {
 
 	// Gazetteers for NER
 	commonFirstNames map[string]bool
-	commonLastNames  map[string]bool
 	organizations    map[string]bool
 	locations        map[string]bool
 }
@@ -285,7 +284,7 @@ func (e *NativeExtractor) extractEntities(tokens []Token, fullText string) []str
 		}
 
 		// Check if it looks like a proper noun (starts with uppercase, not all uppercase)
-		if len(word) > 0 && unicode.IsUpper(rune(word[0])) && upperCount < len(word) {
+		if word != "" && unicode.IsUpper(rune(word[0])) && upperCount < len(word) {
 			// Check against gazetteers
 			if e.commonFirstNames[word] || e.organizations[word] || e.locations[word] {
 				entitySet[word] = true
@@ -305,7 +304,7 @@ func (e *NativeExtractor) extractEntities(tokens []Token, fullText string) []str
 			// Heuristic: if previous word is not end of sentence, likely a name
 			if i > 0 {
 				prev := tokens[i-1].Text
-				if len(prev) > 0 && !strings.Contains(".!?", string(prev[len(prev)-1])) {
+				if len(prev) > 0 && !strings.ContainsAny(string(prev[len(prev)-1]), ".!?") {
 					// Check if it's not a common word
 					if !isCommonWord(word) {
 						entitySet[word] = true
@@ -317,7 +316,7 @@ func (e *NativeExtractor) extractEntities(tokens []Token, fullText string) []str
 
 	// Also extract emails and URLs
 	emailPattern := regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
-	urlPattern := regexp.MustCompile(`https?://[^\s]+`)
+	urlPattern := regexp.MustCompile(`https?://\S+`)
 
 	emails := emailPattern.FindAllString(fullText, -1)
 	urls := urlPattern.FindAllString(fullText, -1)
@@ -382,7 +381,7 @@ func (e *NativeExtractor) detectType(content string) valueobjects.MemoryType {
 	return valueobjects.TypeSessionNote
 }
 
-func (e *NativeExtractor) extractStructured(v *entities.Verbatim, tokens []Token, entities []string, memType valueobjects.MemoryType) valueobjects.FingerprintData {
+func (e *NativeExtractor) extractStructured(v *entities.Verbatim, _ []Token, entities []string, memType valueobjects.MemoryType) valueobjects.FingerprintData {
 	content := v.Content
 
 	data := valueobjects.FingerprintData{
@@ -630,4 +629,4 @@ func hasSemanticOverlap(a, b *entities.Fingerprint) bool {
 }
 
 // Ensure NativeExtractor implements the Extractor interface
-var _ ports.Extractor = (*NativeExtractor)(nil)
+var _ ports.Extractor = (*NativeExtractor)(nil) //nolint:staticcheck // TODO: migrate to specific interfaces

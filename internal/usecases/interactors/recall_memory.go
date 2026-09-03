@@ -13,11 +13,11 @@ import (
 	"time"
 
 	"github.com/benoitpetit/mira/internal/domain/entities"
-	"golang.org/x/sync/errgroup"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
 	"github.com/benoitpetit/mira/internal/util"
 	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 )
 
 // RecallMemoryInput contains the input for recalling memories
@@ -26,6 +26,7 @@ type RecallMemoryInput struct {
 	Budget        int
 	Wing          *string
 	Room          *string
+	Kind          *valueobjects.MemoryKind
 	FallbackWings []string
 	SessionID     *string
 }
@@ -43,7 +44,7 @@ type candidateHeap struct {
 	candidates []*entities.Candidate
 }
 
-func (h candidateHeap) Len() int { return len(h.candidates) }
+func (h candidateHeap) Len() int           { return len(h.candidates) }
 func (h candidateHeap) Less(i, j int) bool { return h.candidates[i].Score > h.candidates[j].Score }
 func (h candidateHeap) Swap(i, j int) {
 	h.candidates[i], h.candidates[j] = h.candidates[j], h.candidates[i]
@@ -66,8 +67,8 @@ type embeddingCache struct {
 
 // cacheElement wraps a key and its associated value for LRU tracking.
 type cacheElement struct {
-	key      string
-	vector   []float32
+	key    string
+	vector []float32
 }
 
 // newEmbeddingCache creates a new embedding cache.
@@ -171,13 +172,13 @@ type RecallMemory struct {
 	sessionCacheTTLSeconds        int
 
 	// Session cache for multi-turn memory injection
-	sessionCache     map[string]sessionCacheEntry
-	sessionCacheMu   sync.RWMutex
+	sessionCache   map[string]sessionCacheEntry
+	sessionCacheMu sync.RWMutex
 }
 
 // sessionCacheEntry stores cached session memory IDs with a timestamp for TTL eviction.
 type sessionCacheEntry struct {
-	ids    []uuid.UUID
+	ids     []uuid.UUID
 	expires time.Time
 }
 
@@ -370,6 +371,10 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 	if uc.enableFTS5 && len(lexicalCandidates) > 0 {
 		candidates = reciprocalRankFusion(denseCandidates, lexicalCandidates, uc.rrfK)
 	}
+	// Historical or scheduled facts are kept in storage, but never consume the
+	// current context budget outside their declared validity interval.
+	candidates = filterCandidatesValidAt(candidates, time.Now())
+	candidates = filterCandidatesByKind(candidates, input.Kind)
 
 	// 2c. Search-time clustering (deduplication)
 	if uc.searchTimeClusteringEnabled {
@@ -388,6 +393,8 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 	if len(pruned) < 3 {
 		broadCandidates, err := uc.vectorStore.Search(ctx, queryVec, uc.maxCandidates*3, input.Wing, input.Room)
 		if err == nil {
+			broadCandidates = filterCandidatesValidAt(broadCandidates, time.Now())
+			broadCandidates = filterCandidatesByKind(broadCandidates, input.Kind)
 			broadScored := uc.scoreCandidates(broadCandidates, queryVec, tagBoostIDs)
 			broadPruned := uc.pruneCandidatesWithThreshold(broadScored, 0.15)
 			seen := make(map[uuid.UUID]bool)
@@ -418,6 +425,8 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 			if err != nil {
 				continue
 			}
+			fbCandidates = filterCandidatesValidAt(fbCandidates, time.Now())
+			fbCandidates = filterCandidatesByKind(fbCandidates, input.Kind)
 			fbScored := uc.scoreCandidates(fbCandidates, queryVec, tagBoostIDs)
 			fbPruned := uc.pruneCandidates(fbScored)
 			for _, c := range fbPruned {
@@ -491,7 +500,7 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 			existing = existing[len(existing)-20:]
 		}
 		uc.sessionCache[*input.SessionID] = sessionCacheEntry{
-			ids:    existing,
+			ids:     existing,
 			expires: time.Now().Add(time.Duration(uc.sessionCacheTTLSeconds) * time.Second),
 		}
 		uc.sessionCacheMu.Unlock()
@@ -502,6 +511,29 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 		TotalTokens: totalTokens,
 		BudgetUsed:  budgetUsed,
 	}, nil
+}
+
+func filterCandidatesValidAt(candidates []*entities.Candidate, at time.Time) []*entities.Candidate {
+	valid := candidates[:0]
+	for _, candidate := range candidates {
+		if candidate != nil && candidate.Verbatim != nil && candidate.Verbatim.IsValidAt(at) {
+			valid = append(valid, candidate)
+		}
+	}
+	return valid
+}
+
+func filterCandidatesByKind(candidates []*entities.Candidate, kind *valueobjects.MemoryKind) []*entities.Candidate {
+	if kind == nil {
+		return candidates
+	}
+	filtered := candidates[:0]
+	for _, candidate := range candidates {
+		if candidate != nil && candidate.Verbatim != nil && candidate.Verbatim.Kind == *kind {
+			filtered = append(filtered, candidate)
+		}
+	}
+	return filtered
 }
 
 func (uc *RecallMemory) getQueryEmbedding(ctx context.Context, query string) ([]float32, error) {

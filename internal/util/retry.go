@@ -75,7 +75,7 @@ func Retry(ctx context.Context, config RetryConfig, fn RetryableFunc) error {
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return fmt.Errorf("retry cancelled: %w", ctx.Err())
+			return fmt.Errorf("retry canceled: %w", ctx.Err())
 		case <-timer.C:
 			// Continue to next attempt
 		}
@@ -131,7 +131,7 @@ func RetryWithResult[T any](ctx context.Context, config RetryConfig, fn func() (
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return zero, fmt.Errorf("retry cancelled: %w", ctx.Err())
+			return zero, fmt.Errorf("retry canceled: %w", ctx.Err())
 		case <-timer.C:
 			// Continue to next attempt
 		}

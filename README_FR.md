@@ -12,10 +12,10 @@
 
   [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.4.7-blue?style=flat-square)]()
+  [![Version](https://img.shields.io/badge/Version-0.5.0-blue?style=flat-square)]()
   [![Tests](https://img.shields.io/badge/Tests-~70%25-yellow?style=flat-square)]()
 
-  [Référence API](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [English](README.md) • [Extension SOUL](https://github.com/benoitpetit/soul)
+  [Documentation](docs/INDEX.md) • [Référence API](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [English](README.md) • [Extension SOUL](https://github.com/benoitpetit/soul)
 
 </div>
 
@@ -393,7 +393,8 @@ Cela révèle non seulement **ce qui** a été décidé, mais **pourquoi** — e
 ### Prérequis
 
 - Go 1.25+ (si compilation depuis les sources)
-- SQLite3 (inclus)
+- Chaîne de compilation CGO et en-têtes de développement OpenSSL (`libssl-dev` sur Debian/Ubuntu)
+- SQLite est embarqué via SQLCipher ; aucun paquet SQLite système n’est requis
 - ~100 Mo d'espace disque pour le modèle d'embedding
 
 ### Depuis les sources
@@ -401,7 +402,7 @@ Cela révèle non seulement **ce qui** a été décidé, mais **pourquoi** — e
 ```bash
 git clone https://github.com/benoitpetit/mira.git
 cd mira
-go build -o mira ./cmd/mira
+go build -tags fts5 -o mira ./cmd/mira
 ./mira --version
 ```
 
@@ -433,15 +434,32 @@ unzip mira-windows-amd64.zip
 ### 1. Initialisation
 
 ```bash
-cp config.example.yaml config.yaml
-nano config.yaml
+# Crée .mira/config.yaml et un répertoire de données local au projet
+./mira init
+
+# Vérifie la base locale, les embeddings et la configuration effective
+./mira --config .mira/config.yaml doctor
+
+# Enregistre le serveur MIRA local au projet dans votre client MCP (optionnel)
+./mira setup --client codex
+./mira setup --client claude-code --scope local
+./mira setup --client codex --automatic-memory --memory-wing api
+./mira setup --client claude-code --automatic-memory --memory-wing api
+./mira setup --client windsurf --automatic-memory --memory-wing api
+# Capturer aussi les réponses terminées quand le client le permet (opt-in explicite)
+./mira setup --client codex --automatic-memory --include-assistant --memory-wing api
+./mira setup --client claude-code --automatic-memory --include-assistant --memory-wing api
+./mira setup --client windsurf --automatic-memory --include-assistant --memory-wing api
+./mira setup --client cursor
+./mira setup --client windsurf
+./mira setup --client claude-desktop
 ```
 
 ### 2. Démarrer le serveur MCP
 
 ```bash
 # Mode stdio — pour Claude Desktop, Cursor, etc.
-./mira server
+./mira --config .mira/config.yaml start
 
 # Avec un fichier de config personnalisé
 ./mira --config ./config.yaml server
@@ -449,8 +467,9 @@ nano config.yaml
 # Avec un chemin de stockage personnalisé (aussi : MIRA_DATA_PATH)
 ./mira --storage-path /data/mira server
 
-# Modes de transport MCP : stdio (défaut), sse
+# Transports MCP réseau : SSE ou HTTP JSON-RPC stateless
 ./mira server --transport sse --mcp-addr localhost:3001
+./mira server --transport http --mcp-addr localhost:3001 # requêtes POST sur /mcp
 
 # Activer l'API REST optionnelle
 ./mira server --with-api --api-addr :8080 --api-token mon-secret
@@ -489,19 +508,43 @@ nano config.yaml
 # Stocker une mémoire depuis le CLI
 ./mira store --content "PostgreSQL choisi pour la DB primaire" --wing backend-team --type decision
 
+# Conserver un fait historique sans le rappeler après la fin de sa validité
+./mira store --content "MySQL était la DB primaire" --wing backend-team --type fact --valid-until 2026-04-14T23:59:59Z
+
 # Supprimer une mémoire par UUID
 ./mira delete 5a159ddf-bc11-46a6-8a0d-f39f25853cb4
 
-# Exporter les mémoires en JSON
+# Exporter les mémoires en JSON (réimportable avec mira import)
 ./mira export --wing backend-team --output memories.json
 
-# Importer des mémoires depuis JSON (avec aperçu dry-run)
+# Exporter un instantané Markdown lisible (également importable)
+./mira export --wing backend-team --format markdown --output memories.md
+
+# Exporter une enveloppe JSON compatible avec une liste Mem0 V3
+./mira export --wing backend-team --format mem0 --output memories.mem0.json
+
+# Importer des mémoires depuis JSON ou Markdown MIRA (valider d'abord avec --dry-run)
 ./mira import --file memories.json
+./mira import --file memories.md
 ./mira import --file memories.json --dry-run
 
 # Optimiser un fichier d'historique de chat pour tenir dans un budget de tokens (sans LLM)
 ./mira optimize --file history.json --budget 2000
 ./mira optimize --file history.json --stats-only
+
+# Mesurer la couverture des éléments attendus après compression (tableau JSON de chaînes)
+./mira optimize --file history.json --assertions expected-evidence.json --stats-only
+
+# Extraire les mémoires d'une conversation JSON exportée (prévisualiser d'abord)
+./mira ingest --file conversation.json --wing api --dry-run
+./mira ingest --file conversation.json --wing api --include-assistant
+
+# Recevoir les événements JSON Lines d'un hook/exporteur local
+conversation-hook --jsonl | ./mira ingest --stream --wing api
+
+# Consommer les événements structurés du CLI Cursor (réponse assistant sur opt-in)
+cursor-agent --output-format stream-json "Résume la décision de base de données" | \
+  ./mira ingest --stream --wing api --include-assistant
 
 # Validation et inspection de la configuration
 ./mira config validate
@@ -522,11 +565,11 @@ MIRA supporte la portabilité complète des données. Vos mémoires vous apparti
 # Exporter un wing spécifique uniquement
 ./mira export --wing backend-team --output backend-memories.json
 
-# Exporter avec filtres
-./mira export --wing backend-team --type decision --output decisions.json
+# Limiter la taille de l'export
+./mira export --wing backend-team --limit 500 --output recent-memories.json
 
-# Aperçu de ce qui serait exporté
-./mira export --wing backend-team --output memories.json --dry-run
+# Exporter un instantané portable et lisible
+./mira export --wing backend-team --format markdown --output backend-memories.md
 ```
 
 #### Import
@@ -538,18 +581,24 @@ MIRA supporte la portabilité complète des données. Vos mémoires vous apparti
 # Importer pour de bon
 ./mira import --file memories.json
 
+# Restaurer un instantané Markdown exporté par MIRA
+./mira import --file backend-memories.md --format markdown
+
+# Importer une réponse de liste Mem0 V3 ou un tableau d'enregistrements Mem0
+./mira import --file memories.mem0.json --format mem0
+
 # Importer avec remapping de wing
-./mira import --file old-project.json --target-wing new-project
+./mira import --file old-project.json --wing new-project
 ```
 
 #### Sauvegarde & Restauration
 
 ```bash
-# Sauvegarde complète
-cp -r ~/.mira ~/.mira.backup.$(date +%Y%m%d)
+# Sauvegarde locale au projet
+cp -r .mira .mira.backup.$(date +%Y%m%d)
 
 # Restaurer depuis une sauvegarde
-cp -r ~/.mira.backup.20260901 ~/.mira
+cp -r .mira.backup.20260901 .mira
 ```
 
 > **Votre mémoire IA vous appartient.** Pas de lock-in, pas de dépendance cloud. Exportez, sauvegardez ou migrez à tout moment.
@@ -623,7 +672,7 @@ Nous avons décidé de migrer vers PostgreSQL pour la v2...
 
 ```yaml
 system:
-  version: "0.4.7"
+  version: "0.5.0"
 
 storage:
   path: ".mira"
@@ -633,6 +682,7 @@ storage:
     cache_size: -64000
     mmap_size: 268435456
     temp_store: MEMORY
+    encryption_key: "" # Préférer MIRA_SQLITE_KEY ; ne jamais committer une vraie clé
 
 embeddings:
   current_model: "sentence-transformers/all-MiniLM-L6-v2"
@@ -703,8 +753,8 @@ soul:
 
 mcp:
   name: "mira"
-  version: "0.4.7"
-  transport: "stdio"   # "stdio" pour Claude Desktop/Cursor, "sse" pour HTTP SSE
+  version: "0.5.0"
+  transport: "stdio"   # "stdio", "sse", ou "http" stateless sur /mcp
   address: "localhost:3001"
   timeout_seconds: 30
 
@@ -730,6 +780,11 @@ webhooks:
   timeout_seconds: 30
   endpoints: []
 ```
+
+Définissez `MIRA_SQLITE_KEY` pour chiffrer la base SQLite avec SQLCipher. La
+clé est appliquée avant l’activation de WAL : une nouvelle base est donc chiffrée
+dès sa première page. Gardez la clé hors du fichier de configuration autant que
+possible.
 
 ---
 
@@ -818,6 +873,7 @@ Choisissez le bon type de mémoire en fonction de ce que vous stockez :
 | Outil | Description |
 |-------|-------------|
 | `mira_store` | Stocker une mémoire avec extraction T0/T1/T2 |
+| `mira_ingest` | Extraire des mémoires d'historique depuis des messages de conversation structurés |
 | `mira_recall` | Récupérer le contexte optimal dans un budget de tokens |
 | `mira_load` | Charger le verbatim complet par UUID |
 | `mira_causal_chain` | Remonter la chaîne causale depuis une mémoire |
@@ -843,6 +899,39 @@ Quand un recall dans un wing principal ne retourne rien, `mira_recall` supporte 
   }
 }
 ```
+
+### Mémoire projet et globale
+
+Utilisez le nom du projet comme `wing` pour les mémoires propres au projet. Les
+préférences et conventions partagées vont dans le wing réservé `general`. Un recall
+de projet peut inclure cette mémoire partagée uniquement lorsqu'il ne trouve aucun
+résultat utile dans le projet :
+
+```bash
+# Stocker une préférence partagée
+./mira store --content "L'utilisateur préfère le français" --global --type preference
+
+# Chercher d'abord dans le projet, puis dans le wing général partagé
+./mira query -q "langue préférée" --wing api --include-global
+```
+
+Les requêtes MCP et REST `mira_recall` acceptent aussi `include_global: true`.
+
+### Catégories de mémoire
+
+Le `type` est la classification technique inférée par MIRA (`fact`,
+`decision`, `preference`, …). Le `kind` est le rôle métier de la mémoire :
+`identity`, `user`, `project`, `task`, `knowledge` ou `history`. Il permet de
+ne rappeler que le rôle utile à l'étape de l'agent :
+
+```bash
+./mira store --content "L'utilisateur préfère des réponses françaises concises" --global --type preference --kind user
+./mira query -q "style de réponse" --wing api --include-global --kind user
+```
+
+Sans valeur explicite, MIRA déduit une catégorie cohérente du type détecté. Le
+champ `kind` est aussi disponible dans `mira_store`, `mira_recall`, la recherche
+et le recall REST, ainsi que les formats JSON, Markdown et Mem0 d'export/import.
 
 ### Recherche multilingue
 
@@ -878,6 +967,16 @@ curl http://localhost:9090/metrics       # Métriques Prometheus
 
 MIRA embarque une API REST HTTP optionnelle pour les scripts, tableaux de bord ou intégrations non-MCP. Désactivée par défaut.
 
+### Explorateur de mémoire local
+
+Ouvrez [http://127.0.0.1:8080/](http://127.0.0.1:8080/) pour consulter les statistiques, la recherche sémantique, la timeline et le contexte causal avec **Why this memory?**.
+
+```bash
+./mira server --transport sse --with-api --api-addr 127.0.0.1:8080
+```
+
+Si l’authentification Bearer REST est activée, saisissez le même jeton dans le champ **API token** de l’explorateur. Il reste dans le stockage de session du navigateur et n’est joint qu’aux requêtes API.
+
 ### Activation
 
 ```bash
@@ -899,13 +998,14 @@ Quand `auth_token` est défini, chaque requête doit porter :
 Authorization: Bearer mon-secret
 ```
 
-L'endpoint `/openapi.json` est toujours public.
+L’endpoint `/openapi.json` et les fichiers statiques du dashboard restent publics ; tous les endpoints de données `/api/v1` restent protégés.
 
 ### Endpoints
 
 | Méthode | Chemin | Description |
 |---------|--------|-------------|
 | `POST` | `/api/v1/memories` | Stocker une mémoire |
+| `POST` | `/api/v1/memories/ingest` | Extraire des mémoires d'historique d'une conversation structurée |
 | `GET` | `/api/v1/memories/{id}` | Charger le verbatim complet par UUID |
 | `PUT` | `/api/v1/memories/{id}` | Mettre à jour le contenu |
 | `DELETE` | `/api/v1/memories/{id}` | Supprimer une mémoire |
@@ -933,6 +1033,12 @@ curl -s -X POST http://localhost:8080/api/v1/memories/recall \
   -H "Authorization: Bearer mon-secret" \
   -H "Content-Type: application/json" \
   -d '{"query":"Pourquoi PostgreSQL ?","budget":2000,"wing":"backend"}'
+
+# Importer des messages de conversation (utiliser dry_run pour prévisualiser)
+curl -s -X POST http://localhost:8080/api/v1/memories/ingest \
+  -H "Authorization: Bearer mon-secret" \
+  -H "Content-Type: application/json" \
+  -d '{"wing":"backend","messages":[{"role":"user","content":"Nous avons choisi PostgreSQL pour la v2 grâce au support JSONB."}]}'
 
 # Obtenir la spec OpenAPI (sans auth)
 curl -s http://localhost:8080/openapi.json | jq .info
@@ -1031,7 +1137,7 @@ mira/
 │   │   ├── webhook/       # Notifications HTTP
 │   │   └── metrics/       # Métriques Prometheus
 │   ├── interfaces/
-│   │   ├── mcp/           # Contrôleur MCP (stdio / SSE)
+│   │   ├── mcp/           # Contrôleur MCP (stdio / SSE / HTTP)
 │   │   └── rest/          # API REST HTTP optionnelle (:8080)
 │   ├── config/
 │   └── app/               # Racine de composition (injection de dépendances)
@@ -1039,7 +1145,8 @@ mira/
 │   ├── INDEX.md
 │   ├── ARCHITECTURE.md
 │   ├── FEATURES.md
-│   └── API_REFERENCES.md
+│   ├── API_REFERENCES.md
+│   └── MARKET_REFERENCES.md
 ├── SKILL.md
 ├── config.example.yaml
 └── README_FR.md
@@ -1052,10 +1159,10 @@ mira/
 ### Tests
 
 ```bash
-go test -v ./...                       # Tests unitaires
-go test -race ./...                    # Avec détection de race
-go test -bench=. -benchmem ./...      # Benchmarks
-go test -cover ./...                   # Couverture
+go test -tags fts5 -v ./...                       # Tests unitaires
+go test -tags fts5 -race ./...                    # Avec détection de race
+go test -tags fts5 -bench=. -benchmem ./...      # Benchmarks
+go test -tags fts5 -cover ./...                   # Couverture
 ```
 
 ### Commandes Make
@@ -1066,6 +1173,7 @@ make test         # Tests (avec race detector)
 make test-short   # Tests rapides
 make bench        # Benchmarks
 make bench-full   # Benchmarks complets
+make bench-locomo # Rapport reproductible de recall type LoCoMo
 make run          # Compiler et lancer avec config.yaml
 make clean        # Nettoyer les artefacts et données
 make lint         # Linters
