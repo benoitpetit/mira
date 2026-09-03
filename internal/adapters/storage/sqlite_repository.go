@@ -15,6 +15,7 @@ import (
 	_ "github.com/benoitpetit/go-sqlcipher/v4"
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
+	"github.com/benoitpetit/mira/internal/util"
 	"github.com/google/uuid"
 )
 
@@ -1172,6 +1173,10 @@ func (r *SQLiteRepository) SearchLexical(ctx context.Context, query string, limi
 	if !r.fts5Enabled {
 		return nil, fmt.Errorf("FTS5 not available")
 	}
+	ftsQuery := util.NormalizeFTS5Query(query)
+	if ftsQuery == "" {
+		return nil, nil
+	}
 
 	sqlQuery := `
 		SELECT v.id, v.content, v.wing, v.room, v.token_count, v.created_at, v.valid_from, v.valid_until, v.kind,
@@ -1183,7 +1188,7 @@ func (r *SQLiteRepository) SearchLexical(ctx context.Context, query string, limi
 		JOIN fingerprints f ON v.id = f.verbatim_id
 		JOIN embeddings e ON v.id = e.id
 		WHERE fts.content MATCH ?`
-	args := []interface{}{query}
+	args := []interface{}{ftsQuery}
 
 	if wing != nil {
 		sqlQuery += " AND v.wing = ?"

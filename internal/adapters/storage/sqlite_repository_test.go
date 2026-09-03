@@ -1034,6 +1034,24 @@ func TestSearchLexical(t *testing.T) {
 		t.Errorf("SearchLexical('fox') expected v1, got %v", results)
 	}
 
+	// Natural-language punctuation and FTS5 operators must be treated as text,
+	// not passed through to the MATCH expression as syntax.
+	resultsQuestion, err := repo.SearchLexical(ctx, "Which animal is a fox?", 10, nil, nil)
+	if err != nil {
+		t.Fatalf("SearchLexical(natural-language question): %v", err)
+	}
+	if len(resultsQuestion) != 1 || resultsQuestion[0].Verbatim.ID != v1.ID {
+		t.Errorf("SearchLexical(natural-language question) expected v1, got %v", resultsQuestion)
+	}
+
+	punctuationOnly, err := repo.SearchLexical(ctx, "?!...", 10, nil, nil)
+	if err != nil {
+		t.Fatalf("SearchLexical(punctuation only): %v", err)
+	}
+	if len(punctuationOnly) != 0 {
+		t.Errorf("expected no results for punctuation-only query, got %d", len(punctuationOnly))
+	}
+
 	// Wing filter
 	resultsWing, err := repo.SearchLexical(ctx, "fox", 10, strRef("wing1"), nil)
 	if err != nil {

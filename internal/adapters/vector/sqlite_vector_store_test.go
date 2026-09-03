@@ -408,4 +408,12 @@ func TestSQLiteVectorStore_SearchLexical(t *testing.T) {
 	if len(results) == 0 {
 		t.Error("SearchLexical('fox') expected ≥1 result")
 	}
+
+	results, err = store.SearchLexical(ctx, "Where is the fox?", 5, nil, nil)
+	if err != nil {
+		t.Fatalf("SearchLexical(natural-language question): %v", err)
+	}
+	if len(results) == 0 {
+		t.Error("SearchLexical(natural-language question) expected ≥1 result")
+	}
 }
