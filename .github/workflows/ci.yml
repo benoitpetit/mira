@@ -23,6 +23,9 @@ jobs:
           repository: benoitpetit/soul
           path: soul
 
+      - name: Link SOUL dependency for Go module replacement
+        run: ln -s "$GITHUB_WORKSPACE/soul" ../soul
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -55,6 +58,9 @@ jobs:
         with:
           repository: benoitpetit/soul
           path: soul
+
+      - name: Link SOUL dependency for Go module replacement
+        run: ln -s "$GITHUB_WORKSPACE/soul" ../soul
 
       - name: Set up Go
         uses: actions/setup-go@v5
