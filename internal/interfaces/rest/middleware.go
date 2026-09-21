@@ -3,9 +3,11 @@ package rest
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
+	"net"
 	"net/http"
 	"runtime/debug"
 	"strings"
@@ -22,6 +24,7 @@ type rateLimiter struct {
 	interval  time.Duration
 	limit     int                    // max requests per interval
 	intervals map[string][]time.Time // IP -> recent request timestamps
+	lastClean time.Time
 }
 
 // newRateLimiter creates a new rate limiter with the given limit and interval.
@@ -40,6 +43,14 @@ func (rl *rateLimiter) allowRequest(ip string) bool {
 	defer rl.mu.Unlock()
 
 	now := time.Now()
+	if rl.lastClean.IsZero() || now.Sub(rl.lastClean) >= rl.interval {
+		for key, timestamps := range rl.intervals {
+			if len(timestamps) == 0 || now.Sub(timestamps[len(timestamps)-1]) >= rl.interval {
+				delete(rl.intervals, key)
+			}
+		}
+		rl.lastClean = now
+	}
 	// Clean up old timestamps outside the interval
 	timestamps := rl.intervals[ip]
 	valid := make([]time.Time, 0, rl.limit)
@@ -61,15 +72,21 @@ func (rl *rateLimiter) allowRequest(ip string) bool {
 	return true
 }
 
+func requestClientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
 // rateLimitMiddleware enforces per-IP rate limiting.
 func rateLimitMiddleware(limit int, interval time.Duration, next http.Handler) http.Handler {
 	rl := newRateLimiter(limit, interval)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := r.RemoteAddr
-		// If behind a proxy, extract real IP from X-Forwarded-For
-		if forwardedFor := r.Header.Get("X-Forwarded-For"); forwardedFor != "" {
-			ip = strings.Split(forwardedFor, ",")[0]
-		}
+		// Do not trust X-Forwarded-For without an explicit trusted-proxy
+		// configuration: clients could otherwise bypass the limiter by changing it.
+		ip := requestClientIP(r)
 
 		if !rl.allowRequest(ip) {
 			writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
@@ -116,9 +133,15 @@ func wingForRequest(method, path string) string {
 	case method == http.MethodPost && (strings.HasSuffix(path, "/recall") || strings.HasSuffix(path, "/search")):
 		return WingRead
 
+	// admin wing must be checked before the broad /memories write prefix.
+	case method == http.MethodPost && strings.HasSuffix(path, "/consolidate"):
+		return WingAdmin
+	case method == http.MethodPost && strings.HasPrefix(path, "/api/v1/archive"):
+		return WingAdmin
+
 	// write wing
 	case method == http.MethodPost && strings.HasPrefix(path, "/api/v1/memories"):
-		// POST /api/v1/memories (store) — not recall/search/consolidate
+		// POST /api/v1/memories (store/ingest)
 		return WingWrite
 	case method == http.MethodPut:
 		return WingWrite
@@ -127,11 +150,6 @@ func wingForRequest(method, path string) string {
 	case method == http.MethodDelete:
 		return WingDelete
 
-	// admin wing
-	case method == http.MethodPost && strings.HasSuffix(path, "/consolidate"):
-		return WingAdmin
-	case method == http.MethodPost && strings.HasPrefix(path, "/api/v1/archive"):
-		return WingAdmin
 	}
 
 	// Default fallback: treat as write (conservative)
@@ -209,7 +227,7 @@ func authMiddleware(masterToken string, wingTokens map[string][]string, repo por
 		bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 
 		// Master token → full access
-		if masterToken != "" && bearer == masterToken {
+		if masterToken != "" && secureTokenEqual(bearer, masterToken) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -246,6 +264,13 @@ func authMiddleware(masterToken string, wingTokens map[string][]string, repo por
 
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 	})
+}
+
+func secureTokenEqual(got, expected string) bool {
+	if len(got) != len(expected) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(expected)) == 1
 }
 
 func isPublicRESTPath(path string) bool {

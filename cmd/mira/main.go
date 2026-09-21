@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"time"
 
@@ -25,7 +24,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const miraVersion = "0.5.0"
+const (
+	miraVersion        = config.CurrentVersion
+	clientCodex        = "codex"
+	clientClaudeCode   = "claude-code"
+	clientWindsurf     = "windsurf"
+	defaultProjectWing = "project"
+	generalWing        = "general"
+	formatJSON         = "json"
+	formatMarkdown     = "markdown"
+	formatMem0         = "mem0"
+)
 
 // globalFlags holds flags shared by every subcommand.
 var globalFlags struct {
@@ -42,9 +51,9 @@ optional SOUL identity features.
 Usage: mira <command> [flags]
 
 Examples:
-  mira init                                      # Initialise a project-local store
+  mira init                                      # Initialize a project-local store
   mira start                                     # Start MCP server
-  mira server --with-api --api-addr :8080      # With REST API
+  mira server --with-api --api-addr 127.0.0.1:8080 # Local REST API
   mira doctor                                   # Health check
   mira query -q "search term" --wing my-wing   # Recall memories
 
@@ -69,6 +78,8 @@ func main() {
 		newSetupCmd(),
 		newServerCmd(),
 		newMigrateCmd(),
+		newReindexCmd(),
+		newReembedCmd(),
 		newDoctorCmd(),
 		newStatusCmd(),
 		newQueryCmd(),
@@ -114,15 +125,23 @@ type mcpConfigFile struct {
 }
 
 func cursorMCPConfigPath(miraConfigPath string) string {
-	return filepath.Join(filepath.Dir(filepath.Dir(miraConfigPath)), ".cursor", "mcp.json")
+	return filepath.Join(projectRootFromMiraConfig(miraConfigPath), ".cursor", "mcp.json")
+}
+
+func projectRootFromMiraConfig(miraConfigPath string) string {
+	configDir := filepath.Dir(miraConfigPath)
+	if filepath.Base(configDir) == ".mira" {
+		return filepath.Dir(configDir)
+	}
+	return configDir
 }
 
 func windsurfMCPConfigPath(homeDir string) string {
-	return filepath.Join(homeDir, ".codeium", "windsurf", "mcp_config.json")
+	return filepath.Join(homeDir, ".codeium", clientWindsurf, "mcp_config.json")
 }
 
 func windsurfHooksConfigPath(homeDir string) string {
-	return filepath.Join(homeDir, ".codeium", "windsurf", "hooks.json")
+	return filepath.Join(homeDir, ".codeium", clientWindsurf, "hooks.json")
 }
 
 // claudeDesktopMCPConfigPath returns the official Claude Desktop configuration
@@ -142,40 +161,48 @@ func claudeDesktopMCPConfigPath(goos, homeDir, appData string) (string, error) {
 	}
 }
 
-func readMCPConfig(path, client string) (mcpConfigFile, error) {
-	config := mcpConfigFile{MCPServers: make(map[string]mcpStdioServerConfig)}
-	raw, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return config, nil
-	}
-	if err != nil {
-		return config, fmt.Errorf("setup: read %s config %q: %w", client, path, err)
-	}
-	if err := json.Unmarshal(raw, &config); err != nil {
-		return config, fmt.Errorf("setup: %s config %q is not valid JSON: %w", client, path, err)
-	}
-	if config.MCPServers == nil {
-		config.MCPServers = make(map[string]mcpStdioServerConfig)
-	}
-	return config, nil
-}
-
 func configureMCPConfig(path, client, binaryPath, miraConfigPath string, force bool) ([]byte, error) {
-	config, err := readMCPConfig(path, client)
-	if err != nil {
-		return nil, err
+	settings := make(map[string]any)
+	raw, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("setup: read %s config %q: %w", client, path, err)
 	}
-	if existing, ok := config.MCPServers["mira"]; ok && !force {
-		wanted := mcpStdioServerConfig{Command: binaryPath, Args: []string{"--config", miraConfigPath, "server"}}
-		if existing.Command != wanted.Command || !slices.Equal(existing.Args, wanted.Args) {
+	if err == nil && len(raw) > 0 {
+		if err := json.Unmarshal(raw, &settings); err != nil {
+			return nil, fmt.Errorf("setup: %s config %q is not valid JSON: %w", client, path, err)
+		}
+	}
+	servers, ok := settings["mcpServers"].(map[string]any)
+	if !ok {
+		if _, exists := settings["mcpServers"]; exists {
+			return nil, fmt.Errorf("setup: %s mcpServers in %q must be a JSON object", client, path)
+		}
+		servers = make(map[string]any)
+	}
+	if existing, ok := servers["mira"].(map[string]any); ok && !force {
+		existingCommand, _ := existing["command"].(string)
+		existingArgs, _ := existing["args"].([]any)
+		wantedArgs := []string{"--config", miraConfigPath, "server"}
+		argsMatch := len(existingArgs) == len(wantedArgs)
+		for i, arg := range existingArgs {
+			if argsMatch {
+				value, _ := arg.(string)
+				argsMatch = value == wantedArgs[i]
+			}
+		}
+		if existingCommand != binaryPath || !argsMatch {
 			return nil, fmt.Errorf("setup: %s already has a different MIRA server in %q; use --force to replace it", client, path)
 		}
 	}
-	config.MCPServers["mira"] = mcpStdioServerConfig{
-		Command: binaryPath,
-		Args:    []string{"--config", miraConfigPath, "server"},
+	entry, _ := servers["mira"].(map[string]any)
+	if entry == nil {
+		entry = make(map[string]any)
 	}
-	data, err := json.MarshalIndent(config, "", "  ")
+	entry["command"] = binaryPath
+	entry["args"] = []string{"--config", miraConfigPath, "server"}
+	servers["mira"] = entry
+	settings["mcpServers"] = servers
+	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("setup: encode %s config: %w", client, err)
 	}
@@ -197,19 +224,62 @@ func shellQuote(value string) string {
 func claudeCodeMemoryHookCommand(binaryPath, miraConfigPath, wing string) string {
 	return strings.Join([]string{
 		shellQuote(binaryPath), "--config", shellQuote(miraConfigPath),
-		"hook", "claude-code", "--wing", shellQuote(wing),
+		"hook", clientClaudeCode, "--wing", shellQuote(wing),
 	}, " ")
 }
 
 func codexMemoryHookCommand(binaryPath, miraConfigPath, wing string) string {
 	return strings.Join([]string{
 		shellQuote(binaryPath), "--config", shellQuote(miraConfigPath),
-		"hook", "codex", "--wing", shellQuote(wing),
+		"hook", clientCodex, "--wing", shellQuote(wing),
 	}, " ")
 }
 
 func codexHooksConfigPath(homeDir string) string {
 	return filepath.Join(homeDir, ".codex", "hooks.json")
+}
+
+// redactedSetupPreview removes common credential-shaped values from dry-run
+// output. Setup previews may include an existing client settings file, so they
+// must never echo secrets from a user's profile to the terminal or CI logs.
+func redactedSetupPreview(data []byte) []byte {
+	var value any
+	if err := json.Unmarshal(data, &value); err != nil {
+		return data
+	}
+
+	var redact func(any) any
+	redact = func(current any) any {
+		switch typed := current.(type) {
+		case map[string]any:
+			for key, child := range typed {
+				lowerKey := strings.ToLower(strings.ReplaceAll(key, "-", "_"))
+				if strings.Contains(lowerKey, "token") ||
+					strings.Contains(lowerKey, "secret") ||
+					strings.Contains(lowerKey, "password") ||
+					strings.Contains(lowerKey, "api_key") ||
+					strings.Contains(lowerKey, "apikey") ||
+					strings.Contains(lowerKey, "authorization") ||
+					strings.Contains(lowerKey, "private_key") {
+					typed[key] = "[REDACTED]"
+					continue
+				}
+				typed[key] = redact(child)
+			}
+		case []any:
+			for index, child := range typed {
+				typed[index] = redact(child)
+			}
+		}
+		return current
+	}
+
+	redacted := redact(value)
+	preview, err := json.MarshalIndent(redacted, "", "  ")
+	if err != nil {
+		return data
+	}
+	return append(preview, '\n')
 }
 
 type memoryHookSpec struct {
@@ -299,6 +369,17 @@ func configureClaudeCodeMemoryHooks(path, binaryPath, miraConfigPath, wing strin
 	return configureMemoryHooks(path, "Claude Code", specs...)
 }
 
+func claudeCodeHooksConfigPath(miraConfigPath, scope, homeDir string) string {
+	if scope == hookRoleUser {
+		return filepath.Join(homeDir, ".claude", "settings.json")
+	}
+	filename := "settings.local.json"
+	if scope == defaultProjectWing {
+		filename = "settings.json"
+	}
+	return filepath.Join(projectRootFromMiraConfig(miraConfigPath), ".claude", filename)
+}
+
 func configureCodexMemoryHooks(path, binaryPath, miraConfigPath, wing string, includeAssistant bool) ([]byte, error) {
 	command := codexMemoryHookCommand(binaryPath, miraConfigPath, wing)
 	specs := []memoryHookSpec{{event: "UserPromptSubmit", command: command}}
@@ -318,7 +399,7 @@ func automaticMemoryCaptureDescription(includeAssistant bool) string {
 func windsurfMemoryHookCommand(binaryPath, miraConfigPath, wing string) string {
 	return strings.Join([]string{
 		shellQuote(binaryPath), "--config", shellQuote(miraConfigPath),
-		"hook", "windsurf", "--wing", shellQuote(wing),
+		"hook", clientWindsurf, "--wing", shellQuote(wing),
 	}, " ")
 }
 
@@ -410,16 +491,16 @@ Examples:
 	  mira setup --client claude-desktop
   mira setup --client codex --mira-config /path/to/project/.mira/config.yaml`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if client != "codex" && client != "claude-code" && client != "cursor" && client != "windsurf" && client != "claude-desktop" {
+			if client != clientCodex && client != clientClaudeCode && client != "cursor" && client != clientWindsurf && client != "claude-desktop" {
 				return fmt.Errorf("unsupported client %q; supported: codex, claude-code, cursor, windsurf, claude-desktop", client)
 			}
-			if client == "claude-code" && scope != "local" && scope != "project" && scope != "user" {
+			if client == clientClaudeCode && scope != "local" && scope != defaultProjectWing && scope != hookRoleUser {
 				return fmt.Errorf("invalid --scope %q; supported values: local, project, user", scope)
 			}
-			if automaticMemory && client != "claude-code" && client != "codex" && client != "windsurf" {
+			if automaticMemory && client != clientClaudeCode && client != clientCodex && client != clientWindsurf {
 				return fmt.Errorf("--automatic-memory is currently supported only with --client codex, claude-code, or windsurf")
 			}
-			if includeAssistant && !(automaticMemory && (client == "codex" || client == "claude-code" || client == "windsurf")) {
+			if includeAssistant && !(automaticMemory && (client == clientCodex || client == clientClaudeCode || client == clientWindsurf)) {
 				return fmt.Errorf("--include-assistant requires --automatic-memory with codex, claude-code, or windsurf")
 			}
 			if automaticMemory && (!interactors.WingRoomRe.MatchString(memoryWing) || len([]rune(memoryWing)) > 100) {
@@ -456,7 +537,7 @@ Examples:
 			}
 
 			switch client {
-			case "codex":
+			case clientCodex:
 				setupArgs := codexSetupArgs(binaryPath, configPath)
 				if dryRun {
 					fmt.Printf("Would run: codex %s\n", strings.Join(setupArgs, " "))
@@ -473,14 +554,14 @@ Examples:
 						if err != nil {
 							return err
 						}
-						fmt.Printf("Would write %s:\n%s", hookPath, data)
+						fmt.Printf("Would write %s:\n%s", hookPath, redactedSetupPreview(data))
 					}
 					return nil
 				}
-				if _, err := exec.LookPath("codex"); err != nil {
+				if _, err := exec.LookPath(clientCodex); err != nil {
 					return fmt.Errorf("setup: Codex CLI is not available on PATH: %w", err)
 				}
-				command := exec.Command("codex", setupArgs...)
+				command := exec.Command(clientCodex, setupArgs...)
 				command.Stdout = os.Stdout
 				command.Stderr = os.Stderr
 				if err := command.Run(); err != nil {
@@ -509,17 +590,24 @@ Examples:
 				}
 				fmt.Println("MIRA is configured for Codex. Restart Codex if it is already running.")
 				return nil
-			case "claude-code":
+			case clientClaudeCode:
 				setupArgs := claudeCodeSetupArgs(binaryPath, configPath, scope)
 				if dryRun {
 					fmt.Printf("Would run: claude %s\n", strings.Join(setupArgs, " "))
 					if automaticMemory {
-						hookPath := filepath.Join(filepath.Dir(filepath.Dir(configPath)), ".claude", "settings.local.json")
+						homeDir, err := os.UserHomeDir()
+						if err != nil {
+							return fmt.Errorf("setup: resolve home directory for Claude Code hooks: %w", err)
+						}
+						hookPath := hookConfig
+						if hookPath == "" {
+							hookPath = claudeCodeHooksConfigPath(configPath, scope, homeDir)
+						}
 						data, err := configureClaudeCodeMemoryHooks(hookPath, binaryPath, configPath, memoryWing, includeAssistant)
 						if err != nil {
 							return err
 						}
-						fmt.Printf("Would write %s:\n%s", hookPath, data)
+						fmt.Printf("Would write %s:\n%s", hookPath, redactedSetupPreview(data))
 					}
 					return nil
 				}
@@ -533,7 +621,14 @@ Examples:
 					return fmt.Errorf("setup: Claude Code MCP registration failed: %w", err)
 				}
 				if automaticMemory {
-					hookPath := filepath.Join(filepath.Dir(filepath.Dir(configPath)), ".claude", "settings.local.json")
+					homeDir, err := os.UserHomeDir()
+					if err != nil {
+						return fmt.Errorf("setup: resolve home directory for Claude Code hooks: %w", err)
+					}
+					hookPath := hookConfig
+					if hookPath == "" {
+						hookPath = claudeCodeHooksConfigPath(configPath, scope, homeDir)
+					}
 					data, err := configureClaudeCodeMemoryHooks(hookPath, binaryPath, configPath, memoryWing, includeAssistant)
 					if err != nil {
 						return err
@@ -558,7 +653,7 @@ Examples:
 					return err
 				}
 				if dryRun {
-					fmt.Printf("Would write %s:\n%s", cursorPath, data)
+					fmt.Printf("Would write %s:\n%s", cursorPath, redactedSetupPreview(data))
 					return nil
 				}
 				if err := os.MkdirAll(filepath.Dir(cursorPath), 0o755); err != nil {
@@ -569,7 +664,7 @@ Examples:
 				}
 				fmt.Printf("MIRA is configured for Cursor in %s. Restart Cursor if it is already running.\n", cursorPath)
 				return nil
-			case "windsurf":
+			case clientWindsurf:
 				windsurfPath := clientConfig
 				if windsurfPath == "" {
 					homeDir, err := os.UserHomeDir()
@@ -583,7 +678,7 @@ Examples:
 					return err
 				}
 				if dryRun {
-					fmt.Printf("Would write %s:\n%s", windsurfPath, data)
+					fmt.Printf("Would write %s:\n%s", windsurfPath, redactedSetupPreview(data))
 					if automaticMemory {
 						hookPath := hookConfig
 						if hookPath == "" {
@@ -597,7 +692,7 @@ Examples:
 						if err != nil {
 							return err
 						}
-						fmt.Printf("Would write %s:\n%s", hookPath, hookData)
+						fmt.Printf("Would write %s:\n%s", hookPath, redactedSetupPreview(hookData))
 					}
 					return nil
 				}
@@ -647,7 +742,7 @@ Examples:
 					return err
 				}
 				if dryRun {
-					fmt.Printf("Would write %s:\n%s", claudePath, data)
+					fmt.Printf("Would write %s:\n%s", claudePath, redactedSetupPreview(data))
 					return nil
 				}
 				if err := os.MkdirAll(filepath.Dir(claudePath), 0o755); err != nil {
@@ -662,14 +757,14 @@ Examples:
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&client, "client", "codex", "MCP client to configure: codex, claude-code, cursor, windsurf, claude-desktop")
+	cmd.Flags().StringVar(&client, "client", clientCodex, "MCP client to configure: codex, claude-code, cursor, windsurf, claude-desktop")
 	cmd.Flags().StringVar(&miraConfig, "mira-config", ".mira/config.yaml", "path to the MIRA project configuration")
 	cmd.Flags().StringVar(&binaryPath, "mira-binary", "", "path to the MIRA executable (default: current executable)")
 	cmd.Flags().StringVar(&clientConfig, "client-config", "", "override the target client JSON configuration path (or Codex hook path with --automatic-memory)")
 	cmd.Flags().StringVar(&scope, "scope", "local", "Claude Code scope: local, project, or user")
 	cmd.Flags().BoolVar(&force, "force", false, "replace an existing, different Cursor or Windsurf MIRA configuration")
 	cmd.Flags().BoolVar(&automaticMemory, "automatic-memory", false, "with a supported client, store substantive user prompts through a local hook")
-	cmd.Flags().StringVar(&memoryWing, "memory-wing", "project", "wing used by the automatic-memory hook")
+	cmd.Flags().StringVar(&memoryWing, "memory-wing", defaultProjectWing, "wing used by the automatic-memory hook")
 	cmd.Flags().BoolVar(&includeAssistant, "include-assistant", false, "with automatic memory, also store completed assistant responses when the client exposes them")
 	cmd.Flags().StringVar(&hookConfig, "hook-config", "", "override the automatic-memory hook configuration path")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the planned setup without changing configuration")
@@ -688,7 +783,7 @@ func newInitCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Initialise a project-local MIRA store",
+		Short: "Initialize a project-local MIRA store",
 		Long: `Creates .mira/config.yaml with safe local defaults and a .mira data directory.
 
 The generated configuration uses an absolute storage path so it continues to
@@ -732,14 +827,14 @@ Examples:
 				return fmt.Errorf("init: write configuration: %w", err)
 			}
 
-			fmt.Printf("MIRA initialised for %s\n", projectDir)
+			fmt.Printf("MIRA initialized for %s\n", projectDir)
 			fmt.Printf("  Configuration : %s\n", configPath)
 			fmt.Printf("  Data directory: %s\n", dataDir)
 			fmt.Printf("\nNext steps:\n  mira --config %s doctor\n  mira --config %s start\n", configPath, configPath)
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&dir, "dir", ".", "project directory to initialise")
+	cmd.Flags().StringVar(&dir, "dir", ".", "project directory to initialize")
 	cmd.Flags().BoolVar(&force, "force", false, "replace an existing .mira/config.yaml")
 	return cmd
 }
@@ -763,6 +858,7 @@ Transport modes (--transport):
 Optional subsystems:
   --with-soul     enable SOUL identity subsystem (+8 tools, total 22)
   --with-api      expose a REST HTTP API (see --api-addr, --api-token)
+  --mcp-token     protect MCP HTTP transport on non-loopback addresses
   --with-llm      enable Ollama-backed extraction (see --llm-endpoint)
   --no-metrics    disable the Prometheus metrics endpoint
 
@@ -788,6 +884,9 @@ Examples:
 			}
 			if a, _ := cmd.Flags().GetString("mcp-addr"); a != "" {
 				cfg.MCP.Address = a
+			}
+			if token, _ := cmd.Flags().GetString("mcp-token"); token != "" {
+				cfg.MCP.AuthToken = token
 			}
 
 			// SOUL
@@ -822,6 +921,12 @@ Examples:
 				cfg.Extraction.LLM.Endpoint = ep
 			}
 
+			// Re-validate after applying command-line overrides. This is important
+			// for security rules that depend on the final listen address and token.
+			if err := cfg.Validate(); err != nil {
+				return fmt.Errorf("invalid configuration: %w", err)
+			}
+
 			application, err := app.NewApplication(cfg)
 			if err != nil {
 				return fmt.Errorf("failed to start application: %w", err)
@@ -833,6 +938,7 @@ Examples:
 	// Transport
 	cmd.Flags().String("transport", "", "MCP transport: stdio (default), sse, or http")
 	cmd.Flags().String("mcp-addr", "", "bind address for sse/http transport (default localhost:3001)")
+	cmd.Flags().String("mcp-token", "", "bearer token for MCP HTTP transport on non-loopback addresses")
 
 	// SOUL
 	cmd.Flags().Bool("with-soul", false, "enable SOUL identity subsystem (+8 tools, total 17)")
@@ -861,7 +967,7 @@ func newMigrateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "migrate",
 		Short: "Run database migrations and exit",
-		Long:  "Initialises the SQLite schema to the latest version, then exits.",
+		Long:  "Initializes the SQLite schema to the latest version, then exits.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := loadConfig()
 			if err != nil {
@@ -877,6 +983,71 @@ func newMigrateCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func newReindexCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "reindex",
+		Short: "Rebuild the HNSW index from SQLite embeddings",
+		Long: `Rebuilds the derived HNSW index from the embedding rows stored in SQLite.
+
+This repairs an interrupted or stale index and skips embeddings generated by a
+different model hash. It does not generate new embeddings; use an explicit
+migration workflow before changing the configured embedding model.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			applyStoragePath(cfg)
+			application, err := app.NewApplication(cfg)
+			if err != nil {
+				return fmt.Errorf("reindex: failed to initialize application: %w", err)
+			}
+			defer application.Close()
+			if err := application.RebuildVectorIndex(context.Background()); err != nil {
+				return fmt.Errorf("reindex: %w", err)
+			}
+			fmt.Println("HNSW index rebuilt successfully.")
+			return nil
+		},
+	}
+}
+
+func newReembedCmd() *cobra.Command {
+	var confirm bool
+	cmd := &cobra.Command{
+		Use:   "reembed",
+		Short: "Regenerate all embeddings with the configured model",
+		Long: `Regenerates T2 embeddings from stored T0 content, updates the model hash
+in T1/T2, and rebuilds HNSW. This can be expensive and requires --yes.
+
+The migration currently supports SQLite. It stops at the first failed memory
+and reports how many memories were already migrated. Take a backup first.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !confirm {
+				return fmt.Errorf("reembed changes every stored embedding; rerun with --yes")
+			}
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			applyStoragePath(cfg)
+			application, err := app.NewApplication(cfg)
+			if err != nil {
+				return fmt.Errorf("reembed: failed to initialize application: %w", err)
+			}
+			defer application.Close()
+			count, err := application.ReembedAll(context.Background())
+			if err != nil {
+				return fmt.Errorf("reembed: migrated %d memories before failure: %w", count, err)
+			}
+			fmt.Printf("Reembedded %d memories successfully.\n", count)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&confirm, "yes", false, "confirm regeneration of all stored embeddings")
+	return cmd
 }
 
 // ---------------------------------------------------------------------------
@@ -899,7 +1070,7 @@ Use --json for machine-readable output (same data, JSON format).`,
 			applyStoragePath(cfg)
 			application, err := app.NewApplication(cfg)
 			if err != nil {
-				return fmt.Errorf("doctor: failed to initialise application: %w", err)
+				return fmt.Errorf("doctor: failed to initialize application: %w", err)
 			}
 			defer application.Close()
 
@@ -1034,7 +1205,7 @@ For a human-readable report use: mira doctor`,
 			applyStoragePath(cfg)
 			application, err := app.NewApplication(cfg)
 			if err != nil {
-				return fmt.Errorf("status: failed to initialise application: %w", err)
+				return fmt.Errorf("status: failed to initialize application: %w", err)
 			}
 			defer application.Close()
 
@@ -1085,7 +1256,7 @@ Examples:
 			applyStoragePath(cfg)
 			application, err := app.NewApplication(cfg)
 			if err != nil {
-				return fmt.Errorf("query: failed to initialise application: %w", err)
+				return fmt.Errorf("query: failed to initialize application: %w", err)
 			}
 			defer application.Close()
 
@@ -1107,8 +1278,8 @@ Examples:
 				}
 				input.Kind = &kind
 			}
-			if includeGlobal && wing != "general" {
-				input.FallbackWings = []string{"general"}
+			if includeGlobal && wing != generalWing {
+				input.FallbackWings = []string{generalWing}
 			}
 
 			out, err := application.RecallMemoryUC().Execute(ctx, input)
@@ -1177,10 +1348,10 @@ Examples:
 				return fmt.Errorf("--content / -c is required")
 			}
 			if global {
-				if wing != "" && wing != "general" {
+				if wing != "" && wing != generalWing {
 					return fmt.Errorf("--global cannot be combined with --wing other than general")
 				}
-				wing = "general"
+				wing = generalWing
 			}
 			if wing == "" {
 				return fmt.Errorf("--wing / -w is required (or use --global for shared memory)")
@@ -1192,7 +1363,7 @@ Examples:
 			applyStoragePath(cfg)
 			application, err := app.NewApplication(cfg)
 			if err != nil {
-				return fmt.Errorf("store: failed to initialise application: %w", err)
+				return fmt.Errorf("store: failed to initialize application: %w", err)
 			}
 			defer application.Close()
 
@@ -1306,7 +1477,7 @@ Examples:
 			applyStoragePath(cfg)
 			application, err := app.NewApplication(cfg)
 			if err != nil {
-				return fmt.Errorf("delete: failed to initialise application: %w", err)
+				return fmt.Errorf("delete: failed to initialize application: %w", err)
 			}
 			defer application.Close()
 
@@ -1378,7 +1549,7 @@ Examples:
   mira export --wing backend-team -o out.json  # combined
   mira export --limit 500                      # cap at 500 records`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if format != "json" && format != "markdown" && format != "mem0" {
+			if format != formatJSON && format != formatMarkdown && format != formatMem0 {
 				return fmt.Errorf("export: unsupported format %q; supported formats: json, markdown, mem0", format)
 			}
 
@@ -1389,7 +1560,7 @@ Examples:
 			applyStoragePath(cfg)
 			application, err := app.NewApplication(cfg)
 			if err != nil {
-				return fmt.Errorf("export: failed to initialise application: %w", err)
+				return fmt.Errorf("export: failed to initialize application: %w", err)
 			}
 			defer application.Close()
 
@@ -1431,9 +1602,9 @@ Examples:
 			}
 
 			var data []byte
-			if format == "markdown" {
+			if format == formatMarkdown {
 				data = []byte(renderMarkdownExport(records))
-			} else if format == "mem0" {
+			} else if format == formatMem0 {
 				var marshalErr error
 				data, marshalErr = json.MarshalIndent(renderMem0Export(records), "", "  ")
 				if marshalErr != nil {
@@ -1451,7 +1622,7 @@ Examples:
 				fmt.Println(string(data))
 				return nil
 			}
-			if writeErr := os.WriteFile(output, data, 0o644); writeErr != nil {
+			if writeErr := os.WriteFile(output, data, 0o644); writeErr != nil { //nolint:gosec // exports are user-requested files
 				return fmt.Errorf("export: write error: %w", writeErr)
 			}
 			fmt.Printf("Exported %d records to %s\n", len(records), output)
@@ -1596,7 +1767,7 @@ Examples:
 			applyStoragePath(cfg)
 			application, err := app.NewApplication(cfg)
 			if err != nil {
-				return fmt.Errorf("import: failed to initialise application: %w", err)
+				return fmt.Errorf("import: failed to initialize application: %w", err)
 			}
 			defer application.Close()
 
@@ -1660,23 +1831,23 @@ func parseImportRecords(data []byte, format string) ([]importRecord, error) {
 	switch format {
 	case "auto":
 		if json.Valid(data) {
-			format = "json"
+			format = formatJSON
 		} else {
-			format = "markdown"
+			format = formatMarkdown
 		}
-	case "json", "markdown", "mem0":
+	case formatJSON, formatMarkdown, formatMem0:
 	default:
 		return nil, fmt.Errorf("unsupported format %q; supported formats: auto, json, markdown, mem0", format)
 	}
 
-	if format == "json" {
+	if format == formatJSON {
 		var records []importRecord
 		if err := json.Unmarshal(data, &records); err != nil {
 			return nil, fmt.Errorf("JSON parse error: %w", err)
 		}
 		return records, nil
 	}
-	if format == "mem0" {
+	if format == formatMem0 {
 		return parseMem0Import(data)
 	}
 	return parseMarkdownImport(data)
@@ -1708,7 +1879,7 @@ func parseMem0Import(data []byte) ([]importRecord, error) {
 		}
 		wing := mem0MetadataString(record.Metadata, "mira_wing")
 		if wing == "" {
-			wing = "mem0"
+			wing = formatMem0
 		}
 		imported := importRecord{
 			Content: record.Memory,
@@ -1917,7 +2088,7 @@ Examples:
 			applyStoragePath(cfg)
 			application, err := app.NewApplication(cfg)
 			if err != nil {
-				return fmt.Errorf("ingest: failed to initialise application: %w", err)
+				return fmt.Errorf("ingest: failed to initialize application: %w", err)
 			}
 			defer application.Close()
 
@@ -1956,7 +2127,7 @@ func ingestConversationStream(wing string, room *string, includeAssistant bool, 
 		applyStoragePath(cfg)
 		application, err := app.NewApplication(cfg)
 		if err != nil {
-			return fmt.Errorf("ingest: failed to initialise application: %w", err)
+			return fmt.Errorf("ingest: failed to initialize application: %w", err)
 		}
 		defer application.Close()
 		storeUC := application.StoreMemoryUC()
@@ -2213,7 +2384,7 @@ Examples:
 				fmt.Println(string(data))
 				return nil
 			}
-			if err := os.WriteFile(output, data, 0o644); err != nil {
+			if err := os.WriteFile(output, data, 0o644); err != nil { //nolint:gosec // output is a user-requested file
 				return fmt.Errorf("optimize: write error: %w", err)
 			}
 			fmt.Fprintf(os.Stderr, "wrote pruned conversation to %s\n", output)

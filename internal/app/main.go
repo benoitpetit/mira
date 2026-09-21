@@ -4,8 +4,10 @@ package app
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
@@ -29,6 +31,7 @@ import (
 	"github.com/benoitpetit/mira/internal/usecases/interactors"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
 	soul "github.com/benoitpetit/soul"
+	"github.com/google/uuid"
 	mcptypes "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -38,7 +41,7 @@ type Application struct {
 	config              *config.Config
 	repository          ports.Repository
 	embedder            ports.Embedder
-	extractor           ports.Extractor
+	extractor           ports.Extractor //nolint:staticcheck // consolidation still requires the composite legacy interface
 	vectorStore         ports.VectorStore
 	overlapCache        *vector.SQLiteOverlapCache
 	hnswIndex           *vector.HNSWStore
@@ -69,10 +72,18 @@ type Application struct {
 }
 
 // NewApplication creates and wires all dependencies.
-// Each sub-system is initialised by a dedicated private method so that this
+// Each sub-system is initialized by a dedicated private method so that this
 // function reads as a clear, ordered sequence of concerns.
-func NewApplication(cfg *config.Config) (*Application, error) {
-	app := &Application{config: cfg, startTime: time.Now()}
+func NewApplication(cfg *config.Config) (app *Application, err error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("configuration must not be nil")
+	}
+	app = &Application{config: cfg, startTime: time.Now()}
+	defer func() {
+		if err != nil {
+			_ = app.Close()
+		}
+	}()
 
 	dbPath := cfg.Storage.Path + "/mira.db"
 	modelsDir := cfg.Storage.Path + "/models"
@@ -81,15 +92,11 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 		return nil, err
 	}
 	app.initMetrics()
-	if err := app.initEmbedder(modelsDir); err != nil {
-		return nil, err
-	}
+	app.initEmbedder(modelsDir)
 	if err := app.initExtractor(); err != nil {
 		return nil, err
 	}
-	if err := app.initVectorStore(dbPath); err != nil {
-		return nil, err
-	}
+	app.initVectorStore()
 	app.initWebhooks()
 	app.initUseCases()
 	// SOUL is initialized after use cases so storeMemory is available
@@ -233,12 +240,12 @@ func (a *Application) initMetrics() {
 }
 
 // initEmbedder loads the Cybertron model or falls back to the simple embedder.
-func (a *Application) initEmbedder(modelsDir string) error {
+func (a *Application) initEmbedder(modelsDir string) {
 	cfg := a.config
 	if cfg.Embeddings.UseSimpleEmbedder {
 		slog.Info("using simple embedder")
 		a.embedder = extraction.NewSimpleEmbedder(cfg.Embeddings.Dimension)
-		return nil
+		return
 	}
 
 	cybertronEmbedder, err := extraction.NewCybertronEmbedder(extraction.CybertronEmbedderOptions{
@@ -252,7 +259,6 @@ func (a *Application) initEmbedder(modelsDir string) error {
 	} else {
 		a.embedder = cybertronEmbedder
 	}
-	return nil
 }
 
 // initExtractor creates the fingerprint extractor.
@@ -293,7 +299,7 @@ func (a *Application) initExtractor() error {
 
 // initVectorStore registers the embedding model, then builds the HNSW index
 // (or falls back to the SQLite vector store when HNSW init fails).
-func (a *Application) initVectorStore(dbPath string) error {
+func (a *Application) initVectorStore() {
 	cfg := a.config
 	repo := a.repository
 	ctx := context.Background()
@@ -348,7 +354,7 @@ func (a *Application) initVectorStore(dbPath string) error {
 	if err != nil {
 		slog.Warn("failed to initialize hnsw index, falling back to sqlite vector search", "error", err)
 		a.vectorStore = vector.NewSQLiteVectorStore(repo.DB())
-		return nil
+		return
 	}
 
 	hnswIndex.SetModelHash(cfg.Embeddings.ModelHash)
@@ -382,7 +388,6 @@ func (a *Application) initVectorStore(dbPath string) error {
 	a.hnswIndex = hnswIndex
 	// Wrap with SQLite fallback so recall works while the index is building
 	a.vectorStore = vector.NewFallbackVectorStore(hnswIndex, vector.NewSQLiteVectorStore(repo.DB()))
-	return nil
 }
 
 // initWebhooks starts the webhook manager and registers configured endpoints.
@@ -469,7 +474,7 @@ func (a *Application) initUseCases() {
 
 	a.loadMemory = interactors.NewLoadMemory(repo, repo)
 	a.getTimeline = interactors.NewGetTimeline(repo)
-	a.getStatus = interactors.NewGetStatus(repo, repo, a.startTime, "0.5.0")
+	a.getStatus = interactors.NewGetStatus(repo, repo, a.startTime, config.CurrentVersion)
 	a.getCausalChain = interactors.NewGetCausalChain(repo)
 	a.archiveMemories = interactors.NewArchiveMemories(repo)
 	a.clearMemory = interactors.NewClearMemory(repo, a.vectorStore)
@@ -593,6 +598,117 @@ func (a *Application) Close() error {
 	return closeErr
 }
 
+// RebuildVectorIndex rebuilds the derived HNSW index from the authoritative
+// embedding rows in the repository. It is safe to call after a failed write,
+// a checksum mismatch, or an interrupted background build.
+func (a *Application) RebuildVectorIndex(ctx context.Context) error {
+	if a.hnswIndex == nil {
+		return fmt.Errorf("hnsw index is not enabled")
+	}
+	if a.buildCancel != nil {
+		a.buildCancel()
+		a.buildCancel = nil
+	}
+	return a.hnswIndex.Rebuild(ctx)
+}
+
+// ReembedAll regenerates T2 embeddings from stored T0 content and updates the
+// model hash in T1/T2. SQLite is the supported migration backend; the command
+// is intentionally explicit because it can be expensive.
+func (a *Application) ReembedAll(ctx context.Context) (int, error) {
+	if a.config.Storage.Type == "postgres" {
+		return 0, fmt.Errorf("reembedding is not yet supported for PostgreSQL")
+	}
+	if a.buildCancel != nil {
+		a.buildCancel()
+		a.buildCancel = nil
+	}
+	rows, err := a.repository.DB().QueryContext(ctx, `SELECT id, content FROM verbatim ORDER BY created_at, id`)
+	if err != nil {
+		return 0, fmt.Errorf("list memories for reembedding: %w", err)
+	}
+	type source struct {
+		id      []byte
+		content string
+	}
+	var sources []source
+	for rows.Next() {
+		var item source
+		if err := rows.Scan(&item.id, &item.content); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("read memory for reembedding: %w", err)
+		}
+		sources = append(sources, item)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, fmt.Errorf("iterate memories for reembedding: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, fmt.Errorf("close memory scan for reembedding: %w", err)
+	}
+
+	modelHash := a.config.Embeddings.ModelHash
+	updated := 0
+	for _, item := range sources {
+		id, err := uuid.FromBytes(item.id)
+		if err != nil {
+			return updated, fmt.Errorf("invalid memory ID during reembedding: %w", err)
+		}
+		vec, err := a.embedder.Encode(ctx, item.content)
+		if err != nil {
+			return updated, fmt.Errorf("embed memory %s: %w", id, err)
+		}
+		if len(vec) != a.config.Embeddings.Dimension {
+			return updated, fmt.Errorf("embedding dimension mismatch for %s: got %d, expected %d", id, len(vec), a.config.Embeddings.Dimension)
+		}
+		emb := entities.NewEmbedding(id, modelHash, vec).WithNormalization()
+		vectorBytes := make([]byte, len(emb.Vector)*4)
+		for i, value := range emb.Vector {
+			binary.LittleEndian.PutUint32(vectorBytes[i*4:], math.Float32bits(value))
+		}
+
+		tx, err := a.repository.Begin()
+		if err != nil {
+			return updated, fmt.Errorf("begin reembedding transaction for %s: %w", id, err)
+		}
+		result, err := tx.ExecContext(ctx,
+			`UPDATE embeddings SET model_hash = ?, dim = ?, vector = ?, normalized = ?, created_at = ? WHERE id = ?`,
+			modelHash, emb.Dim, vectorBytes, emb.Normalized, float64(emb.CreatedAt.Unix()), item.id,
+		)
+		if err != nil {
+			_ = tx.Rollback()
+			return updated, fmt.Errorf("update embedding %s: %w", id, err)
+		}
+		if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+			_ = tx.Rollback()
+			return updated, fmt.Errorf("update embedding %s affected %d rows", id, affected)
+		}
+		result, err = tx.ExecContext(ctx,
+			`UPDATE fingerprints SET model_hash = ? WHERE verbatim_id = ?`, modelHash, item.id,
+		)
+		if err != nil {
+			_ = tx.Rollback()
+			return updated, fmt.Errorf("update fingerprint model %s: %w", id, err)
+		}
+		if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+			_ = tx.Rollback()
+			return updated, fmt.Errorf("update fingerprint model %s affected %d rows", id, affected)
+		}
+		if err := tx.Commit(); err != nil {
+			return updated, fmt.Errorf("commit reembedding %s: %w", id, err)
+		}
+		updated++
+	}
+
+	if a.hnswIndex != nil {
+		if err := a.hnswIndex.Rebuild(ctx); err != nil {
+			return updated, fmt.Errorf("rebuild HNSW after reembedding: %w", err)
+		}
+	}
+	return updated, nil
+}
+
 // Run starts the MCP server
 func (a *Application) Run() error {
 	defer a.Close()
@@ -622,7 +738,9 @@ func (a *Application) Run() error {
 	if a.soulCtrl != nil {
 		miraTools := a.controller.ToolDefinitions()
 		soulTools := a.soulCtrl.ToolDefinitions()
-		allTools := append(miraTools, soulTools...)
+		allTools := make([]mcptypes.Tool, 0, len(miraTools)+len(soulTools))
+		allTools = append(allTools, miraTools...)
+		allTools = append(allTools, soulTools...)
 		slog.Info("MCP tools registered", "mira", len(miraTools), "soul", len(soulTools), "total", len(allTools))
 
 		s.HandleListTools(func(ctx context.Context, cursor *string) (*mcptypes.ListToolsResult, error) {
@@ -672,7 +790,7 @@ func (a *Application) Run() error {
 			sseServer = server.NewSSEServer(s, "http://"+a.config.MCP.Address)
 			errChan <- sseServer.Start(a.config.MCP.Address)
 		case "http":
-			httpHandler = mcpserver.NewMCPServerHandler(s, a.config.MCP.Address)
+			httpHandler = mcpserver.NewMCPServerHandlerWithAuth(s, a.config.MCP.AuthToken)
 			errChan <- httpHandler.Start(a.config.MCP.Address)
 		default:
 			errChan <- fmt.Errorf("unsupported transport: %s (stdio, sse, or http supported)", a.config.MCP.Transport)

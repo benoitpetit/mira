@@ -31,6 +31,8 @@ type StoreMemoryInput struct {
 // WingRoomRe matches valid wing and room identifiers.
 var WingRoomRe = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
+const defaultDecisionRoom = "decisions"
+
 // Validate checks that the input meets business constraints.
 func (in StoreMemoryInput) Validate() error {
 	if utf8.RuneCountInString(in.Content) == 0 {
@@ -130,7 +132,7 @@ func defaultRoomForType(memType valueobjects.MemoryType) *string {
 	var room string
 	switch memType {
 	case valueobjects.TypeDecision:
-		room = "decisions"
+		room = defaultDecisionRoom
 	case valueobjects.TypeFact:
 		room = "facts"
 	case valueobjects.TypePreference:
@@ -227,10 +229,13 @@ func (uc *StoreMemory) Execute(ctx context.Context, input StoreMemoryInput) (*St
 	// 4. Add to vector store (non-fatal)
 	candidate := entities.NewCandidate(fp, verbatim, emb.Vector)
 	if err := uc.vectorStore.AddCandidate(ctx, candidate); err != nil {
-		// Non-fatal: continue with SQLite only
+		// SQLite remains authoritative. Try to repair the derived index before
+		// continuing so a transient HNSW failure does not leave it stale.
+		repairErr := repairVectorStore(ctx, uc.vectorStore)
 		if uc.logger != nil {
 			uc.logger.Warn("Failed to add candidate to vector store, continuing with SQLite only",
 				"error", err,
+				"repair_error", repairErr,
 				"fingerprint_id", fp.ID.String(),
 			)
 		}

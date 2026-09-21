@@ -18,18 +18,15 @@ import (
 	"github.com/benoitpetit/mira/internal/usecases/ports"
 	"github.com/benoitpetit/mira/internal/util"
 	"github.com/google/uuid"
-	tiktoken "github.com/pkoukk/tiktoken-go"
 )
 
 // OllamaExtractor calls a local Ollama instance to extract structured fingerprints.
 // It satisfies ports.FingerprintExtractor and ports.CausalRelationDetector by delegating
 // causal detection to the wrapped NativeExtractor.
 type OllamaExtractor struct {
-	native    *NativeExtractor // fallback + causal detection + model hash
-	embedder  ports.Embedder
-	modelHash string
-	tokenizer *tiktoken.Tiktoken
-
+	native          *NativeExtractor // fallback + causal detection + model hash
+	embedder        ports.Embedder
+	modelHash       string
 	endpoint        string
 	model           string
 	client          *http.Client
@@ -70,16 +67,10 @@ func NewOllamaExtractor(embedder ports.Embedder, opts OllamaExtractorOptions) (*
 		return nil, fmt.Errorf("ollama extractor: init native fallback: %w", err)
 	}
 
-	tok, err := tiktoken.GetEncoding("cl100k_base")
-	if err != nil {
-		return nil, fmt.Errorf("ollama extractor: tiktoken: %w", err)
-	}
-
 	return &OllamaExtractor{
 		native:          native,
 		embedder:        embedder,
 		modelHash:       util.ComputeModelHash(opts.NativeOptions.ModelName),
-		tokenizer:       tok,
 		endpoint:        strings.TrimRight(opts.Endpoint, "/"),
 		model:           opts.Model,
 		client:          &http.Client{Timeout: opts.Timeout},
@@ -170,8 +161,7 @@ Synthesized Fact:`
 // ExtractPipeline attempts Ollama extraction and falls back to NativeExtractor on failure.
 func (o *OllamaExtractor) ExtractPipeline(ctx context.Context, verbatim *entities.Verbatim, forcedType *valueobjects.MemoryType) (*entities.Fingerprint, *entities.Embedding, error) {
 	// Always set token count (independent of extraction path)
-	tokens := o.tokenizer.Encode(verbatim.Content, nil, nil)
-	verbatim.TokenCount = len(tokens)
+	verbatim.TokenCount = estimateTokenCount(verbatim.Content)
 
 	fp, emb, err := o.extractViaOllama(ctx, verbatim, forcedType)
 	if err != nil {
@@ -317,6 +307,7 @@ func (o *OllamaExtractor) extractViaOllama(ctx context.Context, verbatim *entiti
 		VerbatimRef: verbatim.ID.String(),
 		Negated:     extracted.Negated,
 	}
+	attachExtractionQuality(&data, "ollama", o.model, 0.80)
 
 	// Generate embedding
 	vec, err := o.embedder.Encode(ctx, verbatim.Content)
@@ -327,7 +318,7 @@ func (o *OllamaExtractor) extractViaOllama(ctx context.Context, verbatim *entiti
 
 	// T1 token estimate
 	fpJSON, _ := json.Marshal(data)
-	t1Tokens := len(o.tokenizer.Encode(string(fpJSON), nil, nil))
+	t1Tokens := estimateTokenCount(string(fpJSON))
 
 	fp := entities.NewFingerprint(verbatim.ID, memType, o.modelHash)
 	fp.WithData(data).WithTokenEstimate(t1Tokens)

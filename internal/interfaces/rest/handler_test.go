@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/benoitpetit/mira/internal/config"
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/benoitpetit/mira/internal/interfaces/rest"
@@ -507,7 +508,7 @@ func TestHandleStatus_Success(t *testing.T) {
 	s.status.out = &interactors.GetStatusOutput{
 		Stats:   valueobjects.NewStats(),
 		Models:  []string{"model-v1"},
-		Version: "0.5.0",
+		Version: config.CurrentVersion,
 		Uptime:  "1h",
 	}
 

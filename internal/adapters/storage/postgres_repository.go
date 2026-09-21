@@ -725,7 +725,6 @@ func (r *PostgreSQLRepository) GetTimeline(ctx context.Context, wing string, roo
 		if err == nil {
 			query += fmt.Sprintf(" AND f.extracted_at < $%d", argIdx)
 			args = append(args, float64(t.Unix()))
-			argIdx++
 		}
 	}
 
@@ -822,7 +821,8 @@ func (r *PostgreSQLRepository) ClearByRoom(ctx context.Context, wing string, roo
 		return 0, err
 	}
 
-	_, err = tx.ExecContext(ctx, "DELETE FROM verbatim WHERE wing = $1 "+roomCondition, args...)
+	// roomCondition is selected from fixed SQL fragments; values remain parameterized.
+	_, err = tx.ExecContext(ctx, "DELETE FROM verbatim WHERE wing = $1 "+roomCondition, args...) //nolint:gosec // roomCondition is a fixed SQL fragment
 	if err != nil {
 		return 0, err
 	}
@@ -993,9 +993,9 @@ func (r *PostgreSQLRepository) GetCandidatesWithEmbeddings(ctx context.Context, 
 // GetAllEmbeddings implements EmbeddingSource
 func (r *PostgreSQLRepository) GetAllEmbeddings(ctx context.Context) ([]*entities.Embedding, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT v.id, e.vector::float4[], e.dim
-		FROM verbatim v
-		JOIN embeddings e ON v.id = e.id
+			SELECT v.id, e.model_hash, e.vector::float4[], e.dim
+			FROM verbatim v
+			JOIN embeddings e ON v.id = e.id
 	`)
 	if err != nil {
 		return nil, err
@@ -1005,13 +1005,15 @@ func (r *PostgreSQLRepository) GetAllEmbeddings(ctx context.Context) ([]*entitie
 	var embeddings []*entities.Embedding
 	for rows.Next() {
 		var id uuid.UUID
+		var modelHash string
 		var vector []float32
 		var dim int
-		if err := rows.Scan(&id, &vector, &dim); err == nil {
+		if err := rows.Scan(&id, &modelHash, &vector, &dim); err == nil {
 			embeddings = append(embeddings, &entities.Embedding{
-				ID:     id,
-				Vector: vector,
-				Dim:    dim,
+				ID:        id,
+				ModelHash: modelHash,
+				Vector:    vector,
+				Dim:       dim,
 			})
 		}
 	}

@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
+	_ "github.com/benoitpetit/go-sqlcipher/v4"
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
 	"github.com/google/uuid"
-	_ "github.com/benoitpetit/go-sqlcipher/v4"
 )
 
 // Mock Transaction
@@ -489,5 +489,5 @@ func (m *mockStoreRepository) UpdateVerbatimSummary(_ context.Context, _ uuid.UU
 
 // Ensure interfaces are implemented
 var _ ports.Repository = (*mockStoreRepository)(nil)
-var _ ports.Extractor = (*mockStoreExtractor)(nil)
+var _ ports.Extractor = (*mockStoreExtractor)(nil) //nolint:staticcheck // test double covers the legacy composite interface
 var _ ports.VectorStore = (*mockStoreVectorStore)(nil)

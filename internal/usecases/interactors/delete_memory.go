@@ -4,6 +4,7 @@ package interactors
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/benoitpetit/mira/internal/usecases/ports"
 	"github.com/google/uuid"
@@ -34,7 +35,10 @@ func (uc *DeleteMemory) Execute(ctx context.Context, input DeleteMemoryInput) er
 		return fmt.Errorf("failed to delete verbatim: %w", err)
 	}
 	if err := uc.vectorStore.Delete(ctx, input.ID); err != nil {
-		// Non-fatal: vector store may be unavailable or index not ready
+		// SQLite is authoritative. Repair the derived index when possible; keep
+		// deletion non-fatal for stores that are intentionally SQLite-only.
+		repairErr := repairVectorStore(ctx, uc.vectorStore)
+		slog.Warn("failed to remove memory from vector store", "id", input.ID, "error", err, "repair_error", repairErr)
 	}
 	return nil
 }

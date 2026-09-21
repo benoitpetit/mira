@@ -101,7 +101,7 @@ func (m *mockConsolidateFingerprintExtractor) Summarize(ctx context.Context, tex
 	return "consolidated fact", nil
 }
 
-var _ ports.Extractor = (*mockConsolidateFingerprintExtractor)(nil)
+var _ ports.Extractor = (*mockConsolidateFingerprintExtractor)(nil) //nolint:staticcheck // test double covers the legacy composite interface
 
 // buildConsolidateNote creates a TimelineItem, Verbatim, and Embedding tuple with the
 // given embedding vector for use in consolidation tests.

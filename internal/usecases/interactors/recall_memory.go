@@ -107,8 +107,9 @@ func (c *embeddingCache) set(key string, vec []float32) {
 
 	// Check if key already exists
 	if element, exists := c.cache[key]; exists {
-		// Key exists: move to end (MRU) and update value
-		c.order.MoveToBack(element)
+		// Key exists: move to the front (MRU) and update the value.
+		// The front of the list is the eviction-safe side used by get.
+		c.order.MoveToFront(element)
 		ce := element.Value.(*cacheElement)
 		ce.vector = vec
 		return
@@ -482,7 +483,7 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 		if uc.sessionCache == nil {
 			uc.sessionCache = make(map[string]sessionCacheEntry)
 		}
-		entry, _ := uc.sessionCache[*input.SessionID]
+		entry := uc.sessionCache[*input.SessionID]
 		existing := entry.ids
 		for _, sel := range selected {
 			found := false
@@ -911,6 +912,9 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 	}
 	heap.Init(h)
 
+	// A header is the smallest useful rendering unit. Keep the established
+	// minimum reserve so tiny budgets do not return context that cannot be
+	// meaningfully consumed by the caller.
 	for h.Len() > 0 && budget-tokensUsed >= 50 {
 		// Extract best from heap (O(log n))
 		c := heap.Pop(h).(*entities.Candidate)
@@ -944,10 +948,12 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 
 			// Causal penalty
 			causalCount := 0
-			for _, sel := range selected {
-				if uc.causalGraph.HasEdge(ctx, sel.CandidateID, c.ID()) ||
-					uc.causalGraph.HasEdge(ctx, c.ID(), sel.CandidateID) {
-					causalCount++
+			if uc.causalGraph != nil {
+				for _, sel := range selected {
+					if uc.causalGraph.HasEdge(ctx, sel.CandidateID, c.ID()) ||
+						uc.causalGraph.HasEdge(ctx, c.ID(), sel.CandidateID) {
+						causalCount++
+					}
 				}
 			}
 			c.CausalPenalty = math.Exp(-uc.causalPenaltyAlpha * float64(causalCount))

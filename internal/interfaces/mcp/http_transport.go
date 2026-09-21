@@ -3,6 +3,7 @@ package mcp
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,11 +16,18 @@ import (
 // MCPServerHandler exposes JSON-RPC requests at POST /mcp.
 type MCPServerHandler struct {
 	mcpServer server.MCPServer
+	authToken string
 	srv       *http.Server
 }
 
 func NewMCPServerHandler(mcpServer server.MCPServer, _ string) *MCPServerHandler {
-	return &MCPServerHandler{mcpServer: mcpServer}
+	return NewMCPServerHandlerWithAuth(mcpServer, "")
+}
+
+// NewMCPServerHandlerWithAuth creates a stateless HTTP transport. When a token
+// is configured, every request must provide Authorization: Bearer <token>.
+func NewMCPServerHandlerWithAuth(mcpServer server.MCPServer, authToken string) *MCPServerHandler {
+	return &MCPServerHandler{mcpServer: mcpServer, authToken: authToken}
 }
 
 func (h *MCPServerHandler) Start(addr string) error {
@@ -40,6 +48,11 @@ func (h *MCPServerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if h.authToken != "" && !authorizedBearer(r, h.authToken) {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="mira-mcp"`)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -75,6 +88,19 @@ func (h *MCPServerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ID:      request.ID,
 		Result:  result,
 	})
+}
+
+func authorizedBearer(r *http.Request, expected string) bool {
+	const prefix = "Bearer "
+	header := r.Header.Get("Authorization")
+	if len(header) < len(prefix) || header[:len(prefix)] != prefix {
+		return false
+	}
+	got := header[len(prefix):]
+	if len(got) != len(expected) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(expected)) == 1
 }
 
 func writeHTTPRPCError(w http.ResponseWriter, id interface{}, status, code int, message string) {

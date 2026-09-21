@@ -107,11 +107,69 @@ func TestConfigureCursorMCP(t *testing.T) {
 	}
 }
 
+func TestConfigureMCPConfigPreservesUnknownSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mcp.json")
+	original := `{"editor":{"fontSize":14},"mcpServers":{"other":{"command":"other","args":[],"custom":true}}}`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := configureMCPConfig(path, "Cursor", "/bin/mira", "/project/.mira/config.yaml", false)
+	if err != nil {
+		t.Fatalf("configureMCPConfig failed: %v", err)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("result is not JSON: %v", err)
+	}
+	if settings["editor"].(map[string]any)["fontSize"] != float64(14) {
+		t.Error("unknown top-level settings should be preserved")
+	}
+	other := settings["mcpServers"].(map[string]any)["other"].(map[string]any)
+	if other["custom"] != true {
+		t.Error("unknown MCP server settings should be preserved")
+	}
+}
+
 func TestCursorMCPConfigPath(t *testing.T) {
 	got := cursorMCPConfigPath("/work/api/.mira/config.yaml")
 	want := filepath.Join("/work/api", ".cursor", "mcp.json")
 	if got != want {
 		t.Errorf("path = %q, want %q", got, want)
+	}
+}
+
+func TestProjectRootFromMiraConfig(t *testing.T) {
+	if got, want := projectRootFromMiraConfig("/work/api/.mira/config.yaml"), "/work/api"; got != want {
+		t.Errorf("project root = %q, want %q", got, want)
+	}
+	if got, want := projectRootFromMiraConfig("/work/api/config.yaml"), "/work/api"; got != want {
+		t.Errorf("custom project root = %q, want %q", got, want)
+	}
+}
+
+func TestClaudeCodeHooksConfigPathRespectsScope(t *testing.T) {
+	configPath := "/work/api/.mira/config.yaml"
+	if got, want := claudeCodeHooksConfigPath(configPath, "local", "/home/alice"), filepath.Join("/work/api", ".claude", "settings.local.json"); got != want {
+		t.Errorf("local hooks path = %q, want %q", got, want)
+	}
+	if got, want := claudeCodeHooksConfigPath(configPath, "project", "/home/alice"), filepath.Join("/work/api", ".claude", "settings.json"); got != want {
+		t.Errorf("project hooks path = %q, want %q", got, want)
+	}
+	if got, want := claudeCodeHooksConfigPath(configPath, "user", "/home/alice"), filepath.Join("/home/alice", ".claude", "settings.json"); got != want {
+		t.Errorf("user hooks path = %q, want %q", got, want)
+	}
+}
+
+func TestRedactedSetupPreviewDoesNotExposeCredentials(t *testing.T) {
+	data := []byte(`{"api_key":"secret-api-key","nested":{"ANTHROPIC_AUTH_TOKEN":"secret-token"},"name":"mira"}`)
+	preview := string(redactedSetupPreview(data))
+	for _, secret := range []string{"secret-api-key", "secret-token"} {
+		if strings.Contains(preview, secret) {
+			t.Fatalf("preview exposed credential %q: %s", secret, preview)
+		}
+	}
+	if !strings.Contains(preview, "[REDACTED]") || !strings.Contains(preview, "mira") {
+		t.Fatalf("preview did not preserve safe fields and redaction marker: %s", preview)
 	}
 }
 
@@ -191,6 +249,55 @@ func TestConfigureClaudeCodeMemoryHookPreservesSettingsAndAvoidsDuplicates(t *te
 	if strings.Count(string(again), "hook claude-code") != 1 {
 		t.Errorf("duplicate hook in %s", again)
 	}
+}
+
+func TestSetupCommandWritesSupportedClientConfigurations(t *testing.T) {
+	projectDir := t.TempDir()
+	initCmd := newInitCmd()
+	initCmd.SetArgs([]string{"--dir", projectDir})
+	if err := initCmd.Execute(); err != nil {
+		t.Fatalf("init failed: %v", err)
+	}
+	configPath := filepath.Join(projectDir, ".mira", "config.yaml")
+	binaryPath := filepath.Join(projectDir, "mira")
+	if err := os.WriteFile(binaryPath, []byte("test binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	runSetup := func(args ...string) {
+		t.Helper()
+		cmd := newSetupCmd()
+		cmd.SetArgs(args)
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("setup %v failed: %v", args, err)
+		}
+	}
+
+	cursorPath := filepath.Join(projectDir, "cursor", "mcp.json")
+	runSetup("--client", "cursor", "--mira-config", configPath, "--mira-binary", binaryPath, "--client-config", cursorPath)
+
+	windsurfMCPPath := filepath.Join(projectDir, "windsurf", "mcp_config.json")
+	windsurfHooksPath := filepath.Join(projectDir, "windsurf", "hooks.json")
+	runSetup("--client", "windsurf", "--mira-config", configPath, "--mira-binary", binaryPath, "--client-config", windsurfMCPPath, "--automatic-memory", "--memory-wing", "api", "--hook-config", windsurfHooksPath)
+
+	claudeDesktopPath := filepath.Join(projectDir, "claude", "claude_desktop_config.json")
+	runSetup("--client", "claude-desktop", "--mira-config", configPath, "--mira-binary", binaryPath, "--client-config", claudeDesktopPath)
+
+	for _, path := range []string{cursorPath, windsurfMCPPath, windsurfHooksPath, claudeDesktopPath} {
+		var value map[string]any
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read generated config %s: %v", path, err)
+		}
+		if err := json.Unmarshal(data, &value); err != nil {
+			t.Fatalf("generated config %s is invalid JSON: %v", path, err)
+		}
+	}
+
+	// CLI-based clients are validated through their dry-run path, so no client
+	// executable or user configuration is required in the test environment.
+	runSetup("--client", "codex", "--mira-config", configPath, "--mira-binary", binaryPath, "--dry-run")
+	runSetup("--client", "claude-code", "--scope", "user", "--mira-config", configPath, "--mira-binary", binaryPath, "--automatic-memory", "--hook-config", filepath.Join(projectDir, "claude-code", "settings.json"), "--dry-run")
 }
 
 func TestConfigureCodexMemoryHookUsesCodexCommand(t *testing.T) {

@@ -137,7 +137,7 @@ func (p *MiraProvider) LinkIdentityToMemory(ctx context.Context, identityID, mem
 // Uses StoreMemory use case if available for complete T0/T1/T2 extraction.
 // Falls back to direct INSERT using MIRA-compatible BLOB UUID storage when
 // storeMemory is nil (e.g. standalone SOUL without embedded use cases).
-func (p *MiraProvider) NotifyMiraOfIdentityChange(ctx context.Context, agentID string, changeType string) error {
+func (p *MiraProvider) NotifyMiraOfIdentityChange(ctx context.Context, agentID, changeType string) error {
 	content := fmt.Sprintf("Identity change detected: %s for agent %s at %s",
 		changeType, agentID, time.Now().Format(time.RFC3339))
 
@@ -173,7 +173,7 @@ func calculateTokenCount(content string) int {
 
 // StoreMemory stores a new memory with full extraction (T0/T1/T2).
 // If storeMemory use case is not available, returns an error.
-func (p *MiraProvider) StoreMemory(ctx context.Context, content, wing string, room *string, memType *string) (uuid.UUID, error) {
+func (p *MiraProvider) StoreMemory(ctx context.Context, content, wing string, room, memType *string) (uuid.UUID, error) {
 	if p.storeMemory == nil {
 		return uuid.Nil, fmt.Errorf("StoreMemory use case not available")
 	}

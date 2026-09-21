@@ -76,6 +76,16 @@ func (a *Application) Close() error {
 	return a.inner.Close()
 }
 
+// RebuildVectorIndex rebuilds the derived vector index from stored embeddings.
+func (a *Application) RebuildVectorIndex(ctx context.Context) error {
+	return a.inner.RebuildVectorIndex(ctx)
+}
+
+// ReembedAll regenerates all stored embeddings with the configured model.
+func (a *Application) ReembedAll(ctx context.Context) (int, error) {
+	return a.inner.ReembedAll(ctx)
+}
+
 // Store stores a memory.
 func (a *Application) Store(ctx context.Context, content, wing string, room *string, forcedType *valueobjects.MemoryType) (*interactors.StoreMemoryOutput, error) {
 	return a.inner.StoreMemoryUC().Execute(ctx, interactors.StoreMemoryInput{

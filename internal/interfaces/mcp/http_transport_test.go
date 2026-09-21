@@ -38,3 +38,23 @@ func TestMCPHTTPTransportRejectsSSEPath(t *testing.T) {
 		t.Fatalf("status = %d, want 404", rec.Code)
 	}
 }
+
+func TestMCPHTTPTransportAuth(t *testing.T) {
+	h := NewMCPServerHandlerWithAuth(server.NewDefaultServer("mira-test", "1.0.0"), "secret")
+	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+
+	unauthorized := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(body))
+	unauthorizedRec := httptest.NewRecorder()
+	h.ServeHTTP(unauthorizedRec, unauthorized)
+	if unauthorizedRec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status = %d, want 401", unauthorizedRec.Code)
+	}
+
+	authorized := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(body))
+	authorized.Header.Set("Authorization", "Bearer secret")
+	authorizedRec := httptest.NewRecorder()
+	h.ServeHTTP(authorizedRec, authorized)
+	if authorizedRec.Code != http.StatusOK {
+		t.Fatalf("authorized status = %d, want 200: %s", authorizedRec.Code, authorizedRec.Body.String())
+	}
+}

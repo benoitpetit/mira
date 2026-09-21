@@ -33,7 +33,7 @@ func runPostgresMigrations(db *sql.DB) error {
 	)`)
 }
 
-func runGenericMigrations(db *sql.DB, fs embed.FS, dir string, createTableSQL string) error {
+func runGenericMigrations(db *sql.DB, fs embed.FS, dir, createTableSQL string) error {
 	// Ensure migration tracking table exists
 	if _, err := db.Exec(createTableSQL); err != nil {
 		return fmt.Errorf("failed to create schema_migrations: %w", err)
@@ -73,9 +73,7 @@ func runGenericMigrations(db *sql.DB, fs embed.FS, dir string, createTableSQL st
 			continue
 		}
 		if err != sql.ErrNoRows {
-			// Some drivers might return different errors for no rows or column mismatch
-			// if the table is empty or the row doesn't exist.
-			// Try to be resilient.
+			return fmt.Errorf("failed to check migration %d: %w", f.version, err)
 		}
 
 		sqlBytes, err := fs.ReadFile(path.Join(dir, f.name))

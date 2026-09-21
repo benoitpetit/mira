@@ -2,7 +2,10 @@
 package config
 
 import (
+	"fmt"
+	"net"
 	"os"
+	"strings"
 
 	"github.com/benoitpetit/mira/internal/util"
 
@@ -14,6 +17,7 @@ const (
 	TransportStdio = "stdio"
 	TransportSSE   = "sse"
 	TransportHTTP  = "http"
+	CurrentVersion = "0.6.0"
 )
 
 // Config represents complete configuration
@@ -227,6 +231,7 @@ type MCPConfig struct {
 	Transport      string `yaml:"transport"`
 	TimeoutSeconds int    `yaml:"timeout_seconds"`
 	Address        string `yaml:"address"`
+	AuthToken      string `yaml:"auth_token,omitempty"`
 
 	// Validation limits (configurable)
 	MaxContentLength int `yaml:"max_content_length,omitempty"`
@@ -268,7 +273,7 @@ type APIConfig struct {
 func Default() *Config {
 	return &Config{
 		System: SystemConfig{
-			Version: "0.5.0",
+			Version: CurrentVersion,
 		},
 		Storage: StorageConfig{
 			Type: "sqlite",
@@ -339,11 +344,12 @@ func Default() *Config {
 			MaxEntries: 1000000,
 		},
 		MCP: MCPConfig{
-			Name:           "mira",
-			Version:        "0.5.0",
-			Transport:      TransportStdio,
-			TimeoutSeconds: 30,
-			Address:        "localhost:3001",
+			Name:             "mira",
+			Version:          CurrentVersion,
+			Transport:        TransportStdio,
+			TimeoutSeconds:   30,
+			Address:          "localhost:3001",
+			AuthToken:        "",
 			MaxContentLength: 100000,
 			MaxWingLength:    100,
 			MaxRoomLength:    100,
@@ -361,7 +367,7 @@ func Default() *Config {
 		// Metrics configuration - monitoring
 		Metrics: MetricsConfig{
 			Enabled:        true,
-			PrometheusAddr: ":9090",
+			PrometheusAddr: "127.0.0.1:9090",
 			ReportInterval: 60,
 		},
 		// Webhooks configuration - external notifications
@@ -615,8 +621,11 @@ func (c *Config) Validate() error {
 
 	// Metrics validation
 	if c.Metrics.Enabled {
+		if envAddr := os.Getenv("MIRA_PROMETHEUS_ADDR"); envAddr != "" {
+			c.Metrics.PrometheusAddr = envAddr
+		}
 		if c.Metrics.PrometheusAddr == "" {
-			c.Metrics.PrometheusAddr = ":9090"
+			c.Metrics.PrometheusAddr = "127.0.0.1:9090"
 		}
 		if c.Metrics.ReportInterval <= 0 {
 			c.Metrics.ReportInterval = 60
@@ -646,6 +655,9 @@ func (c *Config) Validate() error {
 		}
 		if c.API.WriteTimeout <= 0 {
 			c.API.WriteTimeout = 30
+		}
+		if !isLoopbackListenAddress(c.API.Address) && strings.TrimSpace(c.API.AuthToken) == "" && len(c.API.WingTokens) == 0 {
+			return fmt.Errorf("api.auth_token or api.wing_tokens is required when api.address is not loopback")
 		}
 	}
 
@@ -717,7 +729,7 @@ func (c *Config) Validate() error {
 		c.MCP.Name = "mira"
 	}
 	if c.MCP.Version == "" {
-		c.MCP.Version = "0.5.0"
+		c.MCP.Version = CurrentVersion
 	}
 	if c.MCP.Transport == "" {
 		c.MCP.Transport = TransportStdio
@@ -734,6 +746,15 @@ func (c *Config) Validate() error {
 	}
 	if c.MCP.Address == "" {
 		c.MCP.Address = "localhost:3001"
+	}
+	if envToken := os.Getenv("MIRA_MCP_TOKEN"); envToken != "" {
+		c.MCP.AuthToken = envToken
+	}
+	if c.MCP.Transport == TransportSSE && !isLoopbackListenAddress(c.MCP.Address) {
+		return fmt.Errorf("mcp SSE transport has no built-in authentication; bind mcp.address to localhost/127.0.0.1")
+	}
+	if c.MCP.Transport == TransportHTTP && !isLoopbackListenAddress(c.MCP.Address) && strings.TrimSpace(c.MCP.AuthToken) == "" {
+		return fmt.Errorf("mcp.auth_token is required when mcp.address is not loopback")
 	}
 	// Validation limits defaults
 	if c.MCP.MaxContentLength <= 0 {
@@ -776,4 +797,22 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
+}
+
+// isLoopbackListenAddress reports whether an address binds only to the local
+// machine. An empty host (":8080") means all interfaces and is not loopback.
+func isLoopbackListenAddress(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		host = address
+	}
+	host = strings.Trim(host, "[]")
+	if host == "localhost" {
+		return true
+	}
+	if host == "" {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

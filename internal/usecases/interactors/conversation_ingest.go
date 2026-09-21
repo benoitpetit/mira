@@ -14,6 +14,11 @@ type ConversationMessage struct {
 	Content string `json:"content"`
 }
 
+const (
+	conversationRoleUser      = "user"
+	conversationRoleAssistant = "assistant"
+)
+
 // ParseConversationMessages accepts either a JSON array or a {"messages":[]}
 // envelope, both common formats for conversation exports.
 func ParseConversationMessages(data []byte) ([]ConversationMessage, error) {
@@ -69,7 +74,7 @@ func ParseConversationStreamMessage(data []byte) (ConversationMessage, bool, err
 		return ConversationMessage{}, false, fmt.Errorf("parse conversation stream event: %w", err)
 	}
 	switch event.Type {
-	case "user":
+	case conversationRoleUser:
 		content, err := conversationContentText(event.Message.Content)
 		if err != nil {
 			return ConversationMessage{}, false, err
@@ -83,7 +88,7 @@ func ParseConversationStreamMessage(data []byte) (ConversationMessage, bool, err
 		if strings.TrimSpace(event.Result) == "" {
 			return ConversationMessage{}, false, nil
 		}
-		return ConversationMessage{Role: "assistant", Content: event.Result}, true, nil
+		return ConversationMessage{Role: conversationRoleAssistant, Content: event.Result}, true, nil
 	default:
 		return ConversationMessage{}, false, nil
 	}
@@ -133,7 +138,7 @@ func validateConversationMessages(messages []ConversationMessage) ([]Conversatio
 
 // ConversationMemoryInputs selects substantive conversation messages and
 // translates them into normal MIRA store inputs. Captured conversation content
-// is always categorised as history while extraction still infers its technical
+// is always categorized as history while extraction still infers its technical
 // memory type.
 func ConversationMemoryInputs(messages []ConversationMessage, wing string, room *string, includeAssistant bool, minChars int) ([]StoreMemoryInput, error) {
 	if !WingRoomRe.MatchString(wing) {
@@ -153,7 +158,7 @@ func ConversationMemoryInputs(messages []ConversationMessage, wing string, room 
 	inputs := make([]StoreMemoryInput, 0, len(messages))
 	for index, message := range messages {
 		role := strings.ToLower(strings.TrimSpace(message.Role))
-		if role != "user" && (!includeAssistant || role != "assistant") {
+		if role != conversationRoleUser && (!includeAssistant || role != conversationRoleAssistant) {
 			continue
 		}
 		content := strings.TrimSpace(message.Content)

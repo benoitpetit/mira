@@ -196,7 +196,14 @@ func (pc *PrometheusCollector) StartServer(addr string) error {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", pc.Handler())
 
-	return http.ListenAndServe(addr, mux)
+	return (&http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       30 * time.Second,
+	}).ListenAndServe()
 }
 
 // Ensure interface is implemented
