@@ -112,6 +112,57 @@ func TestValidateAppliesDefaults(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsUnsafeNetworkBindings(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  func() *Config
+	}{
+		{
+			name: "mcp http without token",
+			cfg: func() *Config {
+				cfg := Default()
+				cfg.MCP.Transport = TransportHTTP
+				cfg.MCP.Address = ":3001"
+				return cfg
+			},
+		},
+		{
+			name: "mcp sse outside loopback",
+			cfg: func() *Config {
+				cfg := Default()
+				cfg.MCP.Transport = TransportSSE
+				cfg.MCP.Address = ":3001"
+				return cfg
+			},
+		},
+		{
+			name: "rest without token",
+			cfg: func() *Config {
+				cfg := Default()
+				cfg.API.Enabled = true
+				cfg.API.Address = ":8080"
+				return cfg
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.cfg().Validate(); err == nil {
+				t.Fatal("Validate() unexpectedly accepted an unsafe binding")
+			}
+		})
+	}
+
+	cfg := Default()
+	cfg.MCP.Transport = TransportHTTP
+	cfg.MCP.Address = ":3001"
+	cfg.MCP.AuthToken = "secret"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("token-protected MCP binding rejected: %v", err)
+	}
+}
+
 // ── Load / Save ───────────────────────────────────────────────────────────────
 
 func TestSaveAndLoad(t *testing.T) {

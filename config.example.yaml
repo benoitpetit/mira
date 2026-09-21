@@ -1,5 +1,5 @@
 system:
-  version: "0.5.0"
+  version: "0.6.0"
 
 storage:
   path: ".mira"
@@ -89,9 +89,10 @@ recall:
 
 mcp:
   name: "mira"
-  version: "0.5.0"
+  version: "0.6.0"
   transport: "stdio"      # "stdio", "sse", or stateless "http" (POST /mcp)
   address: "localhost:3001" # Bind address when transport is "sse" or "http"
+  auth_token: ""            # Required for HTTP on non-loopback addresses; SSE stays loopback-only
   timeout_seconds: 30
 
 # =============================================================================
@@ -112,7 +113,7 @@ mcp:
 api:
   enabled: false                # Set to true or use --with-api flag
   address: ":8080"              # Listen address (e.g. ":8080" or "127.0.0.1:8080")
-  auth_token: ""                # Optional bearer token — empty means no authentication
+  auth_token: ""                # Optional on loopback; required when exposed remotely
   read_timeout_seconds: 30
   write_timeout_seconds: 30
 
@@ -124,7 +125,7 @@ api:
 
 metrics:
   enabled: true            # Enable metrics collection and export
-  prometheus_addr: ":9090" # Address for Prometheus scrape endpoint (":9090" = all interfaces)
+  prometheus_addr: "127.0.0.1:9090" # Keep metrics local unless explicitly exposed
   report_interval_seconds: 60  # Interval for logging metric reports
 
 # =============================================================================

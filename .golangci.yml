@@ -23,6 +23,18 @@ linters-settings:
       - diagnostic
       - style
       - performance
+    # These checks are opinionated refactoring suggestions or produce false
+    # positives for compatibility APIs, test fixtures, and platform paths.
+    # Keep the correctness-oriented gocritic checks enabled.
+    disabled-checks:
+      - commentedOutCode
+      - filepathJoin
+      - hugeParam
+      - httpNoBody
+      - ifElseChain
+      - paramTypeCombine
+      - stringXbytes
+      - unnamedResult
   misspell:
     locale: US
 

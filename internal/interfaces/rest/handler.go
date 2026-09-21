@@ -108,6 +108,12 @@ type Handler struct {
 	soulStatus  SoulStatusQuerier // nil when SOUL is disabled
 }
 
+const (
+	maxRESTRequestBody   = 4 << 20 // 4 MiB; individual memory content is capped at 64 KiB
+	maxConversationItems = 1000
+	maxRESTQueryLength   = 10000
+)
+
 // NewHandler creates a Handler with all dependencies wired.
 func NewHandler(
 	store StoreMemoryExecutor,
@@ -265,6 +271,10 @@ func (h *Handler) handleIngest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
+	if len(body.Messages) > maxConversationItems {
+		writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("messages exceeds maximum of %d items", maxConversationItems))
+		return
+	}
 	if _, err := interactors.ValidateConversationMessages(body.Messages); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
@@ -395,6 +405,10 @@ func (h *Handler) handleRecall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "query is required")
 		return
 	}
+	if len([]rune(body.Query)) > maxRESTQueryLength {
+		writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("query exceeds maximum length of %d characters", maxRESTQueryLength))
+		return
+	}
 	var memoryKind *valueobjects.MemoryKind
 	if body.Kind != nil {
 		kind := valueobjects.MemoryKind(*body.Kind)
@@ -440,6 +454,10 @@ func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Query == "" {
 		writeError(w, http.StatusUnprocessableEntity, "query is required")
+		return
+	}
+	if len([]rune(body.Query)) > maxRESTQueryLength {
+		writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("query exceeds maximum length of %d characters", maxRESTQueryLength))
 		return
 	}
 	var memoryKind *valueobjects.MemoryKind
@@ -653,6 +671,11 @@ func NewServer(h *Handler, addr, masterToken string, wingTokens map[string][]str
 	rootHandler = rateLimitMiddleware(100, 1*time.Minute, rootHandler) // 100 requests per minute per IP
 	rootHandler = loggingMiddleware(rootHandler)
 	rootHandler = recoveryMiddleware(rootHandler)
+	next := rootHandler
+	rootHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, maxRESTRequestBody)
+		next.ServeHTTP(w, r)
+	})
 
 	return &http.Server{
 		Addr:         addr,

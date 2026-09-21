@@ -9,7 +9,7 @@ import (
 
 // reciprocalRankFusion merges dense and lexical search results using RRF.
 // k is the RRF constant (default 60).
-func reciprocalRankFusion(dense []*entities.Candidate, lexical []*entities.Candidate, k int) []*entities.Candidate {
+func reciprocalRankFusion(dense, lexical []*entities.Candidate, k int) []*entities.Candidate {
 	if k <= 0 {
 		k = 60
 	}

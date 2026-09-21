@@ -150,7 +150,7 @@ func TestHealthChecker_Handler(t *testing.T) {
 
 	checker := NewHealthChecker(app, "1.0.0")
 
-	req := httptest.NewRequest("GET", "/health", nil)
+	req := httptest.NewRequest("GET", "/health", http.NoBody)
 	rec := httptest.NewRecorder()
 
 	checker.Handler().ServeHTTP(rec, req)

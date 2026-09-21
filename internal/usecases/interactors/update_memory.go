@@ -94,9 +94,16 @@ func (uc *UpdateMemory) Execute(ctx context.Context, input UpdateMemoryInput) (*
 	}
 
 	// 5. Update vector store (outside the DB transaction — it is a separate store).
-	_ = uc.vectorStore.Delete(ctx, input.ID)
-	candidate := entities.NewCandidate(fp, verbatim, emb.Vector)
-	_ = uc.vectorStore.AddCandidate(ctx, candidate)
+	// If synchronization fails, rebuild from SQLite, which is authoritative.
+	vectorErr := uc.vectorStore.Delete(ctx, input.ID)
+	if vectorErr == nil {
+		vectorErr = uc.vectorStore.AddCandidate(ctx, entities.NewCandidate(fp, verbatim, emb.Vector))
+	}
+	if vectorErr != nil {
+		if repairErr := repairVectorStore(ctx, uc.vectorStore); repairErr != nil {
+			return nil, fmt.Errorf("memory updated but vector index repair failed: %w", repairErr)
+		}
+	}
 
 	return &UpdateMemoryOutput{Verbatim: verbatim}, nil
 }

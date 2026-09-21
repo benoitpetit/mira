@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No changes yet.
+
+## [0.6.0] - 2026-09-21
+
 ### Added
 - **Stateless MCP HTTP transport**: `transport: http` serves JSON-RPC requests
   at `POST /mcp`, alongside the existing stdio and SSE transports.

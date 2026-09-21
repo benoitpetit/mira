@@ -95,6 +95,11 @@ func (h *HNSWStore) BuildFromStore(ctx context.Context) error {
 	return errors.New("HNSW vector store is not supported on Windows")
 }
 
+// Rebuild rebuilds the index (not supported on Windows).
+func (h *HNSWStore) Rebuild(ctx context.Context) error {
+	return errors.New("HNSW vector store is not supported on Windows")
+}
+
 // Save persists the index (not supported on Windows)
 func (h *HNSWStore) Save() error {
 	return nil

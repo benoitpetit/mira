@@ -30,7 +30,7 @@ type ConsolidateMemories struct {
 	repository  ports.Repository
 	vectorStore ports.VectorStore
 	embedder    ports.Embedder
-	extractor   ports.Extractor
+	extractor   ports.Extractor //nolint:staticcheck // extractor methods are consumed together by consolidation
 }
 
 // NewConsolidateMemories creates a new consolidation interactor
@@ -38,7 +38,7 @@ func NewConsolidateMemories(
 	repository ports.Repository,
 	vectorStore ports.VectorStore,
 	embedder ports.Embedder,
-	extractor ports.Extractor,
+	extractor ports.Extractor, //nolint:staticcheck // extractor methods are consumed together by consolidation
 ) *ConsolidateMemories {
 	return &ConsolidateMemories{
 		repository:  repository,
@@ -162,22 +162,47 @@ func (uc *ConsolidateMemories) Execute(ctx context.Context, input ConsolidateMem
 
 		// We reuse the extraction pipeline directly to avoid circular dependency
 		verbatim := entities.NewVerbatim(storeInput.Content, storeInput.Wing, storeInput.Room)
+		if verbatim.Metadata == nil {
+			verbatim.Metadata = make(map[string]any)
+		}
+		sourceIDs := make([]string, 0, len(cluster))
+		for _, n := range cluster {
+			sourceIDs = append(sourceIDs, n.verbatim.ID.String())
+		}
+		verbatim.Metadata["consolidated_from"] = sourceIDs
+		verbatim.Metadata["consolidation_similarity_threshold"] = threshold
 		fp, emb, err := uc.extractor.ExtractPipeline(ctx, verbatim, &factType)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("failed to extract consolidated memory: %w", err)
 		}
 
 		tx, err := uc.repository.Begin()
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("failed to begin consolidation transaction: %w", err)
 		}
-		_ = uc.repository.StoreVerbatimTx(ctx, tx, verbatim)
-		_ = uc.repository.StoreFingerprintTx(ctx, tx, fp)
-		_ = uc.repository.StoreEmbeddingTx(ctx, tx, emb)
-		_ = tx.Commit()
+		if err := uc.repository.StoreVerbatimTx(ctx, tx, verbatim); err != nil {
+			_ = tx.Rollback()
+			return nil, fmt.Errorf("failed to store consolidated verbatim: %w", err)
+		}
+		if err := uc.repository.StoreFingerprintTx(ctx, tx, fp); err != nil {
+			_ = tx.Rollback()
+			return nil, fmt.Errorf("failed to store consolidated fingerprint: %w", err)
+		}
+		if err := uc.repository.StoreEmbeddingTx(ctx, tx, emb); err != nil {
+			_ = tx.Rollback()
+			return nil, fmt.Errorf("failed to store consolidated embedding: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			_ = tx.Rollback()
+			return nil, fmt.Errorf("failed to commit consolidation transaction: %w", err)
+		}
 
 		candidate := entities.NewCandidate(fp, verbatim, emb.Vector)
-		_ = uc.vectorStore.AddCandidate(ctx, candidate)
+		if err := uc.vectorStore.AddCandidate(ctx, candidate); err != nil {
+			// Keep the source memories when the new candidate cannot be indexed.
+			// This avoids making them disappear from the active memory set.
+			return nil, fmt.Errorf("failed to index consolidated memory: %w", err)
+		}
 
 		output.ConsolidatedCount++
 
@@ -186,7 +211,10 @@ func (uc *ConsolidateMemories) Execute(ctx context.Context, input ConsolidateMem
 		for _, n := range cluster {
 			idsToRemove = append(idsToRemove, n.verbatim.ID)
 		}
-		deleted, _ := uc.repository.ClearByIDs(ctx, idsToRemove)
+		deleted, err := uc.repository.ClearByIDs(ctx, idsToRemove)
+		if err != nil {
+			return nil, fmt.Errorf("failed to remove consolidated source memories: %w", err)
+		}
 		output.RemovedCount += deleted
 	}
 

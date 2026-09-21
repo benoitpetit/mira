@@ -21,7 +21,7 @@ func TestPrepareHookConfigDisablesBackgroundServices(t *testing.T) {
 }
 
 func TestPromptHookMessageSelectsAssistantResponseOnStop(t *testing.T) {
-	role, content := promptHookMessage(claudeCodeHookInput{
+	role, content := promptHookMessage(&claudeCodeHookInput{
 		HookEventName:        "Stop",
 		LastAssistantMessage: "The migration is complete.",
 		Prompt:               "This must not be selected.",
@@ -32,7 +32,7 @@ func TestPromptHookMessageSelectsAssistantResponseOnStop(t *testing.T) {
 }
 
 func TestPromptHookMessageSelectsUserPrompt(t *testing.T) {
-	role, content := promptHookMessage(claudeCodeHookInput{UserInput: "Keep all data in the EU."})
+	role, content := promptHookMessage(&claudeCodeHookInput{UserInput: "Keep all data in the EU."})
 	if role != "user" || content != "Keep all data in the EU." {
 		t.Fatalf("prompt message = (%q, %q), want user input", role, content)
 	}

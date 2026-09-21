@@ -33,6 +33,11 @@ type SQLiteOptions struct {
 	EncryptionKey          string
 }
 
+const (
+	sqlWingFilter = " AND v.wing = ?"
+	sqlRoomFilter = " AND v.room = ?"
+)
+
 // DefaultSQLiteOptions returns default options
 func DefaultSQLiteOptions() SQLiteOptions {
 	return SQLiteOptions{
@@ -798,12 +803,12 @@ func (r *SQLiteRepository) GetTimeline(ctx context.Context, wing string, room *s
 
 	// When wing is non-empty, filter by it. An empty string means "all wings".
 	if wing != "" {
-		query += " AND v.wing = ?"
+		query += sqlWingFilter
 		args = append(args, wing)
 	}
 
 	if room != nil {
-		query += " AND v.room = ?"
+		query += sqlRoomFilter
 		args = append(args, *room)
 	}
 	if memType != nil {
@@ -907,7 +912,7 @@ func (r *SQLiteRepository) ArchiveOldMemories(ctx context.Context) (*valueobject
 	result.TokensFreed += debugTokens
 
 	// Delete all related data
-	allIDs := append(sessionIDs, debugIDs...)
+	allIDs := append(append([]uuid.UUID(nil), sessionIDs...), debugIDs...)
 	for _, id := range allIDs {
 		idBytes := id[:]
 		_, _ = tx.ExecContext(ctx, `DELETE FROM causal_edges WHERE from_id = ? OR to_id = ?`, idBytes, idBytes)
@@ -966,6 +971,8 @@ func (r *SQLiteRepository) ClearByIDs(ctx context.Context, ids []uuid.UUID) (int
 	}
 	idList := strings.Join(placeholders, ", ")
 
+	// idList contains only generated '?' placeholders; IDs remain bound parameters.
+	//nolint:gosec // query structure is generated from placeholders, values are bound
 	_, _ = tx.ExecContext(ctx,
 		`DELETE FROM causal_edges WHERE from_id IN (
 			SELECT id FROM fingerprints WHERE verbatim_id IN (`+idList+`)
@@ -975,6 +982,7 @@ func (r *SQLiteRepository) ClearByIDs(ctx context.Context, ids []uuid.UUID) (int
 		append(args, args...)...,
 	)
 
+	//nolint:gosec // query structure is generated from placeholders, values are bound
 	_, _ = tx.ExecContext(ctx,
 		`DELETE FROM causal_nodes WHERE id IN (
 			SELECT id FROM fingerprints WHERE verbatim_id IN (`+idList+`)
@@ -982,16 +990,19 @@ func (r *SQLiteRepository) ClearByIDs(ctx context.Context, ids []uuid.UUID) (int
 		args...,
 	)
 
+	//nolint:gosec // query structure is generated from placeholders, values are bound
 	_, _ = tx.ExecContext(ctx,
 		`DELETE FROM embeddings WHERE id IN (`+idList+`)`,
 		args...,
 	)
 
+	//nolint:gosec // query structure is generated from placeholders, values are bound
 	_, _ = tx.ExecContext(ctx,
 		`DELETE FROM fingerprints WHERE verbatim_id IN (`+idList+`)`,
 		args...,
 	)
 
+	//nolint:gosec // query structure is generated from placeholders, values are bound
 	_, err = tx.ExecContext(ctx,
 		`DELETE FROM verbatim WHERE id IN (`+idList+`)`,
 		args...,
@@ -1037,6 +1048,7 @@ func (r *SQLiteRepository) ClearByRoom(ctx context.Context, wing string, room *s
 		return 0, nil
 	}
 
+	//nolint:gosec // roomCondition is a fixed SQL fragment; all values are bound
 	_, _ = tx.ExecContext(ctx,
 		`DELETE FROM causal_edges WHERE from_id IN (
 			SELECT id FROM fingerprints WHERE verbatim_id IN (
@@ -1050,6 +1062,7 @@ func (r *SQLiteRepository) ClearByRoom(ctx context.Context, wing string, room *s
 		append(append([]interface{}{}, args...), args...)...,
 	)
 
+	//nolint:gosec // roomCondition is a fixed SQL fragment; all values are bound
 	_, _ = tx.ExecContext(ctx,
 		`DELETE FROM causal_nodes WHERE id IN (
 			SELECT id FROM fingerprints WHERE verbatim_id IN (
@@ -1059,6 +1072,7 @@ func (r *SQLiteRepository) ClearByRoom(ctx context.Context, wing string, room *s
 		args...,
 	)
 
+	//nolint:gosec // roomCondition is a fixed SQL fragment; all values are bound
 	_, _ = tx.ExecContext(ctx,
 		`DELETE FROM embeddings WHERE id IN (
 			SELECT id FROM verbatim WHERE wing = ? `+roomCondition+`
@@ -1066,6 +1080,7 @@ func (r *SQLiteRepository) ClearByRoom(ctx context.Context, wing string, room *s
 		args...,
 	)
 
+	//nolint:gosec // roomCondition is a fixed SQL fragment; all values are bound
 	_, _ = tx.ExecContext(ctx,
 		`DELETE FROM fingerprints WHERE verbatim_id IN (
 			SELECT id FROM verbatim WHERE wing = ? `+roomCondition+`
@@ -1073,6 +1088,7 @@ func (r *SQLiteRepository) ClearByRoom(ctx context.Context, wing string, room *s
 		args...,
 	)
 
+	//nolint:gosec // roomCondition is a fixed SQL fragment; all values are bound
 	_, err = tx.ExecContext(ctx,
 		`DELETE FROM verbatim WHERE wing = ? `+roomCondition,
 		args...,
@@ -1120,23 +1136,7 @@ func (r *SQLiteRepository) ensureFTS5(ctx context.Context) bool {
 	return true
 }
 
-func (r *SQLiteRepository) backfillFTS5(ctx context.Context) error {
-	var count int
-	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM verbatim_fts`).Scan(&count)
-	if err != nil {
-		return err
-	}
-	if count > 0 {
-		return nil
-	}
-	_, err = r.db.ExecContext(ctx, `
-		INSERT INTO verbatim_fts(rowid, content)
-		SELECT rowid, content FROM verbatim
-	`)
-	return err
-}
-
-func (r *SQLiteRepository) collectArchiveTargets(ctx context.Context, tx *sql.Tx, ftype string, threshold float64) ([]uuid.UUID, int) {
+func (r *SQLiteRepository) collectArchiveTargets(ctx context.Context, tx *sql.Tx, ftype string, threshold float64) (ids []uuid.UUID, totalTokens int) {
 	rows, err := tx.QueryContext(ctx,
 		`SELECT v.id, v.token_count FROM verbatim v
 		 JOIN fingerprints f ON v.id = f.verbatim_id
@@ -1148,8 +1148,6 @@ func (r *SQLiteRepository) collectArchiveTargets(ctx context.Context, tx *sql.Tx
 	}
 	defer rows.Close()
 
-	var ids []uuid.UUID
-	totalTokens := 0
 	for rows.Next() {
 		var idBytes []byte
 		var tokenCount int
@@ -1191,11 +1189,11 @@ func (r *SQLiteRepository) SearchLexical(ctx context.Context, query string, limi
 	args := []interface{}{ftsQuery}
 
 	if wing != nil {
-		sqlQuery += " AND v.wing = ?"
+		sqlQuery += sqlWingFilter
 		args = append(args, *wing)
 	}
 	if room != nil {
-		sqlQuery += " AND v.room = ?"
+		sqlQuery += sqlRoomFilter
 		args = append(args, *room)
 	}
 
@@ -1301,11 +1299,11 @@ func (r *SQLiteRepository) SearchExact(ctx context.Context, query string, limit 
 	args := []interface{}{query}
 
 	if wing != nil {
-		sqlQuery += " AND v.wing = ?"
+		sqlQuery += sqlWingFilter
 		args = append(args, *wing)
 	}
 	if room != nil {
-		sqlQuery += " AND v.room = ?"
+		sqlQuery += sqlRoomFilter
 		args = append(args, *room)
 	}
 
@@ -1419,6 +1417,7 @@ func (r *SQLiteRepository) GetVerbatimsByTags(ctx context.Context, tags []string
 		placeholders[i] = "?"
 		args[i] = tag
 	}
+	//nolint:gosec // the IN list contains only generated placeholders
 	query := fmt.Sprintf(
 		`SELECT DISTINCT verbatim_id FROM memory_tags WHERE tag IN (%s) LIMIT ?`,
 		strings.Join(placeholders, ","),
@@ -1481,6 +1480,7 @@ func (r *SQLiteRepository) GetCandidatesWithEmbeddings(ctx context.Context, ids 
 		args[i] = id[:]
 	}
 
+	//nolint:gosec // the IN list contains only generated placeholders
 	query := fmt.Sprintf(`
 		SELECT v.id, v.content, v.wing, v.room, v.token_count, v.created_at, v.valid_from, v.valid_until, v.kind,
 			   v.summary, v.summary_tokens,
@@ -1589,7 +1589,7 @@ func (r *SQLiteRepository) GetCandidatesWithEmbeddings(ctx context.Context, ids 
 // Retrieves all embeddings from the store
 func (r *SQLiteRepository) GetAllEmbeddings(ctx context.Context) ([]*entities.Embedding, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT v.id, e.vector, e.dim
+		SELECT v.id, e.model_hash, e.vector, e.dim
 		FROM verbatim v
 		JOIN embeddings e ON v.id = e.id
 	`)
@@ -1601,8 +1601,9 @@ func (r *SQLiteRepository) GetAllEmbeddings(ctx context.Context) ([]*entities.Em
 	var embeddings []*entities.Embedding
 	for rows.Next() {
 		var idBytes, vectorBytes []byte
+		var modelHash string
 		var dim int
-		if err := rows.Scan(&idBytes, &vectorBytes, &dim); err != nil {
+		if err := rows.Scan(&idBytes, &modelHash, &vectorBytes, &dim); err != nil {
 			continue
 		}
 
@@ -1623,9 +1624,10 @@ func (r *SQLiteRepository) GetAllEmbeddings(ctx context.Context) ([]*entities.Em
 		}
 
 		embeddings = append(embeddings, &entities.Embedding{
-			ID:     id,
-			Vector: vec,
-			Dim:    dim,
+			ID:        id,
+			ModelHash: modelHash,
+			Vector:    vec,
+			Dim:       dim,
 		})
 	}
 

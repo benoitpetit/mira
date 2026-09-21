@@ -156,7 +156,7 @@ func TestEnsureGitignore_NoTrailingNewline(t *testing.T) {
 }
 
 func containsStr(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && func() bool {
+	return len(s) >= len(substr) && (s == substr || s != "" && func() bool {
 		for i := 0; i <= len(s)-len(substr); i++ {
 			if s[i:i+len(substr)] == substr {
 				return true

@@ -7,6 +7,8 @@ github.com/aymanbagabas/go-osc52/v2 v2.0.1 h1:HwpRHbFMcZLEVr42D4p7XBqjyuxQH5SMiE
 github.com/aymanbagabas/go-osc52/v2 v2.0.1/go.mod h1:uYgXzlJ7ZpABp8OJ+exZzJJhRNQ2ASbcXHWsFqH8hp8=
 github.com/benoitpetit/go-sqlcipher/v4 v4.17.0-mira.2 h1:UiVeZQcM2QZPm7UOEV4XF9PnJH64g+rHM5eQfxEinew=
 github.com/benoitpetit/go-sqlcipher/v4 v4.17.0-mira.2/go.mod h1:+63wD3IwmfoGkKQe3kH4kax2R45umbtdXcX3g6iEIWw=
+github.com/benoitpetit/soul v0.0.7-0.20260831191405-7502ef6ebc11 h1:8G5TbUwLetgDHth5OvzLR3T2whgoS/LdFTQTlm/mJFE=
+github.com/benoitpetit/soul v0.0.7-0.20260831191405-7502ef6ebc11/go.mod h1:dJWYbwQ2exa77Fqiv8ZEcBQ49EmMupE1k9GMNK8HAEE=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
 github.com/census-instrumentation/opencensus-proto v0.2.1/go.mod h1:f6KPmirojxKA12rnyqOA5BBL4O983OfeGPqjHWSTneU=

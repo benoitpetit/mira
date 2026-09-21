@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
+	_ "github.com/benoitpetit/go-sqlcipher/v4"
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/google/uuid"
-	_ "github.com/benoitpetit/go-sqlcipher/v4"
 )
 
 // closedRepo returns a repo whose underlying DB has already been closed,

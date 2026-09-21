@@ -557,7 +557,7 @@ mira_recall(query="How should I handle payment retries?", wing="payment-service"
 ```
 MIRA System Status
 ═══════════════════════════════════════
-Version: 0.5.0
+Version: 0.6.0
 Uptime: 2h15m30s
 
 Storage:
@@ -1012,7 +1012,7 @@ Returns system statistics identical to the `mira_status` MCP tool.
 
 ```json
 {
-  "version": "0.5.0",
+  "version": "0.6.0",
   "uptime": "2h15m30s",
   "stats": {
     "verbatim_count": 1250,
@@ -1080,7 +1080,7 @@ curl http://localhost:9090/health
 {
   "status": "healthy",
   "timestamp": "2026-04-10T14:30:00Z",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "checks": {
     "database": {"status": "pass", "message": "connected"},
     "vector_store": {"status": "pass", "message": "HNSW ready"},
@@ -1238,4 +1238,4 @@ recall:
 | `reranker.enabled` | `false` | Enable heuristic lexical reranking |
 
 *Last updated: 2026-04-30*
-*Version: 0.5.0*
+*Version: 0.6.0*

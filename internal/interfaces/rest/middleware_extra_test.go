@@ -26,9 +26,8 @@ func TestWingForRequest_AllCases(t *testing.T) {
 		{http.MethodPut, "/api/v1/memories/some-id", WingWrite},
 		// delete wing
 		{http.MethodDelete, "/api/v1/memories/some-id", WingDelete},
-		// admin wing — consolidate only fires when path does NOT start with /api/v1/memories
-		// (the write rule for /api/v1/memories is evaluated first in the switch)
-		{http.MethodPost, "/api/v1/consolidate", WingAdmin},
+		// admin wing
+		{http.MethodPost, "/api/v1/memories/consolidate", WingAdmin},
 		{http.MethodPost, "/api/v1/archive", WingAdmin},
 		// default fallback (POST to unknown path)
 		{http.MethodPost, "/api/v1/unknown-endpoint", WingWrite},

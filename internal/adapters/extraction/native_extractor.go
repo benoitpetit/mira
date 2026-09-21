@@ -18,12 +18,10 @@ import (
 	"github.com/benoitpetit/mira/internal/usecases/ports"
 	"github.com/benoitpetit/mira/internal/util"
 	"github.com/google/uuid"
-	"github.com/pkoukk/tiktoken-go"
 )
 
 // NativeExtractor implements extraction using pure Go (no prose dependency)
 type NativeExtractor struct {
-	tokenizer       *tiktoken.Tiktoken
 	embedder        ports.Embedder
 	modelHash       string
 	minEntityLength int
@@ -56,11 +54,6 @@ type NativeExtractorOptions struct {
 
 // NewNativeExtractor creates a new native extractor (prose replacement)
 func NewNativeExtractor(embedder ports.Embedder, opts NativeExtractorOptions) (*NativeExtractor, error) {
-	tok, err := tiktoken.GetEncoding("cl100k_base")
-	if err != nil {
-		return nil, err
-	}
-
 	minEntityLen := opts.MinEntityLength
 	if minEntityLen <= 0 {
 		minEntityLen = 2
@@ -70,7 +63,6 @@ func NewNativeExtractor(embedder ports.Embedder, opts NativeExtractorOptions) (*
 	modelHash := util.ComputeModelHash(opts.ModelName)
 
 	e := &NativeExtractor{
-		tokenizer:       tok,
 		embedder:        embedder,
 		modelHash:       modelHash,
 		minEntityLength: minEntityLen,
@@ -191,8 +183,7 @@ func (e *NativeExtractor) loadGazetteers() {
 // ExtractPipeline implements Extractor interface
 func (e *NativeExtractor) ExtractPipeline(ctx context.Context, verbatim *entities.Verbatim, forcedType *valueobjects.MemoryType) (*entities.Fingerprint, *entities.Embedding, error) {
 	// 1. Token count
-	tokens := e.tokenizer.Encode(verbatim.Content, nil, nil)
-	verbatim.TokenCount = len(tokens)
+	verbatim.TokenCount = estimateTokenCount(verbatim.Content)
 
 	// 2. Native tokenization + NER (replaces prose.NewDocument)
 	tokensList := e.tokenize(verbatim.Content)
@@ -208,6 +199,7 @@ func (e *NativeExtractor) ExtractPipeline(ctx context.Context, verbatim *entitie
 		memType = e.detectType(verbatim.Content)
 	}
 	data := e.extractStructured(verbatim, tokensList, extractedEntities, memType)
+	attachExtractionQuality(&data, "native", e.modelHash, nativeExtractionConfidence(data))
 
 	// 5. Embedding generation
 	vec, err := e.embedder.Encode(ctx, verbatim.Content)
@@ -218,7 +210,7 @@ func (e *NativeExtractor) ExtractPipeline(ctx context.Context, verbatim *entitie
 
 	// 6. T1 token estimate
 	fpJSON, _ := json.Marshal(data)
-	t1Tokens := len(e.tokenizer.Encode(string(fpJSON), nil, nil))
+	t1Tokens := estimateTokenCount(string(fpJSON))
 
 	fp := entities.NewFingerprint(verbatim.ID, memType, e.modelHash)
 	fp.WithData(data).WithTokenEstimate(t1Tokens)
@@ -304,7 +296,7 @@ func (e *NativeExtractor) extractEntities(tokens []Token, fullText string) []str
 			// Heuristic: if previous word is not end of sentence, likely a name
 			if i > 0 {
 				prev := tokens[i-1].Text
-				if len(prev) > 0 && !strings.ContainsAny(string(prev[len(prev)-1]), ".!?") {
+				if prev != "" && !strings.ContainsAny(string(prev[len(prev)-1]), ".!?") {
 					// Check if it's not a common word
 					if !isCommonWord(word) {
 						entitySet[word] = true

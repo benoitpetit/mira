@@ -26,6 +26,11 @@ type claudeCodeHookInput struct {
 	ThreadID             string `json:"thread_id"`
 }
 
+const (
+	hookRoleUser      = "user"
+	hookRoleAssistant = "assistant"
+)
+
 func newHookCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "hook", Hidden: true, Short: "Internal client hook commands"}
 	cmd.AddCommand(newClaudeCodeHookCmd())
@@ -73,9 +78,9 @@ func newWindsurfHookCmd() *cobra.Command {
 			var role, content, source string
 			switch event.Action {
 			case "pre_user_prompt":
-				role, content, source = "user", event.ToolInfo.UserPrompt, "windsurf_hook"
+				role, content, source = hookRoleUser, event.ToolInfo.UserPrompt, "windsurf_hook"
 			case "post_cascade_response":
-				role, content, source = "assistant", event.ToolInfo.Response, "windsurf_hook"
+				role, content, source = hookRoleAssistant, event.ToolInfo.Response, "windsurf_hook"
 			default:
 				return nil
 			}
@@ -108,7 +113,7 @@ func newPromptHookCmd(client, source string) *cobra.Command {
 			if err := json.Unmarshal(raw, &event); err != nil {
 				return fmt.Errorf("parse %s hook input: %w", client, err)
 			}
-			role, content := promptHookMessage(event)
+			role, content := promptHookMessage(&event)
 			return storeHookMemory(client, source, role, content, wing, room, minChars, event.SessionID, event.ThreadID)
 		},
 	}
@@ -118,9 +123,9 @@ func newPromptHookCmd(client, source string) *cobra.Command {
 	return cmd
 }
 
-func promptHookMessage(event claudeCodeHookInput) (role, content string) {
+func promptHookMessage(event *claudeCodeHookInput) (role, content string) {
 	if event.HookEventName == "Stop" {
-		return "assistant", event.LastAssistantMessage
+		return hookRoleAssistant, event.LastAssistantMessage
 	}
 	content = event.Prompt
 	if content == "" {
@@ -129,7 +134,7 @@ func promptHookMessage(event claudeCodeHookInput) (role, content string) {
 	if content == "" {
 		content = event.Message
 	}
-	return "user", content
+	return hookRoleUser, content
 }
 
 func storeHookMemory(client, source, role, content, wing, room string, minChars int, sessionID, threadID string) error {
@@ -165,7 +170,7 @@ func storeHookMemory(client, source, role, content, wing, room string, minChars 
 	prepareHookConfig(cfg)
 	application, err := app.NewApplication(cfg)
 	if err != nil {
-		return fmt.Errorf("initialise MIRA for %s hook: %w", client, err)
+		return fmt.Errorf("initialize MIRA for %s hook: %w", client, err)
 	}
 	defer application.Close()
 	_, err = application.StoreMemoryUC().Execute(context.Background(), input)

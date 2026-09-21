@@ -54,7 +54,7 @@ func TestPrometheusCollector_Handler(t *testing.T) {
 	pc.RecordStore(100 * time.Millisecond)
 
 	// Créer une requête
-	req := httptest.NewRequest("GET", "/metrics", nil)
+	req := httptest.NewRequest("GET", "/metrics", http.NoBody)
 	rec := httptest.NewRecorder()
 
 	// Appeler le handler
@@ -93,7 +93,7 @@ func TestPrometheusCollector_Handler_ContainsAllMetrics(t *testing.T) {
 	pc.UpdateMemoryCount(100)
 	pc.UpdateVectorCount(50)
 
-	req := httptest.NewRequest("GET", "/metrics", nil)
+	req := httptest.NewRequest("GET", "/metrics", http.NoBody)
 	rec := httptest.NewRecorder()
 	pc.Handler().ServeHTTP(rec, req)
 

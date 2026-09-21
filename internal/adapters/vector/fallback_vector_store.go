@@ -2,6 +2,7 @@ package vector
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/benoitpetit/mira/internal/domain/entities"
@@ -60,6 +61,16 @@ func (f *fallbackVectorStore) ClearAll(ctx context.Context) error {
 // ClearByRoom delegates to the primary store.
 func (f *fallbackVectorStore) ClearByRoom(ctx context.Context, wing string, room *string) error {
 	return f.primary.ClearByRoom(ctx, wing, room)
+}
+
+// Rebuild repairs the primary index from its authoritative embedding source.
+// The fallback store remains available while the rebuild is in progress.
+func (f *fallbackVectorStore) Rebuild(ctx context.Context) error {
+	repairer, ok := f.primary.(ports.VectorStoreRepairer)
+	if !ok {
+		return fmt.Errorf("primary vector store does not support rebuild")
+	}
+	return repairer.Rebuild(ctx)
 }
 
 // SearchExact performs an exact content match via the fallback store.

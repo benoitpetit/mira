@@ -24,6 +24,9 @@ vendor/
 go.work
 go.work.sum
 
+# Local CodeGraph index
+.codegraph/
+
 # IDE
 .idea/
 .vscode/

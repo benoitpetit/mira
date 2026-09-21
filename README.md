@@ -12,7 +12,7 @@
 
   [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.5.0-blue?style=flat-square)]()
+  [![Version](https://img.shields.io/badge/Version-0.6.0-blue?style=flat-square)]()
   [![Tests](https://img.shields.io/badge/Tests-~70%25-yellow?style=flat-square)]()
 
   [Documentation](docs/INDEX.md) • [API Reference](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [Français](README_FR.md) • [SOUL Extension](https://github.com/benoitpetit/soul)
@@ -594,11 +594,17 @@ MIRA supports full data portability. Your memories belong to you.
 #### Backup & Restore
 
 ```bash
-# Full project-local backup
-cp -r .mira .mira.backup.$(date +%Y%m%d)
+# Consistent project-local backup (SQLite online backup + vectors + models)
+bash scripts/backup-mira.sh .mira .mira.backup.$(date +%Y%m%d-%H%M%S)
 
-# Restore from backup
-cp -r .mira.backup.20260901 .mira
+# Restore (refuses to overwrite an existing target unless --force is explicit)
+bash scripts/restore-mira.sh .mira.backup.20260901 .mira --force
+
+# Rebuild the derived HNSW index from the authoritative SQLite embeddings
+mira reindex
+
+# Migrate all embeddings to the configured model (backup first)
+mira reembed --yes
 ```
 
 > **Your AI memory belongs to you.** No lock-in, no cloud dependency. Export, backup, or migrate at any time.
@@ -672,7 +678,7 @@ We decided to migrate to PostgreSQL for v2...
 
 ```yaml
 system:
-  version: "0.5.0"
+  version: "0.6.0"
 
 storage:
   path: ".mira"
@@ -753,9 +759,10 @@ soul:
 
 mcp:
   name: "mira"
-  version: "0.5.0"
+  version: "0.6.0"
   transport: "stdio"   # "stdio", "sse", or stateless "http" at /mcp
   address: "localhost:3001"
+  auth_token: ""         # required for HTTP when address is not loopback
   timeout_seconds: 30
 
 # Optional REST HTTP API
@@ -769,7 +776,7 @@ api:
 # Prometheus metrics
 metrics:
   enabled: true
-  prometheus_addr: ":9090"
+  prometheus_addr: "127.0.0.1:9090"
   report_interval_seconds: 60
 
 # Webhook notifications
@@ -1190,7 +1197,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
 ### Key Libraries
 
-- [tiktoken-go](https://github.com/pkoukk/tiktoken-go) — OpenAI tokenization
+- [tiktoken-go](https://github.com/pkoukk/tiktoken-go) — used by the optional SOUL extension; MIRA core uses a deterministic local estimator
 - Native Go implementation — rule-based NLP/NER
 - [cybertron](https://github.com/nlpodyssey/cybertron) — Transformer embeddings
 - [hnsw](https://github.com/coder/hnsw) — HNSW graphs

@@ -268,8 +268,32 @@ func (h *HNSWStore) batchGetCandidates(ctx context.Context, ids []uuid.UUID, win
 
 // AddCandidate implements VectorStore
 func (h *HNSWStore) AddCandidate(ctx context.Context, c *entities.Candidate) error {
+	if c == nil || c.Verbatim == nil {
+		return fmt.Errorf("cannot index a nil candidate")
+	}
+	if len(c.Embedding) != h.dimension {
+		return fmt.Errorf("embedding dimension mismatch: got %d, expected %d", len(c.Embedding), h.dimension)
+	}
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
+
+	// Updates may reuse the same verbatim ID. Remove the old node first so
+	// repeated writes cannot leave stale duplicate vectors in the graph.
+	if oldID, ok := h.uuidToID[c.Verbatim.ID]; ok {
+		h.graph.Delete(oldID)
+		delete(h.idToUUID, oldID)
+	}
+	if h.graph.Len() == 0 {
+		// coder/hnsw can retain an empty layer after deleting the last node;
+		// replace it so the next Add starts from a valid empty graph.
+		m, ml, efSearch, distance := h.graph.M, h.graph.Ml, h.graph.EfSearch, h.graph.Distance
+		h.graph = hnsw.NewGraph[node]()
+		h.graph.M = m
+		h.graph.Ml = ml
+		h.graph.EfSearch = efSearch
+		h.graph.Distance = distance
+	}
 
 	id := h.getNextID()
 	h.idToUUID[id] = c.Verbatim.ID
@@ -331,8 +355,29 @@ func (h *HNSWStore) BuildFromStore(ctx context.Context) error {
 		return fmt.Errorf("failed to query embeddings: %w", err)
 	}
 
+	// Rebuild from a clean graph. This method is also used for recovery after a
+	// stale/corrupt index and must not append a second copy of every vector.
+	graph := hnsw.NewGraph[node]()
+	graph.M = h.graph.M
+	graph.Ml = h.graph.Ml
+	graph.EfSearch = h.graph.EfSearch
+	graph.Distance = h.graph.Distance
+	h.graph = graph
+	h.idToUUID = make(map[string]uuid.UUID, len(embeddings))
+	h.uuidToID = make(map[uuid.UUID]string, len(embeddings))
+	h.nextID = 0
+	h.ready = false
+
 	count := 0
 	for _, emb := range embeddings {
+		if h.modelHash != "" && emb.ModelHash != "" && emb.ModelHash != h.modelHash {
+			log.Printf("[Vector] Warning: skipping embedding %s from model %s; expected %s", emb.ID, emb.ModelHash, h.modelHash)
+			continue
+		}
+		if len(emb.Vector) != h.dimension {
+			log.Printf("[Vector] Warning: skipping embedding %s with wrong dimension: got %d, expected %d", emb.ID, len(emb.Vector), h.dimension)
+			continue
+		}
 		// Add to HNSW
 		strID := h.getNextID()
 		h.idToUUID[strID] = emb.ID
@@ -349,6 +394,16 @@ func (h *HNSWStore) BuildFromStore(ctx context.Context) error {
 	h.ready = true
 	log.Printf("[Vector] Index ready: %d vectors, %dd dims", count, h.dimension)
 	return nil
+}
+
+// Rebuild reconstructs the index from the authoritative embedding store and
+// persists it atomically. It is used after a write/delete cannot be reflected
+// in the in-memory graph.
+func (h *HNSWStore) Rebuild(ctx context.Context) error {
+	if err := h.BuildFromStore(ctx); err != nil {
+		return err
+	}
+	return h.Save()
 }
 
 // IsReady returns whether the index is ready for queries
@@ -405,18 +460,19 @@ func (h *HNSWStore) Save() error {
 
 	// Prepare mapping data
 	uuidToID := make(map[string]string)
-	for uuid, id := range h.uuidToID {
-		uuidToID[uuid.String()] = id
-	}
 
 	// Collect all nodes from the graph
 	nodes := make([]hnswNodeData, 0, h.graph.Len())
 	for uuid, id := range h.uuidToID {
+		if h.graph.Len() == 0 {
+			break
+		}
 		// Retrieve node from graph
 		n, ok := h.graph.Lookup(id)
 		if !ok {
 			continue // Node not found in graph
 		}
+		uuidToID[uuid.String()] = id
 
 		// Copy embedding
 		embedding := make([]float32, len(n.Embedding()))
@@ -477,7 +533,7 @@ func (h *HNSWStore) Save() error {
 	}
 	hash := sha256.Sum256(written)
 	checksumPath := h.indexPath + ".sha256"
-	if err := os.WriteFile(checksumPath, []byte(hex.EncodeToString(hash[:])), 0o644); err != nil {
+	if err := os.WriteFile(checksumPath, []byte(hex.EncodeToString(hash[:])), 0o600); err != nil {
 		return fmt.Errorf("failed to write checksum file: %w", err)
 	}
 

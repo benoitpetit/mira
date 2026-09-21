@@ -12,6 +12,7 @@ services:
     environment:
       - MIRA_STORAGE_TYPE=sqlite
       - MIRA_DATA_PATH=/home/mira/.mira
+      - MIRA_PROMETHEUS_ADDR=0.0.0.0:9090
     restart: unless-stopped
 
 volumes:

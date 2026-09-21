@@ -12,12 +12,12 @@ import (
 )
 
 const (
-	statusUnhealthy    = "unhealthy"
-	statusHealthy      = "healthy"
-	statusDegraded     = "degraded"
-	statusFail         = "fail"
-	statusNotInit      = "not_initialized"
-	typeHNSW           = "hnsw"
+	statusUnhealthy = "unhealthy"
+	statusHealthy   = "healthy"
+	statusDegraded  = "degraded"
+	statusFail      = "fail"
+	statusNotInit   = "not_initialized"
+	typeHNSW        = "hnsw"
 )
 
 // HealthStatus represents the health status of the system

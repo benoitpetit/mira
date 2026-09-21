@@ -71,6 +71,13 @@ type VectorStore interface {
 	ClearByRoom(ctx context.Context, wing string, room *string) error
 }
 
+// VectorStoreRepairer can rebuild an index from the authoritative repository
+// after a partial SQLite/index failure. It is optional so lightweight test and
+// SQLite-only implementations do not need a rebuild operation.
+type VectorStoreRepairer interface {
+	Rebuild(ctx context.Context) error
+}
+
 // OverlapCache defines the interface for caching pairwise overlap similarity.
 // This optimization avoids recomputing cosine similarity between the same pairs
 // of embeddings multiple times during the CBA (Context Budget Allocation) process.
