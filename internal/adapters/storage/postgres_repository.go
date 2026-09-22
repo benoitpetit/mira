@@ -24,15 +24,23 @@ type PostgreSQLRepository struct {
 
 // PostgreSQLOptions holds configuration for PostgreSQL repository
 type PostgreSQLOptions struct {
-	URL         string
-	MaxConns    int
-	MinConns    int
-	MaxIdleTime time.Duration
-	MaxConnTime time.Duration
+	URL                    string
+	MaxConns               int
+	MinConns               int
+	MaxIdleTime            time.Duration
+	MaxConnTime            time.Duration
+	SessionNoteArchiveDays int
+	DebugLogArchiveDays    int
 }
 
 // NewPostgreSQLRepository creates a new PostgreSQL repository
 func NewPostgreSQLRepository(opts PostgreSQLOptions) (*PostgreSQLRepository, error) {
+	if opts.SessionNoteArchiveDays <= 0 {
+		opts.SessionNoteArchiveDays = 30
+	}
+	if opts.DebugLogArchiveDays <= 0 {
+		opts.DebugLogArchiveDays = 7
+	}
 	db, err := sql.Open("pgx", opts.URL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
@@ -803,8 +811,72 @@ func (r *PostgreSQLRepository) GetTimeline(ctx context.Context, wing string, roo
 
 // ArchiveOldMemories implements StatsRepository
 func (r *PostgreSQLRepository) ArchiveOldMemories(ctx context.Context) (*valueobjects.ArchiveResult, error) {
-	// Implementation simplified for now, following SQLite logic
-	return &valueobjects.ArchiveResult{}, nil
+	result := &valueobjects.ArchiveResult{}
+	now := float64(time.Now().Unix())
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin archive transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
+
+	sessionIDs, sessionTokens, err := collectPostgresArchiveTargets(ctx, tx, "session_note", now-float64(r.opts.SessionNoteArchiveDays*24*60*60))
+	if err != nil {
+		return nil, err
+	}
+	debugIDs, debugTokens, err := collectPostgresArchiveTargets(ctx, tx, "debug_log", now-float64(r.opts.DebugLogArchiveDays*24*60*60))
+	if err != nil {
+		return nil, err
+	}
+	result.SessionNotes = len(sessionIDs)
+	result.DebugLogs = len(debugIDs)
+	result.TokensFreed = sessionTokens + debugTokens
+
+	allIDs := append(append([]uuid.UUID(nil), sessionIDs...), debugIDs...)
+	for _, id := range allIDs {
+		for _, query := range []string{
+			`DELETE FROM causal_edges WHERE from_id = $1 OR to_id = $1`,
+			`DELETE FROM causal_nodes WHERE id = $1`,
+			`DELETE FROM embeddings WHERE id = $1`,
+			`DELETE FROM fingerprints WHERE id = $1 OR verbatim_id = $1`,
+			`DELETE FROM memory_tags WHERE verbatim_id = $1`,
+			`DELETE FROM verbatim WHERE id = $1`,
+		} {
+			if _, err := tx.ExecContext(ctx, query, id); err != nil {
+				return nil, fmt.Errorf("failed to archive memory %s: %w", id, err)
+			}
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM overlap_cache WHERE ttl < $1`, now); err != nil {
+		return nil, fmt.Errorf("failed to purge overlap cache: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit archive transaction: %w", err)
+	}
+	return result, nil
+}
+
+func collectPostgresArchiveTargets(ctx context.Context, tx *sql.Tx, ftype string, threshold float64) ([]uuid.UUID, int, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT v.id, v.token_count FROM verbatim v JOIN fingerprints f ON v.id = f.verbatim_id WHERE v.created_at < $1 AND f.ftype = $2`, threshold, ftype)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to select %s memories for archive: %w", ftype, err)
+	}
+	defer rows.Close()
+	var ids []uuid.UUID
+	tokens := 0
+	for rows.Next() {
+		var id uuid.UUID
+		var tokenCount int
+		if err := rows.Scan(&id, &tokenCount); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan %s archive target: %w", ftype, err)
+		}
+		ids = append(ids, id)
+		tokens += tokenCount
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("failed to iterate %s archive targets: %w", ftype, err)
+	}
+	return ids, tokens, nil
 }
 
 // ClearAll implements StatsRepository
@@ -896,8 +968,11 @@ func (r *PostgreSQLRepository) GetVerbatimsByTags(ctx context.Context, tags []st
 		return nil, nil
 	}
 	args := postgresStringArguments(tags)
+	for i := range args {
+		args[i] = strings.ToLower(strings.TrimSpace(args[i].(string)))
+	}
 	args = append(args, limit)
-	query := `SELECT DISTINCT verbatim_id FROM memory_tags WHERE tag IN (` + postgresPlaceholders(1, len(tags)) + `) LIMIT $` + fmt.Sprint(len(args)) //nolint:gosec // placeholders are generated, tags are bound
+	query := `SELECT DISTINCT verbatim_id FROM memory_tags WHERE LOWER(tag) IN (` + postgresPlaceholders(1, len(tags)) + `) LIMIT $` + fmt.Sprint(len(args)) //nolint:gosec // placeholders are generated, tags are bound
 	rows, err := r.db.QueryContext(ctx,
 		query,
 		args...,

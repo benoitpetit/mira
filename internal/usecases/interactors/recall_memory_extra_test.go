@@ -270,6 +270,17 @@ func TestRecallMemory_FallbackWings(t *testing.T) {
 	}
 }
 
+func TestRecallMemory_LexicalFailureWithoutLoggerDoesNotPanic(t *testing.T) {
+	config := DefaultRecallMemoryConfig()
+	config.EarlyPruningThreshold = 0
+	config.ThresholdFloor = 0
+	vs := &mockRecallVectorStore{lexicalErr: errors.New("lexical unavailable")}
+	interactor := NewRecallMemory(vs, &mockRecallOverlapCache{}, &mockRecallCausalGraph{}, &mockRecallEmbedder{}, &mockRecallRenderer{}, config, nil, nil)
+	if _, err := interactor.Execute(context.Background(), RecallMemoryInput{Query: "logger safety test", Budget: 200}); err != nil {
+		t.Fatalf("expected lexical failure to be non-fatal, got %v", err)
+	}
+}
+
 func TestRecallMemory_SessionIDCacheUpdated(t *testing.T) {
 	uid := uuid.New()
 	emb := make([]float32, 384)

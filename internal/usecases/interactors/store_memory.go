@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -241,8 +242,8 @@ func (uc *StoreMemory) Execute(ctx context.Context, input StoreMemoryInput) (*St
 		}
 	}
 
-	// 4b. Store tags for semantic filtering (non-fatal)
-	uc.storeTags(ctx, verbatim.ID, fp, input.Content)
+	// 4b-6. Rebuild every derived index from the committed memory.
+	reindexMemoryDerivedData(ctx, uc.repository, fp, verbatim, input.Content, uc.causalDetector, uc.logger)
 
 	// 4c. Auto-compress session notes (non-fatal, async)
 	if uc.autoCompressEnabled &&
@@ -262,61 +263,6 @@ func (uc *StoreMemory) Execute(ctx context.Context, input StoreMemoryInput) (*St
 				}
 			}
 		}(verbatim.ID, verbatim.Content, verbatim.TokenCount)
-	}
-
-	// 5. Create causal node (non-fatal). Extraction can legitimately yield no
-	// subject (for example for a terse debug note), so never index into Subject
-	// without a guard.
-	summary := fp.Data.Decision
-	if summary == "" && len(fp.Data.Subject) > 0 {
-		summary = fp.Data.Subject[0]
-	}
-	if summary == "" {
-		summary = fmt.Sprintf("Memory %s", verbatim.ID.String()[:8])
-	}
-	node := entities.NewCausalNode(fp.ID, string(fp.Type), summary, input.Wing, input.Room)
-	if err := uc.repository.AddNode(ctx, node); err != nil {
-		// Non-fatal: continue without causal node
-		if uc.logger != nil {
-			uc.logger.Warn("Failed to create causal node, continuing without",
-				"error", err,
-				"fingerprint_id", fp.ID.String(),
-			)
-		}
-	}
-
-	// 6. Detect causal relations (non-fatal)
-	recentFps, err := uc.repository.GetRecentFingerprintsByWing(ctx, input.Wing, fp.ID, 50)
-	if err != nil {
-		if uc.logger != nil {
-			uc.logger.Warn("Failed to get recent fingerprints for causal detection",
-				"error", err,
-				"wing", input.Wing,
-			)
-		}
-	} else if len(recentFps) > 0 && uc.causalDetector != nil {
-		edges, err := uc.causalDetector.DetectCausalRelations(ctx, fp, recentFps, input.Content)
-		if err != nil {
-			if uc.logger != nil {
-				uc.logger.Warn("Failed to detect causal relations",
-					"error", err,
-					"fingerprint_id", fp.ID.String(),
-				)
-			}
-		} else {
-			for _, edge := range edges {
-				if err := uc.repository.AddEdge(ctx, edge); err != nil {
-					if uc.logger != nil {
-						uc.logger.Warn("Failed to add causal edge",
-							"error", err,
-							"from_id", edge.FromID.String(),
-							"to_id", edge.ToID.String(),
-							"relation", string(edge.Relation),
-						)
-					}
-				}
-			}
-		}
 	}
 
 	// Record metrics if collector is available
@@ -353,6 +299,7 @@ func storeMemoryTags(ctx context.Context, repository ports.TagRepository, verbat
 
 	// Entities
 	for _, e := range fp.Entities {
+		e = normalizeMemoryTag(e)
 		if len(e) >= 2 {
 			tagSet[e] = true
 		}
@@ -360,6 +307,7 @@ func storeMemoryTags(ctx context.Context, repository ports.TagRepository, verbat
 
 	// Subjects from fp.Data
 	for _, s := range fp.Data.Subject {
+		s = normalizeMemoryTag(s)
 		if len(s) >= 2 {
 			tagSet[s] = true
 		}
@@ -383,6 +331,7 @@ func storeMemoryTags(ctx context.Context, repository ports.TagRepository, verbat
 	for t := range tagSet {
 		tags = append(tags, t)
 	}
+	sort.Strings(tags)
 
 	return repository.StoreTags(ctx, verbatimID, tags, "keyword")
 }

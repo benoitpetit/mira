@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/benoitpetit/mira/internal/adapters/storage"
@@ -48,6 +49,19 @@ func (m *mockUpdateExtractor) ExtractPipeline(ctx context.Context, v *entities.V
 }
 
 func (m *mockUpdateExtractor) ModelHash() string { return "test-hash" }
+
+type taggingUpdateExtractor struct{}
+
+func (m *taggingUpdateExtractor) ExtractPipeline(_ context.Context, v *entities.Verbatim, _ *valueobjects.MemoryType) (*entities.Fingerprint, *entities.Embedding, error) {
+	fp := entities.NewFingerprint(v.ID, valueobjects.TypeFact, "test-hash")
+	fp.Entities = []string{"MIRA"}
+	fp.Data.Subject = []string{"Architecture"}
+	fp.FactCount = 1
+	fp.TokenEstimate = v.TokenCount
+	return fp, entities.NewEmbedding(v.ID, "test-hash", make([]float32, 4)), nil
+}
+
+func (m *taggingUpdateExtractor) ModelHash() string { return "test-hash" }
 
 // mockUpdateVectorStore discards all vector operations.
 type mockUpdateVectorStore struct{}
@@ -157,6 +171,28 @@ func TestUpdateMemory_Success(t *testing.T) {
 	}
 	if stored.Content != "updated content" {
 		t.Errorf("DB content mismatch: want %q, got %q", "updated content", stored.Content)
+	}
+}
+
+func TestUpdateMemory_RebuildsDerivedTags(t *testing.T) {
+	repo, cleanup := setupUpdateTestDB(t)
+	defer cleanup()
+
+	original := insertTestVerbatimForUpdate(t, repo, "original content", "test-wing")
+	uc := NewUpdateMemory(repo, &taggingUpdateExtractor{}, &mockUpdateVectorStore{})
+	if _, err := uc.Execute(context.Background(), UpdateMemoryInput{ID: original.ID, Content: "updated architecture content"}); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	tags, err := repo.GetTagsForVerbatim(context.Background(), original.ID)
+	if err != nil {
+		t.Fatalf("GetTagsForVerbatim: %v", err)
+	}
+	joined := strings.Join(tags, ",")
+	for _, want := range []string{"mira", "architecture", "updated"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("rebuilt tags missing %q: %v", want, tags)
+		}
 	}
 }
 

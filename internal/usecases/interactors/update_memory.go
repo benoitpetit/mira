@@ -23,9 +23,17 @@ type UpdateMemoryOutput struct {
 
 // UpdateMemory implements the update memory use case
 type UpdateMemory struct {
-	repo        ports.Repository
-	extractor   ports.FingerprintExtractor
-	vectorStore ports.VectorStore
+	repo           ports.Repository
+	extractor      ports.FingerprintExtractor
+	vectorStore    ports.VectorStore
+	causalDetector ports.CausalRelationDetector
+}
+
+// WithCausalDetector enables causal relation rebuilding after updates while
+// keeping the constructor compatible with lightweight embedders and tests.
+func (uc *UpdateMemory) WithCausalDetector(detector ports.CausalRelationDetector) *UpdateMemory {
+	uc.causalDetector = detector
+	return uc
 }
 
 // NewUpdateMemory creates a new update memory interactor
@@ -46,9 +54,18 @@ func (uc *UpdateMemory) Execute(ctx context.Context, input UpdateMemoryInput) (*
 	if err != nil {
 		return nil, fmt.Errorf("failed to load verbatim: %w", err)
 	}
+	if err := (StoreMemoryInput{
+		Content: input.Content, Wing: verbatim.Wing, Room: verbatim.Room,
+		ValidFrom: verbatim.ValidFrom, ValidUntil: verbatim.ValidUntil,
+	}).Validate(); err != nil {
+		return nil, fmt.Errorf("validation failed: %w", err)
+	}
 
-	// 2. Update content
-	verbatim.Content = input.Content
+	// Work on a copy so an extractor or transaction failure cannot mutate a
+	// repository/mock object before the replacement is committed.
+	updated := *verbatim
+	updated.Content = input.Content
+	verbatim = &updated
 
 	// 3. Regenerate fingerprint and embedding
 	fp, emb, err := uc.extractor.ExtractPipeline(ctx, verbatim, nil)
@@ -84,13 +101,20 @@ func (uc *UpdateMemory) Execute(ctx context.Context, input UpdateMemoryInput) (*
 			return nil, fmt.Errorf("failed to commit transaction: %w", err)
 		}
 	} else {
-		// Fallback path (no transaction support): keep original best-effort order.
+		// Fallback path (no transaction support): surface each write failure so a
+		// partial replacement cannot be reported as a successful update.
 		if err := uc.repo.DeleteVerbatimByID(ctx, input.ID); err != nil {
 			return nil, fmt.Errorf("failed to delete old verbatim: %w", err)
 		}
-		_ = uc.repo.StoreVerbatim(ctx, verbatim)
-		_ = uc.repo.StoreFingerprint(ctx, fp)
-		_ = uc.repo.StoreEmbedding(ctx, emb)
+		if err := uc.repo.StoreVerbatim(ctx, verbatim); err != nil {
+			return nil, fmt.Errorf("failed to store updated verbatim: %w", err)
+		}
+		if err := uc.repo.StoreFingerprint(ctx, fp); err != nil {
+			return nil, fmt.Errorf("failed to store updated fingerprint: %w", err)
+		}
+		if err := uc.repo.StoreEmbedding(ctx, emb); err != nil {
+			return nil, fmt.Errorf("failed to store updated embedding: %w", err)
+		}
 	}
 
 	// 5. Update vector store (outside the DB transaction — it is a separate store).
@@ -104,6 +128,9 @@ func (uc *UpdateMemory) Execute(ctx context.Context, input UpdateMemoryInput) (*
 			return nil, fmt.Errorf("memory updated but vector index repair failed: %w", repairErr)
 		}
 	}
+
+	// Rebuild all derived indexes from the replacement fingerprint.
+	reindexMemoryDerivedData(ctx, uc.repo, fp, verbatim, input.Content, uc.causalDetector, nil)
 
 	return &UpdateMemoryOutput{Verbatim: verbatim}, nil
 }

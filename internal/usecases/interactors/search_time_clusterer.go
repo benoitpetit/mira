@@ -1,6 +1,8 @@
 package interactors
 
 import (
+	"sort"
+
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/util"
 )
@@ -26,14 +28,9 @@ func clusterCandidates(candidates []*entities.Candidate, threshold float64) [][]
 			if visited[j] {
 				continue
 			}
-			similar := false
-			for _, member := range cluster {
-				sim := util.CosineSimilarity(member.Embedding, candidates[j].Embedding)
-				if sim >= threshold {
-					similar = true
-					break
-				}
-			}
+			// Compare with a stable representative to avoid single-link
+			// transitive chains swallowing distant memories.
+			similar := util.CosineSimilarity(cluster[0].Embedding, candidates[j].Embedding) >= threshold
 			if similar {
 				cluster = append(cluster, candidates[j])
 				visited[j] = true
@@ -59,9 +56,9 @@ func selectClusterRepresentatives(clusters [][]*entities.Candidate) []*entities.
 			continue
 		}
 		best := cluster[0]
-		bestScore := best.Relevance * best.Density
+		bestScore := clusterRepresentativeScore(best)
 		for _, c := range cluster[1:] {
-			score := c.Relevance * c.Density
+			score := clusterRepresentativeScore(c)
 			if score > bestScore {
 				bestScore = score
 				best = c
@@ -70,4 +67,40 @@ func selectClusterRepresentatives(clusters [][]*entities.Candidate) []*entities.
 		representatives = append(representatives, best)
 	}
 	return representatives
+}
+
+func clusterRepresentativeScore(candidate *entities.Candidate) float64 {
+	if candidate == nil {
+		return 0
+	}
+	if candidate.Score > 0 {
+		return candidate.Score
+	}
+	if candidate.Density > 0 {
+		return candidate.Relevance * candidate.Density
+	}
+	return candidate.Relevance
+}
+
+func earlyPruneCandidates(candidates []*entities.Candidate, threshold float64) []*entities.Candidate {
+	if threshold <= 0 {
+		return candidates
+	}
+	filtered := make([]*entities.Candidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate != nil && candidate.Relevance >= threshold {
+			filtered = append(filtered, candidate)
+		}
+	}
+	if len(filtered) > 0 || len(candidates) == 0 {
+		return filtered
+	}
+	// If the complete result set is below the threshold, keep a small bounded
+	// fallback so sparse or cross-language queries still return evidence.
+	sorted := append([]*entities.Candidate(nil), candidates...)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Relevance > sorted[j].Relevance })
+	if len(sorted) > 5 {
+		sorted = sorted[:5]
+	}
+	return sorted
 }

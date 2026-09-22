@@ -4,13 +4,26 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
 	"github.com/google/uuid"
 )
+
+func TestTruncateMemoryContentPreservesUTF8(t *testing.T) {
+	content := strings.Repeat("é", 600)
+	truncated := truncateMemoryContent(content, 500)
+	if !utf8.ValidString(truncated) {
+		t.Fatal("truncation produced invalid UTF-8")
+	}
+	if utf8.RuneCountInString(truncated) != 503 {
+		t.Fatalf("expected 500 runes plus ellipsis, got %d", utf8.RuneCountInString(truncated))
+	}
+}
 
 // mockConsolidateRepository embeds mockStoreRepository and overrides the methods
 // used by ConsolidateMemories so we can inject test data without a real database.

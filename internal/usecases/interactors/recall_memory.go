@@ -367,7 +367,9 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 		g.Go(func() error {
 			lexicalCandidates, err = uc.vectorStore.SearchLexical(gctx, input.Query, uc.fts5Limit, input.Wing, input.Room)
 			if err != nil {
-				uc.logger.Warn("FTS5 lexical search failed, continuing without lexical candidates", "error", err)
+				if uc.logger != nil {
+					uc.logger.Warn("FTS5 lexical search failed, continuing without lexical candidates", "error", err)
+				}
 				lexicalCandidates = nil
 			}
 			return nil // Don't propagate lexical errors
@@ -388,17 +390,14 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 	candidates = filterCandidatesValidAt(candidates, time.Now())
 	candidates = filterCandidatesByKind(candidates, input.Kind)
 
-	// 2c. Search-time clustering (deduplication)
-	if uc.searchTimeClusteringEnabled {
-		clusters := clusterCandidates(candidates, uc.searchTimeClusteringThreshold)
-		candidates = selectClusterRepresentatives(clusters)
-	}
-
-	// 3. Tag boost lookup
+	// Score and apply semantic filtering before clustering. Representatives must
+	// be selected using the actual query score, not an unscored density proxy.
 	tagBoostIDs := uc.getTagBoostIDs(ctx, input.Query)
-
-	// 4. Score and prune candidates
 	scored := uc.scoreCandidates(candidates, queryVec, tagBoostIDs)
+	scored = earlyPruneCandidates(scored, uc.earlyPruningThreshold)
+	if uc.searchTimeClusteringEnabled {
+		scored = selectClusterRepresentatives(clusterCandidates(scored, uc.searchTimeClusteringThreshold))
+	}
 	pruned := uc.pruneCandidates(scored)
 
 	// 4b. Broad fallback search for cross-language or sparse queries
@@ -407,11 +406,12 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 		if err == nil {
 			broadCandidates = filterCandidatesValidAt(broadCandidates, time.Now())
 			broadCandidates = filterCandidatesByKind(broadCandidates, input.Kind)
+			broadCandidates = uc.scoreCandidates(broadCandidates, queryVec, tagBoostIDs)
+			broadCandidates = earlyPruneCandidates(broadCandidates, 0.15)
 			if uc.searchTimeClusteringEnabled {
 				broadCandidates = selectClusterRepresentatives(clusterCandidates(broadCandidates, uc.searchTimeClusteringThreshold))
 			}
-			broadScored := uc.scoreCandidates(broadCandidates, queryVec, tagBoostIDs)
-			broadPruned := uc.pruneCandidatesWithThreshold(broadScored, 0.15)
+			broadPruned := uc.pruneCandidatesWithThreshold(broadCandidates, 0.15)
 			seen := make(map[uuid.UUID]bool)
 			for _, c := range pruned {
 				seen[c.ID()] = true
@@ -442,11 +442,12 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 			}
 			fbCandidates = filterCandidatesValidAt(fbCandidates, time.Now())
 			fbCandidates = filterCandidatesByKind(fbCandidates, input.Kind)
+			fbCandidates = uc.scoreCandidates(fbCandidates, queryVec, tagBoostIDs)
+			fbCandidates = earlyPruneCandidates(fbCandidates, uc.earlyPruningThreshold)
 			if uc.searchTimeClusteringEnabled {
 				fbCandidates = selectClusterRepresentatives(clusterCandidates(fbCandidates, uc.searchTimeClusteringThreshold))
 			}
-			fbScored := uc.scoreCandidates(fbCandidates, queryVec, tagBoostIDs)
-			fbPruned := uc.pruneCandidates(fbScored)
+			fbPruned := uc.pruneCandidates(fbCandidates)
 			for _, c := range fbPruned {
 				if !seen[c.ID()] {
 					pruned = append(pruned, c)
@@ -537,7 +538,7 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 func filterCandidatesValidAt(candidates []*entities.Candidate, at time.Time) []*entities.Candidate {
 	valid := candidates[:0]
 	for _, candidate := range candidates {
-		if candidate != nil && candidate.Verbatim != nil && candidate.Verbatim.IsValidAt(at) {
+		if candidate != nil && candidate.Memory != nil && candidate.Verbatim != nil && candidate.Verbatim.IsValidAt(at) {
 			valid = append(valid, candidate)
 		}
 	}
@@ -550,7 +551,7 @@ func filterCandidatesByKind(candidates []*entities.Candidate, kind *valueobjects
 	}
 	filtered := candidates[:0]
 	for _, candidate := range candidates {
-		if candidate != nil && candidate.Verbatim != nil && candidate.Verbatim.Kind == *kind {
+		if candidate != nil && candidate.Memory != nil && candidate.Verbatim != nil && candidate.Verbatim.Kind == *kind {
 			filtered = append(filtered, candidate)
 		}
 	}
@@ -673,17 +674,25 @@ func (uc *RecallMemory) scoreCandidates(candidates []*entities.Candidate, queryV
 
 		// η: recency
 		ageDays := now.Sub(c.Verbatim.CreatedAt).Hours() / 24
+		if ageDays < 0 {
+			ageDays = 0
+		}
 		lambda := uc.decayRates[string(c.Memory.Type)]
 		if lambda <= 0 {
 			lambda = c.Memory.Type.DecayRate()
 		}
 		c.Recency = math.Exp(-lambda * ageDays)
+		c.Recency = clampRecallScore(c.Recency)
 
 		// Initial score (without overlap/causal/session)
 		c.Score = c.Relevance * c.Density * c.Recency
 	}
 
 	return candidates
+}
+
+func clampRecallScore(value float64) float64 {
+	return math.Max(0, math.Min(1, value))
 }
 
 func percentile(sorted []float64, p float64) float64 {

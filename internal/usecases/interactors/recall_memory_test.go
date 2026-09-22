@@ -74,6 +74,7 @@ func (m *mockRecallCausalGraph) GetChildren(ctx context.Context, nodeID uuid.UUI
 type mockRecallVectorStore struct {
 	candidates []*entities.Candidate
 	searchFunc func(ctx context.Context, vector []float32, limit int, wing, room *string) ([]*entities.Candidate, error)
+	lexicalErr error
 }
 
 func (m *mockRecallVectorStore) Search(ctx context.Context, vector []float32, limit int, wing, room *string) ([]*entities.Candidate, error) {
@@ -84,6 +85,9 @@ func (m *mockRecallVectorStore) Search(ctx context.Context, vector []float32, li
 }
 
 func (m *mockRecallVectorStore) SearchLexical(ctx context.Context, query string, limit int, wing, room *string) ([]*entities.Candidate, error) {
+	if m.lexicalErr != nil {
+		return nil, m.lexicalErr
+	}
 	return nil, nil
 }
 

@@ -4,6 +4,7 @@ package interactors
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
@@ -70,6 +71,9 @@ func (uc *SearchSemantic) Execute(ctx context.Context, input SearchSemanticInput
 
 	var results []*SearchSemanticResult
 	for _, c := range candidates {
+		if c == nil || c.Verbatim == nil || c.Memory == nil || !c.Verbatim.IsValidAt(time.Now()) {
+			continue
+		}
 		if input.Kind != nil && c.Verbatim.Kind != *input.Kind {
 			continue
 		}

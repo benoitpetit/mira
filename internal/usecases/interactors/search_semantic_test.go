@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
@@ -52,6 +53,28 @@ func (m *mockSemanticVectorStore) ClearByRoom(ctx context.Context, wing string, 
 
 var _ ports.VectorStore = (*mockSemanticVectorStore)(nil)
 var _ ports.Embedder = (*mockSemanticEmbedder)(nil)
+
+func TestSearchSemantic_ExcludesInvalidCandidates(t *testing.T) {
+	now := time.Now()
+	expired := buildSemanticCandidate(uuid.New(), "expired", valueobjects.TypeFact, []float32{1, 0, 0, 0})
+	expired.Verbatim.ValidUntil = ptrSemanticTime(now.Add(-time.Minute))
+	future := buildSemanticCandidate(uuid.New(), "future", valueobjects.TypeFact, []float32{1, 0, 0, 0})
+	future.Verbatim.ValidFrom = ptrSemanticTime(now.Add(time.Minute))
+	valid := buildSemanticCandidate(uuid.New(), "valid", valueobjects.TypeFact, []float32{1, 0, 0, 0})
+	vs := &mockSemanticVectorStore{searchFunc: func(context.Context, []float32, int, *string, *string) ([]*entities.Candidate, error) {
+		return []*entities.Candidate{expired, future, valid}, nil
+	}}
+
+	results, err := NewSearchSemantic(vs, &mockSemanticEmbedder{}).Execute(context.Background(), SearchSemanticInput{Query: "query", TopK: 10, Threshold: .9})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].ID != valid.Verbatim.ID {
+		t.Fatalf("expected only valid candidate, got %+v", results)
+	}
+}
+
+func ptrSemanticTime(value time.Time) *time.Time { return &value }
 
 // buildSemanticCandidate creates a test Candidate whose embedding is the provided vector.
 func buildSemanticCandidate(id uuid.UUID, content string, memType valueobjects.MemoryType, emb []float32) *entities.Candidate {

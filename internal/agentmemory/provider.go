@@ -56,14 +56,18 @@ func (p *MiraProvider) GetMiraMemories(ctx context.Context, agentID, query strin
 		SELECT v.id, v.content, COALESCE(f.ftype, ''), v.created_at,
 		       COALESCE(v.wing, ''), COALESCE(v.room, '')
 		FROM verbatim v LEFT JOIN fingerprints f ON f.verbatim_id = v.id
-		WHERE v.content LIKE ? OR COALESCE(f.data, '') LIKE ?
+		WHERE (v.content LIKE ? OR COALESCE(f.data, '') LIKE ?)
+		  AND (v.valid_from IS NULL OR v.valid_from <= strftime('%s', 'now'))
+		  AND (v.valid_until IS NULL OR v.valid_until >= strftime('%s', 'now'))
 		ORDER BY v.created_at DESC LIMIT ?`
 	if p.dialect == PostgreSQLDialect {
 		sqlQuery = `
 		SELECT v.id, v.content, COALESCE(f.ftype, ''), v.created_at,
 		       COALESCE(v.wing, ''), COALESCE(v.room, '')
 		FROM verbatim v LEFT JOIN fingerprints f ON f.verbatim_id = v.id
-		WHERE v.content LIKE ? OR COALESCE(f.data::text, '') LIKE ?
+		WHERE (v.content LIKE ? OR COALESCE(f.data::text, '') LIKE ?)
+		  AND (v.valid_from IS NULL OR v.valid_from <= EXTRACT(EPOCH FROM NOW()))
+		  AND (v.valid_until IS NULL OR v.valid_until >= EXTRACT(EPOCH FROM NOW()))
 		ORDER BY v.created_at DESC LIMIT ?`
 	}
 	rows, err := p.db.QueryContext(ctx, bindPlaceholders(sqlQuery, p.dialect), pattern, pattern, limit)

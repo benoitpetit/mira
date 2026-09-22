@@ -74,7 +74,28 @@ func reciprocalRankFusion(dense, lexical []*entities.Candidate, k int) []*entiti
 			if rJ.lexical > 0 {
 				bothJ++
 			}
-			return bothI > bothJ
+			if bothI != bothJ {
+				return bothI > bothJ
+			}
+			if rI.dense != rJ.dense {
+				if rI.dense == 0 {
+					return false
+				}
+				if rJ.dense == 0 {
+					return true
+				}
+				return rI.dense < rJ.dense
+			}
+			if rI.lexical != rJ.lexical {
+				if rI.lexical == 0 {
+					return false
+				}
+				if rJ.lexical == 0 {
+					return true
+				}
+				return rI.lexical < rJ.lexical
+			}
+			return results[i].candidate.ID().String() < results[j].candidate.ID().String()
 		}
 		return results[i].score > results[j].score
 	})

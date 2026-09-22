@@ -64,3 +64,45 @@ func TestSelectClusterRepresentatives(t *testing.T) {
 		t.Errorf("expected best candidate (v2) as representative, got %s", reps[0].ID())
 	}
 }
+
+func TestSelectClusterRepresentativesUsesQueryScore(t *testing.T) {
+	v1 := entities.NewVerbatim("low query score", "w", nil)
+	v2 := entities.NewVerbatim("high query score", "w", nil)
+	c1 := entities.NewCandidate(&entities.Fingerprint{ID: v1.ID}, v1, []float32{1, 0})
+	c2 := entities.NewCandidate(&entities.Fingerprint{ID: v2.ID}, v2, []float32{1, 0})
+	c1.Relevance, c1.Density, c1.Score = .95, .95, .10
+	c2.Relevance, c2.Density, c2.Score = .60, .60, .90
+
+	reps := selectClusterRepresentatives([][]*entities.Candidate{{c1, c2}})
+	if len(reps) != 1 || reps[0].ID() != v2.ID {
+		t.Fatalf("expected highest query-score candidate, got %+v", reps)
+	}
+}
+
+func TestClusterCandidatesAvoidsTransitiveChains(t *testing.T) {
+	vectors := [][]float32{{1, 0}, {0.94, 0.342}, {0.766, 0.643}}
+	candidates := make([]*entities.Candidate, 0, len(vectors))
+	for i, vector := range vectors {
+		v := entities.NewVerbatim(string(rune('a'+i)), "w", nil)
+		candidates = append(candidates, entities.NewCandidate(&entities.Fingerprint{ID: v.ID}, v, vector))
+	}
+
+	clusters := clusterCandidates(candidates, .93)
+	if len(clusters) != 2 {
+		t.Fatalf("expected representative-based clustering to produce 2 clusters, got %d", len(clusters))
+	}
+}
+
+func TestEarlyPruneCandidatesHonorsConfiguredThreshold(t *testing.T) {
+	v1 := entities.NewVerbatim("below", "w", nil)
+	v2 := entities.NewVerbatim("above", "w", nil)
+	c1 := entities.NewCandidate(&entities.Fingerprint{ID: v1.ID}, v1, []float32{1, 0})
+	c2 := entities.NewCandidate(&entities.Fingerprint{ID: v2.ID}, v2, []float32{0, 1})
+	c1.Relevance = .40
+	c2.Relevance = .80
+
+	filtered := earlyPruneCandidates([]*entities.Candidate{c1, c2}, .6)
+	if len(filtered) != 1 || filtered[0].ID() != v2.ID {
+		t.Fatalf("expected threshold to remove low-relevance candidate, got %+v", filtered)
+	}
+}

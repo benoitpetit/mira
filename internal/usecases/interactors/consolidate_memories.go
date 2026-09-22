@@ -4,7 +4,6 @@ package interactors
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/benoitpetit/mira/internal/domain/entities"
@@ -114,15 +113,9 @@ func (uc *ConsolidateMemories) Execute(ctx context.Context, input ConsolidateMem
 			if visited[j] {
 				continue
 			}
-			// Check similarity with any member of the cluster
-			similar := false
-			for _, member := range cluster {
-				sim := util.CosineSimilarity(member.embedding, notes[j].embedding)
-				if sim >= threshold {
-					similar = true
-					break
-				}
-			}
+			// Compare with a stable representative to avoid single-link
+			// transitive chains swallowing distant notes.
+			similar := util.CosineSimilarity(cluster[0].embedding, notes[j].embedding) >= threshold
 			if similar {
 				cluster = append(cluster, notes[j])
 				visited[j] = true
@@ -147,9 +140,7 @@ func (uc *ConsolidateMemories) Execute(ctx context.Context, input ConsolidateMem
 		if err != nil || syntheticContent == "" {
 			// Extreme fallback if summarization fails
 			syntheticContent = strings.Join(contents, "; ")
-			if len(syntheticContent) > 500 {
-				syntheticContent = syntheticContent[:500] + "..."
-			}
+			syntheticContent = truncateMemoryContent(syntheticContent, 500)
 		}
 
 		// Store as a fact
@@ -197,9 +188,7 @@ func (uc *ConsolidateMemories) Execute(ctx context.Context, input ConsolidateMem
 			_ = tx.Rollback()
 			return nil, fmt.Errorf("failed to commit consolidation transaction: %w", err)
 		}
-		if err := storeMemoryTags(ctx, uc.repository, verbatim.ID, fp, syntheticContent); err != nil {
-			slog.Warn("failed to store tags for consolidated memory", "error", err, "verbatim_id", verbatim.ID)
-		}
+		reindexMemoryDerivedData(ctx, uc.repository, fp, verbatim, syntheticContent, uc.extractor, nil)
 
 		candidate := entities.NewCandidate(fp, verbatim, emb.Vector)
 		if err := uc.vectorStore.AddCandidate(ctx, candidate); err != nil {
@@ -240,4 +229,15 @@ func (uc *ConsolidateMemories) Execute(ctx context.Context, input ConsolidateMem
 	}
 
 	return output, nil
+}
+
+func truncateMemoryContent(content string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	runes := []rune(content)
+	if len(runes) <= maxRunes {
+		return content
+	}
+	return string(runes[:maxRunes]) + "..."
 }

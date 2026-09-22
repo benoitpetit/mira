@@ -352,3 +352,17 @@ func TestUpdateMemory_NilTxFallback(t *testing.T) {
 		t.Errorf("content not updated: got %q", out.Verbatim.Content)
 	}
 }
+
+func TestUpdateMemory_RejectsInvalidContentBeforeExtraction(t *testing.T) {
+	repo := newUpdateMockRepo()
+	id := uuid.New()
+	repo.verbatims[id] = &entities.Verbatim{ID: id, Content: "original", Wing: "w"}
+
+	uc := NewUpdateMemory(repo, &mockUpdateExtractor{}, &mockUpdateVectorStore{})
+	if _, err := uc.Execute(context.Background(), UpdateMemoryInput{ID: id, Content: ""}); err == nil {
+		t.Fatal("expected empty content to be rejected")
+	}
+	if repo.verbatims[id].Content != "original" {
+		t.Fatalf("invalid update mutated existing content: %q", repo.verbatims[id].Content)
+	}
+}
