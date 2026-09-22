@@ -1415,11 +1415,11 @@ func (r *SQLiteRepository) GetVerbatimsByTags(ctx context.Context, tags []string
 	args := make([]interface{}, len(tags))
 	for i, tag := range tags {
 		placeholders[i] = "?"
-		args[i] = tag
+		args[i] = strings.ToLower(strings.TrimSpace(tag))
 	}
 	//nolint:gosec // the IN list contains only generated placeholders
 	query := fmt.Sprintf(
-		`SELECT DISTINCT verbatim_id FROM memory_tags WHERE tag IN (%s) LIMIT ?`,
+		`SELECT DISTINCT verbatim_id FROM memory_tags WHERE LOWER(tag) IN (%s) LIMIT ?`,
 		strings.Join(placeholders, ","),
 	)
 	args = append(args, limit)

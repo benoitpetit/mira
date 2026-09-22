@@ -90,6 +90,7 @@ type Snapshot struct {
 	SourceMemoriesCount int                    `json:"source_memories_count"`
 	ConfidenceScore     float64                `json:"confidence_score"`
 	ModelIdentifier     string                 `json:"model_identifier"`
+	ChangeReason        string                 `json:"change_reason,omitempty"`
 	BehavioralMetrics   map[string]interface{} `json:"behavioral_metrics,omitempty"`
 	LinkedMiraMemories  []uuid.UUID            `json:"linked_mira_memories"`
 }
@@ -534,6 +535,7 @@ func extractSnapshot(req CaptureRequest, previous *Snapshot, cfg Config) *Snapsh
 		snap.ModelIdentifier = req.ModelID
 	}
 	snap.SessionID = req.SessionID
+	snap.ChangeReason = ""
 	text := strings.TrimSpace(strings.Join(req.AgentResponses, "\n"))
 	if text == "" {
 		text = req.Conversation
@@ -541,11 +543,13 @@ func extractSnapshot(req CaptureRequest, previous *Snapshot, cfg Config) *Snapsh
 	observed := extractTraits(text, cfg)
 	snap.PersonalityTraits = mergeTraits(snap.PersonalityTraits, observed, now)
 	snap.VoiceProfile = extractVoice(text, snap.VoiceProfile)
-	snap.CommunicationStyle = extractCommunication(text)
-	snap.BehavioralSignature = extractBehavior(text)
+	snap.CommunicationStyle = extractCommunication(text, snap.CommunicationStyle)
+	snap.BehavioralSignature = extractBehavior(text, snap.BehavioralSignature)
 	snap.ValueSystem = extractValues(text, snap.ValueSystem)
-	snap.EmotionalTone = extractEmotion(text)
-	snap.BehavioralMetrics = cloneMap(req.BehavioralMetrics)
+	snap.EmotionalTone = extractEmotion(text, snap.EmotionalTone)
+	if req.BehavioralMetrics != nil {
+		snap.BehavioralMetrics = cloneMap(req.BehavioralMetrics)
+	}
 	if len(snap.PersonalityTraits) > 0 {
 		total := 0.0
 		for _, trait := range snap.PersonalityTraits {
@@ -604,14 +608,19 @@ var traitRules = []traitRule{
 }
 
 func extractTraits(text string, cfg Config) []Trait {
-	lower := strings.ToLower(text)
 	now := time.Now().UTC()
 	var result []Trait
 	for _, rule := range traitRules {
 		count := 0
 		evidence := ""
+		seen := make(map[string]bool)
 		for _, keyword := range rule.keywords {
-			n := strings.Count(lower, strings.ToLower(keyword))
+			key := strings.ToLower(strings.TrimSpace(keyword))
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			n := keywordOccurrences(text, key)
 			if n > count {
 				evidence = keyword
 			}
@@ -622,7 +631,9 @@ func extractTraits(text string, cfg Config) []Trait {
 		}
 		intensity := clamp(rule.intensity*math.Min(1, math.Log1p(float64(count))/1.5), 0, 1)
 		confidence := clamp(math.Max(cfg.MinTraitConfidence, rule.confidence+math.Min(.25, float64(count-1)*.05)), 0, 1)
-		result = append(result, Trait{Name: rule.name, Category: rule.category, Intensity: intensity, Confidence: confidence, EvidenceCount: count, FirstObserved: now, LastObserved: now, LastEvidence: evidence, Consistency: .5})
+		// Count captures, not repeated keywords in the same response. Repetition
+		// may increase intensity but must not make one observation look stable.
+		result = append(result, Trait{Name: rule.name, Category: rule.category, Intensity: intensity, Confidence: confidence, EvidenceCount: 1, FirstObserved: now, LastObserved: now, LastEvidence: evidence, Consistency: .5})
 	}
 	return result
 }
@@ -667,7 +678,8 @@ func extractVoice(text string, previous VoiceProfile) VoiceProfile {
 	sentences := sentenceCount(text)
 	words := len(strings.Fields(text))
 	if words > 0 {
-		previous.AvgSentenceLength = words / maxInt(sentences, 1)
+		observedLength := words / maxInt(sentences, 1)
+		previous.AvgSentenceLength = int(math.Round(float64(previous.AvgSentenceLength)*.65 + float64(observedLength)*.35))
 	}
 	previous.FormalityLevel = blend(previous.FormalityLevel, ratioAny(lower, "dear", "sincerely", "furthermore", "cependant", "cependant"), .35)
 	previous.HumorLevel = blend(previous.HumorLevel, ratioAny(lower, "haha", "lol", "joke", "humour", ":)"), .35)
@@ -675,8 +687,8 @@ func extractVoice(text string, previous VoiceProfile) VoiceProfile {
 	previous.TechnicalDepth = blend(previous.TechnicalDepth, ratioAny(lower, "api", "architecture", "implementation", "fonction", "système"), .35)
 	previous.EnthusiasmLevel = blend(previous.EnthusiasmLevel, ratioAny(lower, "amazing", "fantastic", "génial", "formidable"), .35)
 	previous.DirectnessLevel = blend(previous.DirectnessLevel, ratioAny(lower, "direct", "frankly", "directement", "en bref"), .35)
-	previous.UsesEmojis = strings.ContainsAny(text, "😀😁😂🤣😊🙂😉👍❤️")
-	previous.UsesMarkdown = strings.Contains(text, "**") || strings.Contains(text, "- ") || strings.Contains(text, "##")
+	previous.UsesEmojis = previous.UsesEmojis || strings.ContainsAny(text, "😀😁😂🤣😊🙂😉👍❤️")
+	previous.UsesMarkdown = previous.UsesMarkdown || strings.Contains(text, "**") || strings.Contains(text, "- ") || strings.Contains(text, "##")
 	if strings.Contains(lower, "step by step") || strings.Contains(lower, "pas à pas") {
 		previous.ExplanationStyle = "step_by_step"
 	}
@@ -686,11 +698,17 @@ func extractVoice(text string, previous VoiceProfile) VoiceProfile {
 	return previous
 }
 
-func extractCommunication(text string) CommunicationStyle {
+func extractCommunication(text string, previous CommunicationStyle) CommunicationStyle {
 	lower := strings.ToLower(text)
-	return CommunicationStyle{QuestionRate: ratioAny(lower, "?", "how", "why", "comment", "pourquoi"), AcknowledgmentRate: ratioAny(lower, "i see", "understood", "got it", "je comprends", "compris"), AlternativeRate: ratioAny(lower, "alternatively", "another option", "sinon", "autre option"), Structure: chooseStructure(text)}
+	previous.QuestionRate = blend(previous.QuestionRate, ratioAny(lower, "?", "how", "why", "comment", "pourquoi"), .35)
+	previous.AcknowledgmentRate = blend(previous.AcknowledgmentRate, ratioAny(lower, "i see", "understood", "got it", "je comprends", "compris"), .35)
+	previous.AlternativeRate = blend(previous.AlternativeRate, ratioAny(lower, "alternatively", "another option", "sinon", "autre option"), .35)
+	if structure := chooseStructure(text); structure != "freeform" {
+		previous.Structure = structure
+	}
+	return previous
 }
-func extractBehavior(text string) BehavioralSignature {
+func extractBehavior(text string, previous BehavioralSignature) BehavioralSignature {
 	words := len(strings.Fields(text))
 	response := "moderate"
 	if words < 30 {
@@ -699,7 +717,12 @@ func extractBehavior(text string) BehavioralSignature {
 	if words > 180 {
 		response = "detailed"
 	}
-	return BehavioralSignature{ResponseLength: response, Initiative: clamp(.4+ratioAny(strings.ToLower(text), "let's", "je propose", "i recommend", "je suggère")*.5, 0, 1), Consistency: .5}
+	if response != "moderate" || previous.ResponseLength == "" {
+		previous.ResponseLength = response
+	}
+	previous.Initiative = blend(previous.Initiative, clamp(.4+ratioAny(strings.ToLower(text), "let's", "je propose", "i recommend", "je suggère")*.5, 0, 1), .35)
+	previous.Consistency = blend(previous.Consistency, .5, .1)
+	return previous
 }
 func extractValues(text string, previous ValueSystem) ValueSystem {
 	if previous.Values == nil {
@@ -713,9 +736,13 @@ func extractValues(text string, previous ValueSystem) ValueSystem {
 	}
 	return previous
 }
-func extractEmotion(text string) EmotionalTone {
+func extractEmotion(text string, previous EmotionalTone) EmotionalTone {
 	lower := strings.ToLower(text)
-	return EmotionalTone{Warmth: clamp(.5+ratioAny(lower, "thank", "please", "merci", "s'il te plaît")*.3, 0, 1), Positivity: clamp(.5+ratioAny(lower, "great", "good", "amazing", "bien", "génial")*.3-ratioAny(lower, "error", "bad", "problème")*.2, 0, 1), Energy: clamp(.4+ratioAny(lower, "!", "excited", "enthousiaste")*.4, 0, 1), Stability: .6}
+	previous.Warmth = blend(previous.Warmth, clamp(.5+ratioAny(lower, "thank", "please", "merci", "s'il te plaît")*.3, 0, 1), .35)
+	previous.Positivity = blend(previous.Positivity, clamp(.5+ratioAny(lower, "great", "good", "amazing", "bien", "génial")*.3-ratioAny(lower, "error", "bad", "problème")*.2, 0, 1), .35)
+	previous.Energy = blend(previous.Energy, clamp(.4+ratioAny(lower, "!", "excited", "enthousiaste")*.4, 0, 1), .35)
+	previous.Stability = blend(previous.Stability, .6, .1)
+	return previous
 }
 
 func traitsFromMetrics(metrics map[string]interface{}, now time.Time) []Trait {
@@ -740,16 +767,22 @@ func (r *Runtime) Recall(ctx context.Context, agentID, query string, budget int)
 	budget = r.normalizeBudget(budget)
 	content := composePrompt(snap, r.cfg.MinObservationsForTrait)
 	if r.provider != nil && r.cfg.EnrichWithMiraMemories && strings.TrimSpace(query) != "" {
-		memories, _ := r.provider.GetMiraMemories(ctx, agentID, query, budget/4, r.cfg.MaxMiraMemories)
+		identityBudget := estimateTokens(content)
+		if identityBudget > budget {
+			identityBudget = budget
+		}
+		memoryBudget := budget - identityBudget
+		memories, _ := r.provider.GetMiraMemories(ctx, agentID, query, memoryBudget, r.cfg.MaxMiraMemories)
 		if len(memories) > 0 {
 			var b strings.Builder
 			b.WriteString(content)
-			b.WriteString("\n\n### Relevant MIRA memories\n")
+			b.WriteString("\n\n### Relevant MIRA memory evidence (non-normative)\n")
 			for _, memory := range memories {
 				b.WriteString("- ")
 				b.WriteString(memory.Content)
 				b.WriteByte('\n')
 			}
+			b.WriteString("### End MIRA memory evidence\n")
 			content = b.String()
 		}
 	}
@@ -964,26 +997,37 @@ func (r *Runtime) Update(ctx context.Context, agentID, directive, reason string)
 		parent := snap.ID
 		next.DerivedFromID = &parent
 	}
+	next.ChangeReason = reason
 	if containsAny(lower, "enthusiasm", "enthousiasme") {
-		next.VoiceProfile.EnthusiasmLevel = clamp(next.VoiceProfile.EnthusiasmLevel+.15, 0, 1)
-		changes = append(changes, "enthusiasm increased")
+		delta := directiveDelta(lower)
+		next.VoiceProfile.EnthusiasmLevel = clamp(next.VoiceProfile.EnthusiasmLevel+delta, 0, 1)
+		changes = append(changes, changeLabel("enthusiasm", delta))
 	}
 	if containsAny(lower, "formal", "formel") {
-		next.VoiceProfile.FormalityLevel = clamp(next.VoiceProfile.FormalityLevel+.15, 0, 1)
-		changes = append(changes, "formality increased")
+		delta := directiveDelta(lower)
+		next.VoiceProfile.FormalityLevel = clamp(next.VoiceProfile.FormalityLevel+delta, 0, 1)
+		changes = append(changes, changeLabel("formality", delta))
 	}
 	if containsAny(lower, "humor", "humour") {
-		next.VoiceProfile.HumorLevel = clamp(next.VoiceProfile.HumorLevel+.15, 0, 1)
-		changes = append(changes, "humor increased")
+		delta := directiveDelta(lower)
+		next.VoiceProfile.HumorLevel = clamp(next.VoiceProfile.HumorLevel+delta, 0, 1)
+		changes = append(changes, changeLabel("humor", delta))
 	}
 	if containsAny(lower, "concise", "concis") {
-		next.VoiceProfile.SentenceStructure = "concise"
-		next.BehavioralSignature.ResponseLength = "concise"
-		changes = append(changes, "conciseness enabled")
+		if directiveIsNegative(lower) {
+			next.VoiceProfile.SentenceStructure = "balanced"
+			next.BehavioralSignature.ResponseLength = "moderate"
+			changes = append(changes, "conciseness decreased")
+		} else {
+			next.VoiceProfile.SentenceStructure = "concise"
+			next.BehavioralSignature.ResponseLength = "concise"
+			changes = append(changes, "conciseness increased")
+		}
 	}
 	if containsAny(lower, "technical", "technique") {
-		next.VoiceProfile.TechnicalDepth = clamp(next.VoiceProfile.TechnicalDepth+.15, 0, 1)
-		changes = append(changes, "technical depth increased")
+		delta := directiveDelta(lower)
+		next.VoiceProfile.TechnicalDepth = clamp(next.VoiceProfile.TechnicalDepth+delta, 0, 1)
+		changes = append(changes, changeLabel("technical depth", delta))
 	}
 	if len(changes) == 0 {
 		return nil, nil, fmt.Errorf("directive not recognized")
@@ -1016,6 +1060,7 @@ func (r *Runtime) Patch(ctx context.Context, agentID string, patch map[string]in
 		parent := snap.ID
 		next.DerivedFromID = &parent
 	}
+	next.ChangeReason = reason
 	changes := []string{}
 	for key, value := range patch {
 		f, ok := value.(float64)
@@ -1044,20 +1089,28 @@ func (r *Runtime) Patch(ctx context.Context, agentID string, patch map[string]in
 			}
 			changes = append(changes, key)
 		case "uses_emojis":
-			if b, ok := value.(bool); ok {
-				next.VoiceProfile.UsesEmojis = b
-				changes = append(changes, key)
+			b, ok := value.(bool)
+			if !ok {
+				return nil, nil, fmt.Errorf("%s must be boolean", key)
 			}
+			next.VoiceProfile.UsesEmojis = b
+			changes = append(changes, key)
 		case "uses_markdown":
-			if b, ok := value.(bool); ok {
-				next.VoiceProfile.UsesMarkdown = b
-				changes = append(changes, key)
+			b, ok := value.(bool)
+			if !ok {
+				return nil, nil, fmt.Errorf("%s must be boolean", key)
 			}
+			next.VoiceProfile.UsesMarkdown = b
+			changes = append(changes, key)
 		case "sentence_structure":
-			if s, ok := value.(string); ok {
-				next.VoiceProfile.SentenceStructure = s
-				changes = append(changes, key)
+			s, ok := value.(string)
+			if !ok || !validSentenceStructure(s) {
+				return nil, nil, fmt.Errorf("%s must be one of concise, elaborate, balanced, punchy, flowing, step_by_step", key)
 			}
+			next.VoiceProfile.SentenceStructure = s
+			changes = append(changes, key)
+		default:
+			return nil, nil, fmt.Errorf("unknown patch field %q", key)
 		}
 	}
 	if len(changes) == 0 {
@@ -1122,6 +1175,49 @@ func ratioAny(text string, terms ...string) float64 {
 	}
 	return math.Min(1, float64(hits)/3)
 }
+
+func keywordOccurrences(text, keyword string) int {
+	textWords := identityTokens(text)
+	keywordWords := identityTokens(keyword)
+	if len(keywordWords) == 0 || len(textWords) < len(keywordWords) {
+		return 0
+	}
+	count := 0
+	for i := 0; i+len(keywordWords) <= len(textWords); i++ {
+		match := true
+		for j, word := range keywordWords {
+			if textWords[i+j] != word {
+				match = false
+				break
+			}
+		}
+		if match && !negatedWords(textWords, i) {
+			count++
+		}
+	}
+	return count
+}
+
+func identityTokens(text string) []string {
+	return strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+	})
+}
+
+func negatedWords(words []string, start int) bool {
+	from := start - 4
+	if from < 0 {
+		from = 0
+	}
+	for i := from; i < start; i++ {
+		switch words[i] {
+		case "not", "no", "never", "dont", "don't", "ne", "pas", "jamais", "sans":
+			return true
+		}
+	}
+	return false
+}
+
 func containsAny(text string, terms ...string) bool {
 	for _, term := range terms {
 		if strings.Contains(text, term) {
@@ -1130,6 +1226,34 @@ func containsAny(text string, terms ...string) bool {
 	}
 	return false
 }
+
+func directiveIsNegative(text string) bool {
+	return containsAny(text, "less", "moins", "reduce", "réduis", "reduis", "decrease", "lower", "avoid", "sans", "informal", "not more")
+}
+
+func directiveDelta(text string) float64 {
+	if directiveIsNegative(text) {
+		return -.15
+	}
+	return .15
+}
+
+func changeLabel(name string, delta float64) string {
+	if delta < 0 {
+		return name + " decreased"
+	}
+	return name + " increased"
+}
+
+func validSentenceStructure(value string) bool {
+	switch value {
+	case "concise", "elaborate", "balanced", "punchy", "flowing", "step_by_step":
+		return true
+	default:
+		return false
+	}
+}
+
 func blend(old, observed, weight float64) float64 { return clamp(old*(1-weight)+observed*weight, 0, 1) }
 func clamp(v, min, max float64) float64 {
 	if v < min {

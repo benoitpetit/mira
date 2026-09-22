@@ -30,7 +30,7 @@ func (c *Controller) ToolDefinitions() []mcptypes.Tool {
 		return map[string]string{"type": "number", "description": description}
 	}
 	return []mcptypes.Tool{
-		text("capture", "Capture and version MIRA's built-in identity from a conversation. The capture is local, deterministic and linked to MIRA memory.", map[string]interface{}{"agent_id": str("Agent identifier (required)"), "conversation": str("Conversation or assistant response (required)"), "model_id": str("Current model identifier"), "session_id": str("Session identifier"), "behavioral_metrics": str("Optional JSON object of runtime metrics")}),
+		text("capture", "Capture and version MIRA's built-in identity from a conversation. The capture is local, deterministic and linked to MIRA memory.", map[string]interface{}{"agent_id": str("Agent identifier (required)"), "conversation": str("Conversation or assistant response (required)"), "model_id": str("Current model identifier"), "session_id": str("Session identifier"), "behavioral_metrics": map[string]interface{}{"type": "object", "description": "Optional runtime metrics object"}}),
 		text("recall", "Compose MIRA's identity and relevant MIRA memories inside one bounded token budget.", map[string]interface{}{"agent_id": str("Agent identifier (required)"), "context": str("Current conversation context"), "budget": num("Maximum identity context tokens")}),
 		text("drift", "Measure identity drift across immutable MIRA identity versions.", map[string]interface{}{"agent_id": str("Agent identifier (required)"), "window": num("Number of versions")}),
 		text("swap", "Record a model transition and generate bounded identity continuity reinforcement.", map[string]interface{}{"agent_id": str("Agent identifier (required)"), "from_model": str("Previous model"), "to_model": str("New model")}),
@@ -62,9 +62,20 @@ func (c *Controller) Call(ctx context.Context, name string, args map[string]inte
 		modelID, _ := args["model_id"].(string)
 		sessionID, _ := args["session_id"].(string)
 		metrics := map[string]interface{}{}
-		if raw, ok := args["behavioral_metrics"].(string); ok && strings.TrimSpace(raw) != "" {
-			if err := json.Unmarshal([]byte(raw), &metrics); err != nil {
-				return nil, fmt.Errorf("behavioral_metrics must be valid JSON: %w", err)
+		if raw, ok := args["behavioral_metrics"]; ok {
+			switch value := raw.(type) {
+			case map[string]interface{}:
+				for key, metric := range value {
+					metrics[key] = metric
+				}
+			case string:
+				if strings.TrimSpace(value) != "" {
+					if err := json.Unmarshal([]byte(value), &metrics); err != nil {
+						return nil, fmt.Errorf("behavioral_metrics must be a JSON object: %w", err)
+					}
+				}
+			default:
+				return nil, fmt.Errorf("behavioral_metrics must be an object")
 			}
 		}
 		snap, err := c.runtime.Capture(ctx, CaptureRequest{AgentID: agentID, Conversation: conversation, ModelID: modelID, SessionID: sessionID, BehavioralMetrics: metrics})

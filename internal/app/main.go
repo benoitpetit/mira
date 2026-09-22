@@ -148,11 +148,13 @@ func (a *Application) initStorage(dbPath string) error {
 // initPostgresStorage initializes a PostgreSQL repository.
 func (a *Application) initPostgresStorage() error {
 	opts := storage.PostgreSQLOptions{
-		URL:         a.config.Storage.Postgres.URL,
-		MaxConns:    a.config.Storage.Postgres.MaxConns,
-		MinConns:    a.config.Storage.Postgres.MinConns,
-		MaxIdleTime: time.Duration(a.config.Storage.Postgres.MaxIdleTime) * time.Second,
-		MaxConnTime: time.Duration(a.config.Storage.Postgres.MaxConnTime) * time.Second,
+		URL:                    a.config.Storage.Postgres.URL,
+		MaxConns:               a.config.Storage.Postgres.MaxConns,
+		MinConns:               a.config.Storage.Postgres.MinConns,
+		MaxIdleTime:            time.Duration(a.config.Storage.Postgres.MaxIdleTime) * time.Second,
+		MaxConnTime:            time.Duration(a.config.Storage.Postgres.MaxConnTime) * time.Second,
+		SessionNoteArchiveDays: int(a.config.ArchiveThresholds["session_note"]),
+		DebugLogArchiveDays:    int(a.config.ArchiveThresholds["debug_log"]),
 	}
 
 	repo, err := storage.NewPostgreSQLRepository(opts)
@@ -495,7 +497,7 @@ func (a *Application) initUseCases() {
 	a.clearMemory = interactors.NewClearMemory(repo, a.vectorStore)
 	a.deleteMemory = interactors.NewDeleteMemory(repo, a.vectorStore)
 	a.searchSemantic = interactors.NewSearchSemantic(a.vectorStore, a.embedder)
-	a.updateMemory = interactors.NewUpdateMemory(repo, a.extractor, a.vectorStore)
+	a.updateMemory = interactors.NewUpdateMemory(repo, a.extractor, a.vectorStore).WithCausalDetector(a.extractor)
 	a.consolidateMemories = interactors.NewConsolidateMemories(repo, a.vectorStore, a.embedder, a.extractor)
 	a.compressMemories = interactors.NewCompressMemories(repo, repo)
 

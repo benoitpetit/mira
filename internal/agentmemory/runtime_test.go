@@ -6,9 +6,136 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/benoitpetit/mira/internal/adapters/storage"
+	"github.com/google/uuid"
 )
+
+type testMemoryProvider struct {
+	requestedBudget int
+}
+
+func (p *testMemoryProvider) GetMiraMemories(_ context.Context, _ string, _ string, budget, _ int) ([]MemoryReference, error) {
+	p.requestedBudget = budget
+	return []MemoryReference{{MemoryID: uuid.New(), Content: "A memory evidence sentence."}}, nil
+}
+func (p *testMemoryProvider) LinkIdentityToMemory(context.Context, uuid.UUID, uuid.UUID) error {
+	return nil
+}
+func (p *testMemoryProvider) NotifyMiraOfIdentityChange(context.Context, string, string) error {
+	return nil
+}
+
+func TestExtractTraitsCountsObservationsAndUnderstandsNegation(t *testing.T) {
+	traits := extractTraits("I do not analyze this problem and I am not humorous.", DefaultConfig())
+	for _, trait := range traits {
+		if trait.Name == "analytical" || trait.Name == "humorous" {
+			t.Fatalf("negated trait was extracted: %+v", trait)
+		}
+	}
+
+	traits = extractTraits("I analyze the problem, analyze the evidence, and analyze the result.", DefaultConfig())
+	for _, trait := range traits {
+		if trait.Name == "analytical" && trait.EvidenceCount != 1 {
+			t.Fatalf("evidence count should represent one observation, got %d", trait.EvidenceCount)
+		}
+	}
+}
+
+func TestExtractVoicePreservesObservedBooleansAcrossCaptures(t *testing.T) {
+	voice := neutralSnapshot("agent", "model", time.Now()).VoiceProfile
+	voice = extractVoice("Great work 😀", voice)
+	if !voice.UsesEmojis {
+		t.Fatal("expected emoji observation")
+	}
+	voice = extractVoice("A plain answer.", voice)
+	if !voice.UsesEmojis {
+		t.Fatal("a later capture without emojis erased the observed preference")
+	}
+}
+
+func TestUpdateSupportsNegativeDirectiveAndPersistsReason(t *testing.T) {
+	runtime, err := NewRuntime(testDB(t), DefaultConfig(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := runtime.Capture(context.Background(), CaptureRequest{AgentID: "agent", Conversation: "Please answer formally."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, _, err := runtime.Update(context.Background(), "agent", "be less formal", "user preference")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.VoiceProfile.FormalityLevel >= first.VoiceProfile.FormalityLevel {
+		t.Fatalf("negative directive did not lower formality: %.2f -> %.2f", first.VoiceProfile.FormalityLevel, next.VoiceProfile.FormalityLevel)
+	}
+	if next.ChangeReason != "user preference" {
+		t.Fatalf("change reason was not persisted: %q", next.ChangeReason)
+	}
+}
+
+func TestPatchRejectsUnknownKeysAndWrongTypes(t *testing.T) {
+	runtime, err := NewRuntime(testDB(t), DefaultConfig(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runtime.Patch(context.Background(), "agent", map[string]interface{}{"unknown": 0.5}, "test"); err == nil {
+		t.Fatal("expected unknown patch field to be rejected")
+	}
+	if _, _, err := runtime.Patch(context.Background(), "agent", map[string]interface{}{"uses_emojis": "yes"}, "test"); err == nil {
+		t.Fatal("expected wrong patch type to be rejected")
+	}
+}
+
+func TestRecallAllocatesRemainingBudgetToDelimitedMemoryEvidence(t *testing.T) {
+	provider := &testMemoryProvider{}
+	cfg := DefaultConfig()
+	cfg.EnrichWithMiraMemories = true
+	runtime, err := NewRuntime(testDB(t), cfg, provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Capture(context.Background(), CaptureRequest{AgentID: "agent", Conversation: "I prefer clear answers."}); err != nil {
+		t.Fatal(err)
+	}
+	prompt, err := runtime.Recall(context.Background(), "agent", "current context", 300)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider.requestedBudget <= 0 || !strings.Contains(prompt.Content, "non-normative") || !strings.Contains(prompt.Content, "A memory evidence sentence.") {
+		t.Fatalf("memory evidence was not allocated/delimited: budget=%d prompt=%q", provider.requestedBudget, prompt.Content)
+	}
+}
+
+func TestControllerAcceptsObjectBehavioralMetrics(t *testing.T) {
+	runtime, err := NewRuntime(testDB(t), DefaultConfig(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := NewController(runtime)
+	for _, tool := range controller.ToolDefinitions() {
+		if tool.Name == ToolPrefix+"capture" {
+			property, ok := tool.InputSchema.Properties["behavioral_metrics"].(map[string]interface{})
+			if !ok || property["type"] != "object" {
+				t.Fatalf("behavioral_metrics schema is not an object: %#v", tool.InputSchema.Properties["behavioral_metrics"])
+			}
+		}
+	}
+	if _, err := controller.Call(context.Background(), ToolPrefix+"capture", map[string]interface{}{
+		"agent_id": "agent", "conversation": "clear answer", "behavioral_metrics": map[string]interface{}{"success_rate": .9},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := runtime.Latest(context.Background(), "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.BehavioralMetrics["success_rate"] != .9 {
+		t.Fatalf("object behavioral metrics were not persisted: %#v", snapshot.BehavioralMetrics)
+	}
+}
 
 func testDB(t *testing.T) *sql.DB {
 	t.Helper()
