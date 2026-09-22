@@ -171,6 +171,7 @@ type RecallMemory struct {
 	sessionMemoryBoost            float64
 	decayRates                    map[string]float64
 	sessionCacheTTLSeconds        int
+	sessionCacheStore             ports.SessionCacheStore
 
 	// Session cache for multi-turn memory injection
 	sessionCache   map[string]sessionCacheEntry
@@ -210,6 +211,7 @@ type RecallMemoryConfig struct {
 	RerankerTopK                  int
 	SessionMemoryBoost            float64
 	SessionCacheTTLSeconds        int
+	SessionCacheStore             ports.SessionCacheStore
 	TagRepo                       ports.TagRepository
 	Reranker                      ports.Reranker
 	DecayRates                    map[string]float64
@@ -307,6 +309,7 @@ func NewRecallMemory(
 		rerankerTopK:                  config.RerankerTopK,
 		sessionMemoryBoost:            config.SessionMemoryBoost,
 		sessionCacheTTLSeconds:        config.SessionCacheTTLSeconds,
+		sessionCacheStore:             config.SessionCacheStore,
 		tagRepo:                       config.TagRepo,
 		reranker:                      config.Reranker,
 		decayRates:                    decayRates,
@@ -319,6 +322,11 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 	start := time.Now()
 
 	uc.cleanupSessionCache()
+	if uc.sessionCacheStore != nil {
+		if err := uc.sessionCacheStore.PurgeExpired(ctx, time.Now()); err != nil && uc.logger != nil {
+			uc.logger.Warn("failed to purge persistent session cache", "error", err)
+		}
+	}
 
 	budget := input.Budget
 	if budget <= 0 {
@@ -331,6 +339,9 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 		budget = int(float64(budget) * 0.8)
 	} else if queryTokens > 50 {
 		budget = int(float64(budget) * 1.2)
+	}
+	if budget < 32 {
+		budget = 32
 	}
 
 	// 1. Get query embedding with cache
@@ -396,6 +407,9 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 		if err == nil {
 			broadCandidates = filterCandidatesValidAt(broadCandidates, time.Now())
 			broadCandidates = filterCandidatesByKind(broadCandidates, input.Kind)
+			if uc.searchTimeClusteringEnabled {
+				broadCandidates = selectClusterRepresentatives(clusterCandidates(broadCandidates, uc.searchTimeClusteringThreshold))
+			}
 			broadScored := uc.scoreCandidates(broadCandidates, queryVec, tagBoostIDs)
 			broadPruned := uc.pruneCandidatesWithThreshold(broadScored, 0.15)
 			seen := make(map[uuid.UUID]bool)
@@ -428,6 +442,9 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 			}
 			fbCandidates = filterCandidatesValidAt(fbCandidates, time.Now())
 			fbCandidates = filterCandidatesByKind(fbCandidates, input.Kind)
+			if uc.searchTimeClusteringEnabled {
+				fbCandidates = selectClusterRepresentatives(clusterCandidates(fbCandidates, uc.searchTimeClusteringThreshold))
+			}
 			fbScored := uc.scoreCandidates(fbCandidates, queryVec, tagBoostIDs)
 			fbPruned := uc.pruneCandidates(fbScored)
 			for _, c := range fbPruned {
@@ -500,11 +517,14 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 		if len(existing) > 20 {
 			existing = existing[len(existing)-20:]
 		}
-		uc.sessionCache[*input.SessionID] = sessionCacheEntry{
-			ids:     existing,
-			expires: time.Now().Add(time.Duration(uc.sessionCacheTTLSeconds) * time.Second),
-		}
+		expires := uc.sessionCacheExpiry()
+		uc.sessionCache[*input.SessionID] = sessionCacheEntry{ids: existing, expires: expires}
 		uc.sessionCacheMu.Unlock()
+		if uc.sessionCacheStore != nil {
+			if err := uc.sessionCacheStore.Save(ctx, *input.SessionID, existing, expires); err != nil && uc.logger != nil {
+				uc.logger.Warn("failed to persist session cache", "error", err, "session_id", *input.SessionID)
+			}
+		}
 	}
 
 	return &RecallMemoryOutput{
@@ -554,6 +574,7 @@ func (uc *RecallMemory) getQueryEmbedding(ctx context.Context, query string) ([]
 			// Average embeddings of all variants
 			dim := -1
 			var sum []float64
+			count := 0
 			for _, v := range variants {
 				ev, eErr := uc.embedder.Encode(ctx, v)
 				if eErr != nil {
@@ -566,15 +587,16 @@ func (uc *RecallMemory) getQueryEmbedding(ctx context.Context, query string) ([]
 				if len(ev) != dim {
 					continue
 				}
+				count++
 				for i := range ev {
 					sum[i] += float64(ev[i])
 				}
 			}
-			if sum != nil {
+			if sum != nil && count > 0 {
 				vec = make([]float32, dim)
-				count := float64(len(variants))
+				divisor := float64(count)
 				for i := range sum {
-					vec[i] = float32(sum[i] / count)
+					vec[i] = float32(sum[i] / divisor)
 				}
 			}
 		}
@@ -776,7 +798,7 @@ func (uc *RecallMemory) adaptiveThreshold(scores []float64) float64 {
 func (uc *RecallMemory) pruneCandidates(candidates []*entities.Candidate) []*entities.Candidate {
 	scores := make([]float64, 0, len(candidates))
 	for _, c := range candidates {
-		scores = append(scores, c.Relevance)
+		scores = append(scores, candidatePruneScore(c))
 	}
 	return uc.pruneCandidatesWithThreshold(candidates, uc.adaptiveThreshold(scores))
 }
@@ -787,7 +809,7 @@ func (uc *RecallMemory) pruneCandidatesWithThreshold(candidates []*entities.Cand
 	}
 	var pruned []*entities.Candidate
 	for _, c := range candidates {
-		if c.Relevance > threshold {
+		if candidatePruneScore(c) > threshold {
 			pruned = append(pruned, c)
 		}
 	}
@@ -795,7 +817,7 @@ func (uc *RecallMemory) pruneCandidatesWithThreshold(candidates []*entities.Cand
 	if len(pruned) == 0 && len(candidates) > 0 {
 		// Fallback: keep top 5
 		sort.Slice(candidates, func(i, j int) bool {
-			return candidates[i].Relevance > candidates[j].Relevance
+			return candidatePruneScore(candidates[i]) > candidatePruneScore(candidates[j])
 		})
 		topN := 5
 		if len(candidates) < topN {
@@ -805,6 +827,19 @@ func (uc *RecallMemory) pruneCandidatesWithThreshold(candidates []*entities.Cand
 	}
 
 	return pruned
+}
+
+// candidatePruneScore keeps thresholding aligned with the score used by the
+// allocator. Test doubles that only set Relevance continue to work, while
+// production candidates use the density- and recency-aware Score.
+func candidatePruneScore(candidate *entities.Candidate) float64 {
+	if candidate == nil {
+		return 0
+	}
+	if candidate.Score > 0 {
+		return candidate.Score
+	}
+	return candidate.Relevance
 }
 
 func (uc *RecallMemory) applyReranker(ctx context.Context, query string, candidates []*entities.Candidate) []*entities.Candidate {
@@ -866,10 +901,20 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 	// Retrieve session memory IDs for multi-turn boost
 	var sessionMemoryIDs map[uuid.UUID]bool
 	if sessionID != nil && *sessionID != "" {
+		if uc.sessionCacheStore != nil {
+			if ids, err := uc.sessionCacheStore.Load(ctx, *sessionID, time.Now()); err == nil {
+				sessionMemoryIDs = make(map[uuid.UUID]bool, len(ids))
+				for _, id := range ids {
+					sessionMemoryIDs[id] = true
+				}
+			}
+		}
 		uc.sessionCacheMu.RLock()
 		if entry, ok := uc.sessionCache[*sessionID]; ok {
 			if time.Now().Before(entry.expires) {
-				sessionMemoryIDs = make(map[uuid.UUID]bool, len(entry.ids))
+				if sessionMemoryIDs == nil {
+					sessionMemoryIDs = make(map[uuid.UUID]bool, len(entry.ids))
+				}
 				for _, id := range entry.ids {
 					sessionMemoryIDs[id] = true
 				}
@@ -881,7 +926,7 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 	// Pre-compute adaptive threshold
 	greedyThresholdScores := make([]float64, 0, len(candidates))
 	for _, c := range candidates {
-		greedyThresholdScores = append(greedyThresholdScores, c.Relevance)
+		greedyThresholdScores = append(greedyThresholdScores, candidatePruneScore(c))
 	}
 	greedyThreshold := uc.adaptiveThreshold(greedyThresholdScores)
 
@@ -1115,4 +1160,11 @@ func (uc *RecallMemory) cleanupSessionCache() {
 		}
 	}
 	uc.sessionCacheMu.Unlock()
+}
+
+func (uc *RecallMemory) sessionCacheExpiry() time.Time {
+	if uc.sessionCacheTTLSeconds <= 0 {
+		return time.Unix(1<<62, 0)
+	}
+	return time.Now().Add(time.Duration(uc.sessionCacheTTLSeconds) * time.Second)
 }

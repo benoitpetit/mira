@@ -229,7 +229,7 @@ func (uc *StoreMemory) Execute(ctx context.Context, input StoreMemoryInput) (*St
 	// 4. Add to vector store (non-fatal)
 	candidate := entities.NewCandidate(fp, verbatim, emb.Vector)
 	if err := uc.vectorStore.AddCandidate(ctx, candidate); err != nil {
-		// SQLite remains authoritative. Try to repair the derived index before
+		// The repository remains authoritative. Try to repair the derived index before
 		// continuing so a transient HNSW failure does not leave it stale.
 		repairErr := repairVectorStore(ctx, uc.vectorStore)
 		if uc.logger != nil {
@@ -337,6 +337,18 @@ func (uc *StoreMemory) Execute(ctx context.Context, input StoreMemoryInput) (*St
 
 // storeTags extracts and stores tags for a memory. Non-fatal.
 func (uc *StoreMemory) storeTags(ctx context.Context, verbatimID uuid.UUID, fp *entities.Fingerprint, content string) {
+	if err := storeMemoryTags(ctx, uc.repository, verbatimID, fp, content); err != nil && uc.logger != nil {
+		uc.logger.Warn("Failed to store tags",
+			"error", err,
+			"verbatim_id", verbatimID.String(),
+		)
+	}
+}
+
+// storeMemoryTags persists deterministic tags derived from a fingerprint.
+// It is shared by normal storage and consolidation so synthesized facts
+// participate in the same tag-assisted recall as every other MIRA memory.
+func storeMemoryTags(ctx context.Context, repository ports.TagRepository, verbatimID uuid.UUID, fp *entities.Fingerprint, content string) error {
 	tagSet := make(map[string]bool)
 
 	// Entities
@@ -364,7 +376,7 @@ func (uc *StoreMemory) storeTags(ctx context.Context, verbatimID uuid.UUID, fp *
 	}
 
 	if len(tagSet) == 0 {
-		return
+		return nil
 	}
 
 	var tags []string
@@ -372,12 +384,5 @@ func (uc *StoreMemory) storeTags(ctx context.Context, verbatimID uuid.UUID, fp *
 		tags = append(tags, t)
 	}
 
-	if err := uc.repository.StoreTags(ctx, verbatimID, tags, "keyword"); err != nil {
-		if uc.logger != nil {
-			uc.logger.Warn("Failed to store tags",
-				"error", err,
-				"verbatim_id", verbatimID.String(),
-			)
-		}
-	}
+	return repository.StoreTags(ctx, verbatimID, tags, "keyword")
 }

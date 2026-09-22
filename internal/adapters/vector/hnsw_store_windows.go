@@ -15,7 +15,7 @@ import (
 
 // HNSWStore is not supported on Windows due to dependencies
 // The library uses unix-specific file operations (renameio.TempFile)
-// On Windows, MIRA falls back to SQLiteVectorStore
+// On Windows, MIRA falls back to the portable repository-backed brute-force store.
 
 type HNSWStore struct {
 	notSupported bool
@@ -36,7 +36,7 @@ func DefaultHNSWOptions() HNSWOptions {
 
 // NewHNSWStore creates a new HNSW index (not supported on Windows)
 func NewHNSWStore(store ports.EmbeddingSource, dimension int, indexPath string, opts HNSWOptions) (*HNSWStore, error) {
-	return nil, errors.New("HNSW vector store is not supported on Windows. Use SQLiteVectorStore instead")
+	return nil, errors.New("HNSW vector store is not supported on Windows. Use the brute-force repository fallback instead")
 }
 
 // SetModelHash sets the expected embedding model hash (no-op on Windows).

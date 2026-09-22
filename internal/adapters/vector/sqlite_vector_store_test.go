@@ -26,8 +26,6 @@ func setupTestDB(t *testing.T) *storage.SQLiteRepository {
 	return repo
 }
 
-// createTestVector is defined in hnsw_store_test.go
-
 // createAndStoreCandidate creates a candidate with embedding and stores all components in DB
 func createAndStoreCandidate(t *testing.T, repo *storage.SQLiteRepository, dim int, content, wing string, room *string, vectorValue float32) *entities.Candidate {
 	verbatim := entities.NewVerbatim(content, wing, room)

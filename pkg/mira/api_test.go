@@ -57,7 +57,6 @@ func newTestApp(t *testing.T) *mira.Application {
 	cfg.Embeddings.UseSimpleEmbedder = true
 	cfg.Embeddings.Dimension = 16
 	cfg.Extraction.LLM.Enabled = false
-	cfg.Soul.Enabled = false
 	cfg.Metrics.Enabled = false
 	cfg.Webhooks.Enabled = false
 	cfg.API.Enabled = false
@@ -221,10 +220,9 @@ func TestApplication_Consolidate(t *testing.T) {
 	}
 }
 
-func TestApplication_SoulApp_Nil(t *testing.T) {
+func TestApplication_AgentMemoryAvailable(t *testing.T) {
 	app := newTestApp(t)
-	// Soul is disabled → SoulApp() returns nil
-	if app.SoulApp() != nil {
-		t.Error("expected nil SoulApp when soul disabled")
+	if app.AgentMemory() == nil {
+		t.Error("expected built-in agent memory to be initialized")
 	}
 }

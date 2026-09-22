@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/benoitpetit/mira/internal/agentmemory"
 	"github.com/benoitpetit/mira/internal/usecases/interactors"
-	soul "github.com/benoitpetit/soul"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -40,7 +40,7 @@ func TestUCAccessors_ReturnExpectedValues(t *testing.T) {
 		searchSemantic:      ss,
 		updateMemory:        um,
 		consolidateMemories: cons,
-		soulApp:             nil,
+		agentMemoryApp:      nil,
 	}
 
 	if a.StoreMemoryUC() != sm {
@@ -79,16 +79,16 @@ func TestUCAccessors_ReturnExpectedValues(t *testing.T) {
 	if a.ConsolidateMemoriesUC() != cons {
 		t.Error("ConsolidateMemoriesUC mismatch")
 	}
-	if a.SoulApplication() != nil {
-		t.Error("SoulApplication should be nil")
+	if a.AgentMemoryApplication() != nil {
+		t.Error("AgentMemoryApplication should be nil")
 	}
 }
 
-func TestSoulApplication_NonNil(t *testing.T) {
-	soulMock := &soul.Application{}
-	a := &Application{soulApp: soulMock}
-	if a.SoulApplication() != soulMock {
-		t.Error("SoulApplication should return the configured soul app")
+func TestAgentMemoryApplication_NonNil(t *testing.T) {
+	agentMemoryMock := &agentmemory.Runtime{}
+	a := &Application{agentMemoryApp: agentMemoryMock}
+	if a.AgentMemoryApplication() != agentMemoryMock {
+		t.Error("AgentMemoryApplication should return the configured app")
 	}
 }
 

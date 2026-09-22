@@ -1,5 +1,5 @@
 system:
-  version: "0.6.0"
+  version: "0.7.0"
 
 storage:
   path: ".mira"
@@ -89,7 +89,7 @@ recall:
 
 mcp:
   name: "mira"
-  version: "0.6.0"
+  version: "0.7.0"
   transport: "stdio"      # "stdio", "sse", or stateless "http" (POST /mcp)
   address: "localhost:3001" # Bind address when transport is "sse" or "http"
   auth_token: ""            # Required for HTTP on non-loopback addresses; SSE stays loopback-only
@@ -168,24 +168,14 @@ webhooks:
 #   X-MIRA-Signature-Version: v1            (if secret configured)
 
 # =============================================================================
-# SOUL IDENTITY EXTENSION (Optional)
+# BUILT-IN IDENTITY MEMORY
 # =============================================================================
-# SOUL is an opt-in identity preservation layer for LLM agents.
-# By default, MIRA runs without SOUL (14 tools). To enable SOUL (22 tools total: 14 MIRA + 8 SOUL):
-#
-#   1. Set soul.enabled: true below, OR
-#   2. Launch with: ./mira --config config.yaml --with-soul
-#
-# When enabled, SOUL shares MIRA's SQLite database and adds identity
-# capture, drift detection, and model-swap preservation tools.
-# See: https://github.com/benoitpetit/soul
-#
-# Every SOUL tuning option available in standalone mode can also be
-# configured directly inside MIRA's config file below. No separate SOUL config
-# file or process is required for embedded mode.
+# Agent identity, continuity, and model-transition memory are built into MIRA
+# and enabled automatically. The section below tunes that behavior; no extra
+# extension, process, flag, or configuration file is required.
 
-soul:
-  enabled: false          # Set to true to activate SOUL identity features
+agent_memory:
+  enabled: true           # Kept for compatibility; built-in memory is always active
 
   # Identity extraction tuning
   extraction:
@@ -211,9 +201,9 @@ soul:
     enabled: true                  # Track identity evolution over time
     max_history_versions: 100      # Max snapshots to retain per agent
 
-  # MIRA↔SOUL memory enrichment
+  # MIRA memory enrichment
   memory:
-    enrich_with_mira_memories: false  # Inject MIRA memories into SOUL identity prompts
+    enrich_with_mira_memories: false  # Inject MIRA memories into identity prompts
     max_mira_memories: 5              # Max MIRA memories to inject per identity recall
 
 # ─── Compression ────────────────────────────────────────────────────────────

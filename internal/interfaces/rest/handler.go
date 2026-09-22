@@ -80,10 +80,9 @@ type (
 		Execute(ctx context.Context) (*interactors.GetStatusOutput, error)
 	}
 
-	// SoulStatusQuerier provides SOUL identity data for the status endpoint.
-	// The handler field is nil when SOUL is disabled — checked before each call.
-	SoulStatusQuerier interface {
-		QueryStatus(ctx context.Context) (*interactors.SoulStatusSummary, error)
+	// AgentMemoryStatusQuerier provides agent continuity data for the status endpoint.
+	AgentMemoryStatusQuerier interface {
+		QueryStatus(ctx context.Context) (*interactors.AgentMemoryStatusSummary, error)
 	}
 )
 
@@ -91,21 +90,21 @@ type (
 
 // Handler is the REST API controller.
 type Handler struct {
-	store       StoreMemoryExecutor
-	recall      RecallMemoryExecutor
-	load        LoadMemoryExecutor
-	update      UpdateMemoryExecutor
-	del         DeleteMemoryExecutor
-	search      SearchSemanticExecutor
-	consolidate ConsolidateMemoriesExecutor
-	clear       ClearMemoryExecutor
-	timeline    GetTimelineExecutor
-	archive     ArchiveMemoriesExecutor
-	causal      GetCausalChainExecutor
-	status      GetStatusExecutor
-	audit       ports.AuditRepository
-	policy      ports.PolicyRepository
-	soulStatus  SoulStatusQuerier // nil when SOUL is disabled
+	store             StoreMemoryExecutor
+	recall            RecallMemoryExecutor
+	load              LoadMemoryExecutor
+	update            UpdateMemoryExecutor
+	del               DeleteMemoryExecutor
+	search            SearchSemanticExecutor
+	consolidate       ConsolidateMemoriesExecutor
+	clear             ClearMemoryExecutor
+	timeline          GetTimelineExecutor
+	archive           ArchiveMemoriesExecutor
+	causal            GetCausalChainExecutor
+	status            GetStatusExecutor
+	audit             ports.AuditRepository
+	policy            ports.PolicyRepository
+	agentMemoryStatus AgentMemoryStatusQuerier
 }
 
 const (
@@ -149,11 +148,10 @@ func NewHandler(
 	}
 }
 
-// SetSoulQuerier injects an optional SOUL status provider.
-// Call this after NewHandler when SOUL is enabled; passing nil is a no-op.
-func (h *Handler) SetSoulQuerier(q SoulStatusQuerier) {
+// SetAgentMemoryQuerier injects the built-in agent-memory status provider.
+func (h *Handler) SetAgentMemoryQuerier(q AgentMemoryStatusQuerier) {
 	if q != nil {
-		h.soulStatus = q
+		h.agentMemoryStatus = q
 	}
 }
 
@@ -630,9 +628,9 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if h.soulStatus != nil {
-		if soul, err := h.soulStatus.QueryStatus(r.Context()); err == nil {
-			out.Soul = soul
+	if h.agentMemoryStatus != nil {
+		if agentMemory, err := h.agentMemoryStatus.QueryStatus(r.Context()); err == nil {
+			out.AgentMemory = agentMemory
 		}
 	}
 	writeJSON(w, http.StatusOK, out)

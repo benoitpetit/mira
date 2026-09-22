@@ -7,7 +7,7 @@ import (
 
 // ComputeModelHash computes a consistent model hash using SHA-256.
 // Returns the first 16 hex characters (8 bytes) of the SHA-256 hash of the model name.
-// This is the canonical hash function used by both MIRA and SOUL.
+// This is the canonical hash function used across MIRA's memory subsystems.
 func ComputeModelHash(modelName string) string {
 	hash := sha256.Sum256([]byte(modelName))
 	return hex.EncodeToString(hash[:8])

@@ -80,15 +80,6 @@ func generateRandomVector(dim int) []float32 {
 	return vec
 }
 
-// createTestVector creates a test vector
-func createTestVector(dim int, value float32) []float32 {
-	vec := make([]float32, dim)
-	for i := range vec {
-		vec[i] = value
-	}
-	return vec
-}
-
 // createTestCandidate creates a test candidate with the given embedding
 func createTestCandidate(embedding []float32) *entities.Candidate {
 	room := "test-room"

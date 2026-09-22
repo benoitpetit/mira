@@ -4,6 +4,7 @@ package interactors
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/benoitpetit/mira/internal/domain/entities"
@@ -196,12 +197,22 @@ func (uc *ConsolidateMemories) Execute(ctx context.Context, input ConsolidateMem
 			_ = tx.Rollback()
 			return nil, fmt.Errorf("failed to commit consolidation transaction: %w", err)
 		}
+		if err := storeMemoryTags(ctx, uc.repository, verbatim.ID, fp, syntheticContent); err != nil {
+			slog.Warn("failed to store tags for consolidated memory", "error", err, "verbatim_id", verbatim.ID)
+		}
 
 		candidate := entities.NewCandidate(fp, verbatim, emb.Vector)
 		if err := uc.vectorStore.AddCandidate(ctx, candidate); err != nil {
-			// Keep the source memories when the new candidate cannot be indexed.
-			// This avoids making them disappear from the active memory set.
-			return nil, fmt.Errorf("failed to index consolidated memory: %w", err)
+			// The SQL repository is authoritative. Repair the derived index before
+			// removing sources; if repair cannot complete, compensate by deleting the
+			// synthesized memory so a retry cannot create a duplicate consolidation.
+			if repairErr := repairVectorStore(ctx, uc.vectorStore); repairErr != nil {
+				cleanupErr := uc.repository.DeleteVerbatimByID(ctx, verbatim.ID)
+				if cleanupErr != nil {
+					return nil, fmt.Errorf("failed to index consolidated memory: %w (rollback of synthesized memory also failed: %v)", err, cleanupErr)
+				}
+				return nil, fmt.Errorf("failed to index consolidated memory: %w (repair failed: %v)", err, repairErr)
+			}
 		}
 
 		output.ConsolidatedCount++
@@ -214,6 +225,16 @@ func (uc *ConsolidateMemories) Execute(ctx context.Context, input ConsolidateMem
 		deleted, err := uc.repository.ClearByIDs(ctx, idsToRemove)
 		if err != nil {
 			return nil, fmt.Errorf("failed to remove consolidated source memories: %w", err)
+		}
+		for _, id := range idsToRemove {
+			if err := uc.vectorStore.Delete(ctx, id); err != nil {
+				// Sources are already gone from the authoritative repository. Rebuild
+				// the derived index so deleted notes cannot remain recallable.
+				if repairErr := repairVectorStore(ctx, uc.vectorStore); repairErr != nil {
+					return nil, fmt.Errorf("source memories removed but vector index repair failed: %w", repairErr)
+				}
+				break
+			}
 		}
 		output.RemovedCount += deleted
 	}

@@ -2,7 +2,7 @@
 name: mira
 description: Long-term memory guidance for MIRA MCP integration
 author: benoitpetit
-version: "0.6.0"
+version: "0.7.0"
 tags: [memory, mcp, mira]
 ---
 
@@ -12,11 +12,11 @@ You are augmented with **MIRA** (Memory with Information-theoretic Relevance All
 
 The detailed tool schemas for `mira_store`, `mira_ingest`, `mira_recall`, `mira_load`, `mira_update`, `mira_search`, `mira_consolidate`, `mira_causal_chain`, `mira_status`, `mira_health`, `mira_archive`, `mira_compress`, `mira_timeline`, and `mira_clear_memory` are documented in the *External Tools Reference (MCP Servers)* section of your system prompt.
 
-> **SOUL Extension**: If MIRA is running with SOUL enabled (`--with-soul` or `soul.enabled: true`), 8 additional `soul_*` tools are available for identity capture, drift detection, and model-swap preservation. These are documented separately in the SOUL skill. When SOUL is enabled, MIRA provides **14 + 8 = 22 tools total**.
+> **Built-in identity memory**: MIRA always exposes the identity tools for capture, continuity recall, drift detection, and model-transition preservation. They are part of the core MCP surface and use the `soul_*` prefix.
 
 **Rule #1**: Always recall before answering. **Rule #2**: Store progressively as you work.
 
-MIRA provides **14 MCP tools** by default:
+MIRA provides **14 core MCP tools** by default, plus **8 built-in identity tools**:
 - `mira_store` — Store memories with T0/T1/T2 extraction
 - `mira_recall` — Context-aware retrieval with token budget (CBA)
 - `mira_load` — Load full verbatim by ID
@@ -31,6 +31,16 @@ MIRA provides **14 MCP tools** by default:
 - `mira_clear_memory` — Delete memories
 - `mira_compress` — Rule-based context compression
 - `mira_ingest` — Extract history memories from structured conversation messages
+
+MIRA also provides **8 built-in identity tools**:
+- `soul_capture` — Capture and version identity from a conversation
+- `soul_recall` — Compose identity and relevant MIRA memories in one token budget
+- `soul_drift` — Measure identity drift across versions
+- `soul_swap` — Preserve continuity when the model changes
+- `soul_status` — Read the current identity snapshot
+- `soul_history` — Inspect immutable identity versions
+- `soul_update` — Apply a natural-language identity directive
+- `soul_patch` — Apply explicit bounded identity fields
 
 ---
 
@@ -202,19 +212,10 @@ cursor-agent --output-format stream-json "Summarize the current task" | \
 Tool-call and partial assistant-delta events are ignored; MIRA stores only the
 complete user event and terminal result.
 
-### 7. Optional: Enable SOUL (Identity Extension)
-SOUL is **opt-in and disabled by default**. To activate it alongside MIRA (22 tools total: 14 MIRA + 8 SOUL):
-
-```bash
-# Option A: CLI flag
-./mira --config config.yaml server --with-soul
-
-# Option B: edit config.yaml
-#   soul:
-#     enabled: true
-```
-
-Then add the SOUL skill to the agent: https://github.com/benoitpetit/soul/blob/main/SKILL.md
+### 7. Built-in identity memory
+Agent identity and continuity are integrated into MIRA and enabled automatically. No
+extra process, CLI flag, or skill is required. Tuning options live under the
+`agent_memory` section of `config.yaml`.
 
 ---
 
@@ -403,6 +404,14 @@ decisions worth retaining.
 - **`mira_archive`** — Call occasionally to archive stale session notes and debug logs.
 - **`mira_status`** — Check system health, memory counts, version, uptime, and index status before heavy usage.
 - **`mira_health`** — Quick JSON health check (`status`, `db_connected`, `memory_count`). Use for lightweight liveness probes.
+- **`soul_capture(agent_id, conversation, model_id)`** — Capture the current communication profile and create an immutable version.
+- **`soul_recall(agent_id, context, budget)`** — Restore identity context together with relevant MIRA memories under the requested token budget.
+- **`soul_drift(agent_id, window)`** — Inspect changes in voice, traits, values and communication style.
+- **`soul_swap(agent_id, from_model, to_model)`** — Create a continuity snapshot when switching models.
+- **`soul_status(agent_id)`** — Inspect the current identity state.
+- **`soul_history(agent_id, limit)`** — Review identity versions and their lineage.
+- **`soul_update(agent_id, directive, reason)`** — Apply a supported identity directive such as concise, formal or more technical.
+- **`soul_patch(agent_id, ...)`** — Apply explicit bounded identity fields such as `formality_level` or `technical_depth`.
 - **`mira_clear_memory`** — Permanently delete memories (global or room-scoped). **Use ONLY with explicit user request.**
 - **`mira_compress`** — Run rule-based context compression over session_note verbatims. Optional, deterministic.
 
@@ -417,7 +426,7 @@ decisions worth retaining.
 5. **Keep wing names consistent** — reuse the same canonical wing name across a project.
 6. **Do not translate queries** — MIRA handles cross-lingual retrieval automatically.
 7. **Do not store raw code without context** — store the *decision* or *fact* behind the code, not the code itself.
-8. **Do not assume SOUL is enabled** — MIRA runs solo by default (14 tools). Check tool availability before invoking `soul_*` tools.
+8. **Use the built-in identity tools** — they are part of the core MIRA MCP surface and use the `soul_*` prefix. Capture identity after meaningful interactions, recall it at the start of a model/session transition, and use swap/history to verify continuity.
 
 ---
 

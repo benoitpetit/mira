@@ -50,13 +50,15 @@ Complete inventory of MIRA capabilities.
 | Cross-Language Recall | Cross-lingual embeddings + broad fallback for sparse queries |
 | Fallback Wings | Comma-separated alternate wings searched if primary is empty |
 | Query Expansion | Generates query variants and averages embeddings |
-| FTS5 Lexical Search | SQLite full-text search with auto-triggers and backfill |
-| Hybrid Search (RRF) | Reciprocal Rank Fusion (k=60) merging dense HNSW and lexical FTS5 results |
+| SQL Lexical Search | SQLite FTS5 or PostgreSQL GIN-backed simple text search |
+| Hybrid Search (RRF) | Reciprocal Rank Fusion (k=60) merging dense HNSW and SQL lexical results |
 | Search-Time Clustering | Real-time deduplication by clustering candidates with cos-sim ≥ 0.88 |
 | Tag-Based Retrieval | `memory_tags` table with automatic tag boost in scoring |
 | Heuristic Reranker | Lightweight lexical reranker (Jaccard + phrase bonus + length balance) |
 | Adaptive Threshold Methods | Three methods: `iqr` (default), `elbow`, `mean_stddev` |
-| Fallback Vector Store | Transparent HNSW → SQLite fallback when index is not ready |
+| Fallback Vector Store | Transparent HNSW → portable SQL brute-force fallback when index is not ready |
+| Persistent Session Cache | Selected memory IDs survive restarts and expire by TTL |
+| Consolidation Index Coherence | Rebuilds the derived vector index when a consolidation update cannot be applied incrementally |
 | Exact Vector Search | `SearchExact` content-hash matching for deduplication and precise lookups |
 
 ---
@@ -68,10 +70,13 @@ Complete inventory of MIRA capabilities.
 | HNSW Approximate NN | O(log n) search with M=32, efSearch=100 |
 | HNSW Validation | Runtime dimension + model-hash consistency check; auto-rebuild on mismatch |
 | HNSW Persistence | Saves/loads `vectors.bin` across restarts |
-| Background Index Build | Builds HNSW from SQLite embeddings on startup if needed |
-| SQLite Vector Store | Exact brute-force cosine similarity fallback |
+| Background Index Build | Builds HNSW from authoritative SQL embeddings on startup if needed |
+| Portable Brute-Force Vector Store | Exact cosine similarity fallback over the authoritative repository |
 | Fallback Vector Store Wrapper | Automatic failover when HNSW reports "not ready" |
 | Cross-Platform HNSW | Unix full support + Windows stub fallback |
+
+PostgreSQL is supported as an authoritative backend. `mira reembed` updates
+stored vectors and model fingerprints transactionally, then rebuilds HNSW.
 
 ---
 
@@ -103,6 +108,23 @@ Complete inventory of MIRA capabilities.
 | `mira_health` | Quick health check: JSON with `status`, `db_connected`, `memory_count` |
 | `mira_archive` | Archive old memories |
 | `mira_clear_memory` | Permanent deletion (global or room-scoped) |
+
+### Built-in identity tools
+
+| Tool | Description |
+|------|-------------|
+| `soul_capture` | Capture and version identity from a conversation |
+| `soul_recall` | Compose identity context and relevant MIRA memories under one token budget |
+| `soul_drift` | Measure identity drift across immutable versions |
+| `soul_swap` | Preserve identity continuity across model transitions |
+| `soul_status` | Inspect the current identity snapshot |
+| `soul_history` | Inspect immutable identity versions and lineage |
+| `soul_update` | Apply a natural-language identity directive |
+| `soul_patch` | Apply explicit bounded identity fields |
+
+These eight tools are enabled automatically. They use the same database,
+encryption boundary, MIRA recall pipeline and allocator budget as the rest of
+the server.
 
 ---
 
@@ -141,7 +163,7 @@ Complete inventory of MIRA capabilities.
 
 | Feature | Description |
 |---------|-------------|
-| `server` subcommand | Start the MCP server (stdio/SSE/stateless HTTP at `/mcp`); flags: `--with-api`, `--api-addr`, `--api-token`, `--with-soul` |
+| `server` subcommand | Start the MCP server (stdio/SSE/stateless HTTP at `/mcp`); flags: `--with-api`, `--api-addr`, `--api-token`; built-in identity memory is automatic |
 | `migrate` subcommand | Run SQLite schema migrations and exit |
 | `doctor` subcommand | Check system health and print a human-readable configuration summary |
 | `setup` subcommand | One-click MCP registration for Codex and Claude Code (`--automatic-memory` prompt hook plus optional final-response `Stop` hook; Claude scope `local|project|user`), Windsurf (native prompt hook, optional response hook), Cursor and Claude Desktop, with dry-run and protected JSON merges |
@@ -197,5 +219,5 @@ Complete inventory of MIRA capabilities.
 
 ---
 
-*Version: 0.6.0*
+*Version: 0.7.0*
 *Last updated: 2026-04-30*

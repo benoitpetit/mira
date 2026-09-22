@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -19,6 +20,9 @@ func TestDefaultConfig(t *testing.T) {
 
 	if cfg.Allocator.DefaultBudget <= 0 {
 		t.Error("Allocator.DefaultBudget should be positive")
+	}
+	if !cfg.AgentMemory.Enabled {
+		t.Error("built-in agent memory should be enabled by default")
 	}
 }
 
@@ -180,8 +184,27 @@ func TestSaveAndLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if loaded.System.Version != "test-version" {
-		t.Errorf("loaded.System.Version = %q, want %q", loaded.System.Version, "test-version")
+	if loaded.System.Version != CurrentVersion {
+		t.Errorf("loaded.System.Version = %q, want %q", loaded.System.Version, CurrentVersion)
+	}
+}
+
+func TestSaveUsesAgentMemoryConfigurationKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := Default().Save(path); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	contents := string(data)
+	if !strings.Contains(contents, "agent_memory:") {
+		t.Fatal("saved configuration is missing agent_memory section")
+	}
+	if strings.Contains(contents, "\nsoul:") {
+		t.Fatal("saved configuration still exposes the deprecated soul section")
 	}
 }
 
@@ -201,6 +224,36 @@ func TestLoad_BadYAML(t *testing.T) {
 	_, err := Load(path)
 	if err == nil {
 		t.Error("Load() on bad YAML should return error")
+	}
+}
+
+func TestLoadPreservesDefaultsForPartialConfiguration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "partial.yaml")
+	if err := os.WriteFile(path, []byte("storage:\n  path: /tmp/mira-partial\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Embeddings.Dimension != 384 {
+		t.Fatalf("partial config lost embedding default: got %d", cfg.Embeddings.Dimension)
+	}
+	if !cfg.AgentMemory.Enabled {
+		t.Fatal("partial config lost built-in agent-memory default")
+	}
+}
+
+func TestValidateKeepsAgentMemoryBudgetWithinMiraBudget(t *testing.T) {
+	cfg := Default()
+	cfg.Allocator.DefaultBudget = 500
+	cfg.AgentMemory.Recall.DefaultBudgetTokens = 2000
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if cfg.AgentMemory.Recall.DefaultBudgetTokens != 500 {
+		t.Fatalf("agent memory budget = %d, want global MIRA budget 500", cfg.AgentMemory.Recall.DefaultBudgetTokens)
 	}
 }
 
@@ -224,6 +277,7 @@ func TestLoadOrDefault_ExistingFile(t *testing.T) {
 	path := filepath.Join(tmp, "config.yaml")
 	cfg := Default()
 	cfg.System.Version = "from-file"
+	cfg.MCP.Version = "from-file"
 	if err := cfg.Save(path); err != nil {
 		t.Fatal(err)
 	}
@@ -232,8 +286,11 @@ func TestLoadOrDefault_ExistingFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadOrDefault() error = %v", err)
 	}
-	if loaded.System.Version != "from-file" {
-		t.Errorf("version = %q, want %q", loaded.System.Version, "from-file")
+	if loaded.System.Version != CurrentVersion {
+		t.Errorf("system version = %q, want %q", loaded.System.Version, CurrentVersion)
+	}
+	if loaded.MCP.Version != CurrentVersion {
+		t.Errorf("MCP version = %q, want %q", loaded.MCP.Version, CurrentVersion)
 	}
 }
 

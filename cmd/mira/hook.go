@@ -184,5 +184,4 @@ func prepareHookConfig(cfg *config.Config) {
 	cfg.Metrics.Enabled = false
 	cfg.Webhooks.Enabled = false
 	cfg.API.Enabled = false
-	cfg.Soul.Enabled = false
 }

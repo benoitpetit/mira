@@ -4,7 +4,6 @@ go 1.25.0
 
 require (
 	github.com/benoitpetit/go-sqlcipher/v4 v4.17.0-mira.2
-	github.com/benoitpetit/soul v0.0.7-0.20260831191405-7502ef6ebc11
 	github.com/coder/hnsw v0.4.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.9.2
@@ -53,7 +52,6 @@ require (
 	github.com/nlpodyssey/spago v1.0.1 // indirect
 	github.com/nlpodyssey/spago/embeddings/store/diskstore v0.0.0-20220801114813-013d65be77fb // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/pkoukk/tiktoken-go v0.1.8 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect

@@ -7,6 +7,7 @@ package ports
 
 import (
 	"context"
+	"time"
 
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
@@ -46,8 +47,8 @@ type CausalRelationDetector interface {
 }
 
 // VectorStore defines the interface for vector storage and similarity search.
-// Implementations may use HNSW for approximate nearest neighbor search or
-// brute-force SQLite scanning as a fallback.
+// Implementations may use HNSW for approximate nearest neighbor search or a
+// portable brute-force repository scan as a fallback.
 type VectorStore interface {
 	// Search performs a similarity search for vectors closest to the query vector.
 	// Returns up to 'limit' candidates, optionally filtered by wing and room.
@@ -88,6 +89,14 @@ type OverlapCache interface {
 
 	// Set stores a similarity value between two memory IDs.
 	Set(ctx context.Context, idA, idB uuid.UUID, similarity float64)
+}
+
+// SessionCacheStore persists the memory IDs selected for a conversational
+// session so session boosts survive process restarts.
+type SessionCacheStore interface {
+	Load(ctx context.Context, sessionID string, now time.Time) ([]uuid.UUID, error)
+	Save(ctx context.Context, sessionID string, ids []uuid.UUID, expiresAt time.Time) error
+	PurgeExpired(ctx context.Context, now time.Time) error
 }
 
 // CausalGraph defines the interface for causal graph operations used by the CBA algorithm.

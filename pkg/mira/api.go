@@ -3,11 +3,11 @@ package mira
 import (
 	"context"
 
+	"github.com/benoitpetit/mira/internal/agentmemory"
 	"github.com/benoitpetit/mira/internal/app"
 	"github.com/benoitpetit/mira/internal/config"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/benoitpetit/mira/internal/usecases/interactors"
-	"github.com/benoitpetit/soul"
 	"github.com/google/uuid"
 )
 
@@ -194,7 +194,7 @@ func (a *Application) Consolidate(ctx context.Context, wing string, threshold fl
 	return err
 }
 
-// SoulApp returns the embedded SOUL application if enabled.
-func (a *Application) SoulApp() *soul.Application {
-	return a.inner.SoulApplication()
+// AgentMemory returns the embedded agent-memory continuity engine.
+func (a *Application) AgentMemory() *agentmemory.Runtime {
+	return a.inner.AgentMemoryApplication()
 }

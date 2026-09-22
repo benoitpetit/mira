@@ -69,6 +69,30 @@ func (r *PostgreSQLRepository) DB() *sql.DB {
 	return r.db
 }
 
+func postgresPlaceholders(start, count int) string {
+	placeholders := make([]string, count)
+	for i := range placeholders {
+		placeholders[i] = fmt.Sprintf("$%d", start+i)
+	}
+	return strings.Join(placeholders, ", ")
+}
+
+func postgresUUIDArguments(ids []uuid.UUID) []interface{} {
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		args[i] = id.String()
+	}
+	return args
+}
+
+func postgresStringArguments(values []string) []interface{} {
+	args := make([]interface{}, len(values))
+	for i, value := range values {
+		args[i] = value
+	}
+	return args
+}
+
 // StoreVerbatim implements VerbatimRepository
 func (r *PostgreSQLRepository) StoreVerbatim(ctx context.Context, verbatim *entities.Verbatim) error {
 	tx, err := r.Begin()
@@ -835,11 +859,17 @@ func (r *PostgreSQLRepository) ClearByIDs(ctx context.Context, ids []uuid.UUID) 
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	_, err := r.db.ExecContext(ctx, `DELETE FROM verbatim WHERE id = ANY($1)`, ids)
+	args := postgresUUIDArguments(ids)
+	query := `DELETE FROM verbatim WHERE id IN (` + postgresPlaceholders(1, len(args)) + `)` //nolint:gosec // placeholders are generated, IDs are bound
+	result, err := r.db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return 0, err
 	}
-	return len(ids), nil
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(deleted), nil
 }
 
 // StoreTags implements TagRepository
@@ -865,9 +895,12 @@ func (r *PostgreSQLRepository) GetVerbatimsByTags(ctx context.Context, tags []st
 	if len(tags) == 0 {
 		return nil, nil
 	}
+	args := postgresStringArguments(tags)
+	args = append(args, limit)
+	query := `SELECT DISTINCT verbatim_id FROM memory_tags WHERE tag IN (` + postgresPlaceholders(1, len(tags)) + `) LIMIT $` + fmt.Sprint(len(args)) //nolint:gosec // placeholders are generated, tags are bound
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT DISTINCT verbatim_id FROM memory_tags WHERE tag = ANY($1) LIMIT $2`,
-		tags, limit,
+		query,
+		args...,
 	)
 	if err != nil {
 		return nil, err
@@ -911,6 +944,7 @@ func (r *PostgreSQLRepository) GetCandidatesWithEmbeddings(ctx context.Context, 
 		return nil, nil
 	}
 
+	args := postgresUUIDArguments(ids)
 	query := `
 		SELECT v.id, v.content, v.wing, v.room, v.token_count, v.created_at, v.valid_from, v.valid_until, v.kind,
 			   v.summary, v.summary_tokens,
@@ -919,9 +953,9 @@ func (r *PostgreSQLRepository) GetCandidatesWithEmbeddings(ctx context.Context, 
 		FROM verbatim v
 		JOIN fingerprints f ON v.id = f.verbatim_id
 		JOIN embeddings e ON v.id = e.id
-		WHERE v.id = ANY($1)
-	`
-	rows, err := r.db.QueryContext(ctx, query, ids)
+		WHERE v.id IN (` + postgresPlaceholders(1, len(args)) + `)
+	` //nolint:gosec // placeholders are generated, IDs are bound
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1022,10 +1056,56 @@ func (r *PostgreSQLRepository) GetAllEmbeddings(ctx context.Context) ([]*entitie
 
 // SearchLexical implements EmbeddingSource
 func (r *PostgreSQLRepository) SearchLexical(ctx context.Context, query string, limit int, wing, room *string) ([]*entities.Candidate, error) {
-	// For PostgreSQL, we'll use tsvector for full-text search
-	// This requires additional setup in the schema (e.g. tsvector column or functional index)
-	// Simplified implementation for now
-	return nil, fmt.Errorf("lexical search not yet implemented for PostgreSQL")
+	if strings.TrimSpace(query) == "" || limit <= 0 {
+		return nil, nil
+	}
+	args := []interface{}{query}
+	where := `WHERE to_tsvector('simple', v.content) @@ plainto_tsquery('simple', $1)
+		AND (v.valid_from IS NULL OR v.valid_from <= EXTRACT(EPOCH FROM NOW()))
+		AND (v.valid_until IS NULL OR v.valid_until >= EXTRACT(EPOCH FROM NOW()))`
+	if wing != nil {
+		args = append(args, *wing)
+		where += fmt.Sprintf(" AND v.wing = $%d", len(args))
+	}
+	if room != nil {
+		args = append(args, *room)
+		where += fmt.Sprintf(" AND v.room = $%d", len(args))
+	}
+	args = append(args, limit)
+	querySQL := fmt.Sprintf(`SELECT v.id FROM verbatim v %s
+		ORDER BY ts_rank(to_tsvector('simple', v.content), plainto_tsquery('simple', $1)) DESC, v.created_at DESC
+		LIMIT $%d`, where, len(args))
+	rows, err := r.db.QueryContext(ctx, querySQL, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	candidates, err := r.GetCandidatesWithEmbeddings(ctx, ids, wing, room)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[uuid.UUID]*entities.Candidate, len(candidates))
+	for _, candidate := range candidates {
+		byID[candidate.Verbatim.ID] = candidate
+	}
+	ordered := make([]*entities.Candidate, 0, len(ids))
+	for _, id := range ids {
+		if candidate := byID[id]; candidate != nil {
+			ordered = append(ordered, candidate)
+		}
+	}
+	return ordered, nil
 }
 
 // SaveAuditLog implements AuditRepository
