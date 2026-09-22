@@ -20,17 +20,17 @@ import (
 	"github.com/benoitpetit/mira/internal/adapters/extraction"
 	"github.com/benoitpetit/mira/internal/adapters/logging"
 	"github.com/benoitpetit/mira/internal/adapters/metrics"
-	mirasoul "github.com/benoitpetit/mira/internal/adapters/soul"
 	"github.com/benoitpetit/mira/internal/adapters/storage"
 	"github.com/benoitpetit/mira/internal/adapters/vector"
 	webhookadapter "github.com/benoitpetit/mira/internal/adapters/webhook"
+	"github.com/benoitpetit/mira/internal/agentmemory"
 	"github.com/benoitpetit/mira/internal/config"
 	"github.com/benoitpetit/mira/internal/domain/entities"
+	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	mcpserver "github.com/benoitpetit/mira/internal/interfaces/mcp"
 	restserver "github.com/benoitpetit/mira/internal/interfaces/rest"
 	"github.com/benoitpetit/mira/internal/usecases/interactors"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
-	soul "github.com/benoitpetit/soul"
 	"github.com/google/uuid"
 	mcptypes "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -43,7 +43,7 @@ type Application struct {
 	embedder            ports.Embedder
 	extractor           ports.Extractor //nolint:staticcheck // consolidation still requires the composite legacy interface
 	vectorStore         ports.VectorStore
-	overlapCache        *vector.SQLiteOverlapCache
+	overlapCache        ports.OverlapCache
 	hnswIndex           *vector.HNSWStore
 	storeMemory         *interactors.StoreMemory
 	recallMemory        *interactors.RecallMemory
@@ -62,8 +62,8 @@ type Application struct {
 	controller          *mcpserver.Controller
 	webhookManager      ports.WebhookManager
 	metricsCollector    ports.MetricsCollector
-	soulApp             *soul.Application
-	soulCtrl            *soul.Controller
+	agentMemoryApp      *agentmemory.Runtime
+	agentMemoryCtrl     *agentmemory.Controller
 	restServer          *http.Server
 	metricsServer       *http.Server
 	startTime           time.Time
@@ -99,8 +99,11 @@ func NewApplication(cfg *config.Config) (app *Application, err error) {
 	app.initVectorStore()
 	app.initWebhooks()
 	app.initUseCases()
-	// SOUL is initialized after use cases so storeMemory is available
-	app.initSoul()
+	// Agent memory is initialized after use cases so the shared MIRA memory
+	// provider is available to the identity continuity engine.
+	if err := app.initAgentMemory(); err != nil {
+		return nil, err
+	}
 	app.initRestAPI()
 
 	return app, nil
@@ -169,41 +172,52 @@ func (a *Application) initPostgresStorage() error {
 	return nil
 }
 
-// initSoul wires the SOUL identity sub-system when enabled.
-// Failure is non-fatal: MIRA continues without identity features.
-func (a *Application) initSoul() {
+// initAgentMemory wires the built-in agent memory continuity subsystem on the
+// same database and dialect as the rest of MIRA.
+func (a *Application) initAgentMemory() error {
 	cfg := a.config
-	if !cfg.Soul.Enabled {
-		slog.Info("SOUL is not enabled — running MIRA-only mode. Use --with-soul or set soul.enabled: true to activate identity features.")
-		return
-	}
 
-	soulCfg := soul.DefaultConfig()
-	soulCfg.MinTraitConfidence = cfg.Soul.Extraction.MinTraitConfidence
-	soulCfg.MinObservationsForTrait = cfg.Soul.Extraction.MinObservationsForTrait
-	soulCfg.MaxContextTokens = cfg.Soul.Recall.DefaultBudgetTokens
-	soulCfg.DriftThreshold = cfg.Soul.DriftDetection.Threshold
-	soulCfg.DriftWindowSize = cfg.Soul.DriftDetection.WindowSize
-	soulCfg.AutoCheckAfterCapture = cfg.Soul.DriftDetection.AutoCheckAfterCapture
-	soulCfg.AutoReinforce = cfg.Soul.ModelSwap.AutoReinforce
-	soulCfg.EvolutionEnabled = cfg.Soul.Evolution.Enabled
-	soulCfg.MaxHistoryVersions = cfg.Soul.Evolution.MaxHistoryVersions
-	if cfg.Soul.Memory.EnrichWithMiraMemories {
-		soulCfg.EnrichWithMiraMemories = true
+	memoryCfg := agentmemory.Config{
+		MinTraitConfidence:      cfg.AgentMemory.Extraction.MinTraitConfidence,
+		MinObservationsForTrait: cfg.AgentMemory.Extraction.MinObservationsForTrait,
+		DefaultBudgetTokens:     cfg.AgentMemory.Recall.DefaultBudgetTokens,
+		MaxBudgetTokens:         cfg.Allocator.DefaultBudget,
+		DriftThreshold:          cfg.AgentMemory.DriftDetection.Threshold,
+		DriftWindowSize:         cfg.AgentMemory.DriftDetection.WindowSize,
+		AutoCheckAfterCapture:   cfg.AgentMemory.DriftDetection.AutoCheckAfterCapture,
+		AutoReinforce:           cfg.AgentMemory.ModelSwap.AutoReinforce,
+		EvolutionEnabled:        cfg.AgentMemory.Evolution.Enabled,
+		MaxHistoryVersions:      cfg.AgentMemory.Evolution.MaxHistoryVersions,
+		EnrichWithMiraMemories:  cfg.AgentMemory.Memory.EnrichWithMiraMemories,
+		MaxMiraMemories:         cfg.AgentMemory.Memory.MaxMiraMemories,
 	}
-	if cfg.Soul.Memory.MaxMiraMemories > 0 {
-		soulCfg.MaxMiraMemories = cfg.Soul.Memory.MaxMiraMemories
+	recall := func(ctx context.Context, query string, budget int) ([]agentmemory.MemoryReference, error) {
+		out, err := a.recallMemory.Execute(ctx, interactors.RecallMemoryInput{Query: query, Budget: budget})
+		if err != nil {
+			return nil, err
+		}
+		memories := make([]agentmemory.MemoryReference, 0, len(out.Memories))
+		for _, selected := range out.Memories {
+			memories = append(memories, agentmemory.MemoryReference{MemoryID: selected.VerbatimID, Content: selected.Rendered, Relevance: selected.Confidence, Timestamp: selected.SelectedAt})
+		}
+		return memories, nil
 	}
-
-	soulApp, err := soul.NewApplicationWithDBAndConfig(a.repository.DB(), soulCfg)
+	store := func(ctx context.Context, content, wing string, room *string, memoryType *valueobjects.MemoryType) (uuid.UUID, error) {
+		out, err := a.storeMemory.Execute(ctx, interactors.StoreMemoryInput{Content: content, Wing: wing, Room: room, Type: memoryType})
+		if err != nil {
+			return uuid.Nil, err
+		}
+		return uuid.Parse(out.FingerprintID)
+	}
+	provider := agentmemory.NewMiraProviderWithDialect(a.repository.DB(), recall, store, cfg.Storage.Type)
+	memoryApp, err := agentmemory.NewRuntimeWithDialect(a.repository.DB(), memoryCfg, provider, cfg.Storage.Type)
 	if err != nil {
-		slog.Warn("SOUL init failed, continuing without identity features", "error", err)
-		return
+		return fmt.Errorf("failed to initialize built-in agent memory: %w", err)
 	}
-	soulApp.SetMiraProvider(mirasoul.NewMiraProvider(a.repository.DB(), a.storeMemory))
-	a.soulApp = soulApp
-	a.soulCtrl = soul.NewController(soulApp)
-	slog.Info("SOUL identity sub-system initialized", "tools", len(a.soulCtrl.ToolDefinitions()))
+	a.agentMemoryApp = memoryApp
+	a.agentMemoryCtrl = agentmemory.NewController(memoryApp)
+	slog.Info("agent memory continuity initialized", "tools", len(a.agentMemoryCtrl.ToolDefinitions()))
+	return nil
 }
 
 // initMetrics starts the configured metrics back-end (Prometheus or simple).
@@ -298,7 +312,7 @@ func (a *Application) initExtractor() error {
 }
 
 // initVectorStore registers the embedding model, then builds the HNSW index
-// (or falls back to the SQLite vector store when HNSW init fails).
+// (or falls back to a portable brute-force vector store when HNSW is unavailable).
 func (a *Application) initVectorStore() {
 	cfg := a.config
 	repo := a.repository
@@ -327,7 +341,7 @@ func (a *Application) initVectorStore() {
 	}
 
 	// Overlap cache (shared between HNSW and RecallMemory)
-	a.overlapCache = vector.NewSQLiteOverlapCache(repo.DB())
+	a.overlapCache = vector.NewSQLOverlapCache(repo.DB(), cfg.Storage.Type)
 
 	// HNSW options
 	hnswOpts := vector.DefaultHNSWOptions()
@@ -352,8 +366,8 @@ func (a *Application) initVectorStore() {
 	indexPath := cfg.Storage.Path + "/vectors.bin"
 	hnswIndex, err := vector.NewHNSWStore(repo, cfg.Embeddings.Dimension, indexPath, hnswOpts)
 	if err != nil {
-		slog.Warn("failed to initialize hnsw index, falling back to sqlite vector search", "error", err)
-		a.vectorStore = vector.NewSQLiteVectorStore(repo.DB())
+		slog.Warn("failed to initialize hnsw index, falling back to brute-force vector search", "error", err)
+		a.vectorStore = vector.NewBruteForceVectorStore(repo)
 		return
 	}
 
@@ -377,7 +391,7 @@ func (a *Application) initVectorStore() {
 	}
 
 	if !hnswIndex.IsReady() {
-		slog.Info("building hnsw index from sqlite")
+		slog.Info("building hnsw index from authoritative repository", "storage", cfg.Storage.Type)
 		go func() {
 			if err := hnswIndex.BuildFromStore(ctx); err != nil {
 				slog.Warn("failed to build hnsw index", "error", err)
@@ -386,8 +400,8 @@ func (a *Application) initVectorStore() {
 	}
 
 	a.hnswIndex = hnswIndex
-	// Wrap with SQLite fallback so recall works while the index is building
-	a.vectorStore = vector.NewFallbackVectorStore(hnswIndex, vector.NewSQLiteVectorStore(repo.DB()))
+	// Wrap with a portable fallback so recall works while the index is building.
+	a.vectorStore = vector.NewFallbackVectorStore(hnswIndex, vector.NewBruteForceVectorStore(repo))
 }
 
 // initWebhooks starts the webhook manager and registers configured endpoints.
@@ -448,6 +462,7 @@ func (a *Application) initUseCases() {
 			SessionBoostMax:               cfg.Allocator.SessionBoostMax,
 			SessionMemoryBoost:            cfg.Allocator.SessionMemoryBoost,
 			SessionCacheTTLSeconds:        cfg.Allocator.SessionCacheTTLSeconds,
+			SessionCacheStore:             vector.NewSQLSessionCache(repo.DB(), cfg.Storage.Type),
 			CausalPenaltyAlpha:            cfg.Allocator.CausalPenaltyAlpha,
 			DiversityBoostAlpha:           cfg.Allocator.DiversityBoostAlpha,
 			DensitySigmoidK:               cfg.Allocator.DensitySigmoid.K,
@@ -540,8 +555,8 @@ func (a *Application) initRestAPI() {
 	readTimeout := time.Duration(a.config.API.ReadTimeout) * time.Second
 	writeTimeout := time.Duration(a.config.API.WriteTimeout) * time.Second
 	a.restServer = restserver.NewServer(h, a.config.API.Address, a.config.API.AuthToken, a.config.API.WingTokens, readTimeout, writeTimeout)
-	if a.soulApp != nil {
-		h.SetSoulQuerier(mirasoul.NewStatusQuerier(a.soulApp))
+	if a.agentMemoryApp != nil {
+		h.SetAgentMemoryQuerier(a.agentMemoryApp)
 	}
 	slog.Info("rest api configured", "addr", a.config.API.Address)
 }
@@ -587,9 +602,8 @@ func (a *Application) Close() error {
 			a.webhookManager.Stop()
 		}
 
-		if a.soulApp != nil {
-			a.soulApp.Close()
-		}
+		// Agent memory shares the repository connection and has no independent
+		// close operation. The repository remains the single owner of storage.
 
 		if a.repository != nil {
 			closeErr = a.repository.Close()
@@ -613,11 +627,11 @@ func (a *Application) RebuildVectorIndex(ctx context.Context) error {
 }
 
 // ReembedAll regenerates T2 embeddings from stored T0 content and updates the
-// model hash in T1/T2. SQLite is the supported migration backend; the command
-// is intentionally explicit because it can be expensive.
+// model hash in T1/T2. The command is intentionally explicit because it can
+// be expensive on large memory stores.
 func (a *Application) ReembedAll(ctx context.Context) (int, error) {
 	if a.config.Storage.Type == "postgres" {
-		return 0, fmt.Errorf("reembedding is not yet supported for PostgreSQL")
+		return a.reembedAllPostgres(ctx)
 	}
 	if a.buildCancel != nil {
 		a.buildCancel()
@@ -709,6 +723,81 @@ func (a *Application) ReembedAll(ctx context.Context) (int, error) {
 	return updated, nil
 }
 
+func (a *Application) reembedAllPostgres(ctx context.Context) (int, error) {
+	rows, err := a.repository.DB().QueryContext(ctx, `SELECT id, content FROM verbatim ORDER BY created_at, id`)
+	if err != nil {
+		return 0, fmt.Errorf("list memories for PostgreSQL reembedding: %w", err)
+	}
+	defer rows.Close()
+	type source struct {
+		id      uuid.UUID
+		content string
+	}
+	var sources []source
+	for rows.Next() {
+		var item source
+		if err := rows.Scan(&item.id, &item.content); err != nil {
+			return 0, fmt.Errorf("read memory for PostgreSQL reembedding: %w", err)
+		}
+		sources = append(sources, item)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("iterate memories for PostgreSQL reembedding: %w", err)
+	}
+
+	modelHash := a.config.Embeddings.ModelHash
+	updated := 0
+	for _, item := range sources {
+		vec, err := a.embedder.Encode(ctx, item.content)
+		if err != nil {
+			return updated, fmt.Errorf("embed memory %s: %w", item.id, err)
+		}
+		if len(vec) != a.config.Embeddings.Dimension {
+			return updated, fmt.Errorf("embedding dimension mismatch for %s: got %d, expected %d", item.id, len(vec), a.config.Embeddings.Dimension)
+		}
+		emb := entities.NewEmbedding(item.id, modelHash, vec).WithNormalization()
+		vectorValues := make([]string, len(emb.Vector))
+		for i, value := range emb.Vector {
+			vectorValues[i] = fmt.Sprintf("%f", value)
+		}
+		vectorLiteral := "[" + strings.Join(vectorValues, ",") + "]"
+
+		tx, err := a.repository.Begin()
+		if err != nil {
+			return updated, fmt.Errorf("begin PostgreSQL reembedding transaction for %s: %w", item.id, err)
+		}
+		_, err = tx.ExecContext(ctx,
+			`UPDATE embeddings SET model_hash = $1, dim = $2, vector = $3::vector, normalized = $4, created_at = $5 WHERE id = $6`,
+			modelHash, emb.Dim, vectorLiteral, boolToInt(emb.Normalized), float64(emb.CreatedAt.Unix()), item.id)
+		if err != nil {
+			_ = tx.Rollback()
+			return updated, fmt.Errorf("update PostgreSQL embedding %s: %w", item.id, err)
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE fingerprints SET model_hash = $1 WHERE verbatim_id = $2`, modelHash, item.id); err != nil {
+			_ = tx.Rollback()
+			return updated, fmt.Errorf("update PostgreSQL fingerprint model %s: %w", item.id, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return updated, fmt.Errorf("commit PostgreSQL reembedding %s: %w", item.id, err)
+		}
+		updated++
+	}
+
+	if a.hnswIndex != nil {
+		if err := a.hnswIndex.Rebuild(ctx); err != nil {
+			return updated, fmt.Errorf("rebuild HNSW after PostgreSQL reembedding: %w", err)
+		}
+	}
+	return updated, nil
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
 // Run starts the MCP server
 func (a *Application) Run() error {
 	defer a.Close()
@@ -735,20 +824,20 @@ func (a *Application) Run() error {
 		}, nil
 	})
 
-	if a.soulCtrl != nil {
+	if a.agentMemoryCtrl != nil {
 		miraTools := a.controller.ToolDefinitions()
-		soulTools := a.soulCtrl.ToolDefinitions()
-		allTools := make([]mcptypes.Tool, 0, len(miraTools)+len(soulTools))
+		agentMemoryTools := a.agentMemoryCtrl.ToolDefinitions()
+		allTools := make([]mcptypes.Tool, 0, len(miraTools)+len(agentMemoryTools))
 		allTools = append(allTools, miraTools...)
-		allTools = append(allTools, soulTools...)
-		slog.Info("MCP tools registered", "mira", len(miraTools), "soul", len(soulTools), "total", len(allTools))
+		allTools = append(allTools, agentMemoryTools...)
+		slog.Info("MCP tools registered", "mira", len(miraTools), "soul", len(agentMemoryTools), "total", len(allTools))
 
 		s.HandleListTools(func(ctx context.Context, cursor *string) (*mcptypes.ListToolsResult, error) {
 			return &mcptypes.ListToolsResult{Tools: allTools}, nil
 		})
 		s.HandleCallTool(func(ctx context.Context, name string, arguments map[string]interface{}) (*mcptypes.CallToolResult, error) {
-			if strings.HasPrefix(name, "soul_") {
-				return a.soulCtrl.Call(ctx, name, arguments)
+			if strings.HasPrefix(name, agentmemory.ToolPrefix) {
+				return a.agentMemoryCtrl.Call(ctx, name, arguments)
 			}
 			return a.controller.Call(ctx, name, arguments)
 		})
@@ -872,7 +961,9 @@ func (a *Application) ConsolidateMemoriesUC() *interactors.ConsolidateMemories {
 func (a *Application) CompressMemoriesUC() *interactors.CompressMemories {
 	return a.compressMemories
 }
-func (a *Application) SoulApplication() *soul.Application { return a.soulApp }
+
+// AgentMemoryApplication returns the embedded agent-memory engine.
+func (a *Application) AgentMemoryApplication() *agentmemory.Runtime { return a.agentMemoryApp }
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
 

@@ -46,7 +46,7 @@ const rootLong = `MIRA – Memory with Information-theoretic Relevance Allocatio
 
 MIRA is an MCP (Model Context Protocol) memory server that stores, retrieves,
 and manages memories using HNSW vector search, Cybertron embeddings, and
-optional SOUL identity features.
+built-in agent-memory continuity.
 
 Usage: mira <command> [flags]
 
@@ -856,7 +856,7 @@ Transport modes (--transport):
   http   – stateless JSON-RPC over HTTP at --mcp-addr/mcp (default localhost:3001)
 
 Optional subsystems:
-  --with-soul     enable SOUL identity subsystem (+8 tools, total 22)
+  Agent memory continuity is built in and enabled automatically (+8 tools).
   --with-api      expose a REST HTTP API (see --api-addr, --api-token)
   --mcp-token     protect MCP HTTP transport on non-loopback addresses
   --with-llm      enable Ollama-backed extraction (see --llm-endpoint)
@@ -866,7 +866,7 @@ Examples:
   mira server
   mira server --transport sse --mcp-addr localhost:3001
   mira server --with-api --api-addr :8080 --api-token secret
-  mira server --with-soul --with-api --api-token secret
+  mira server --with-api --api-token secret
   mira server --no-metrics
   mira server --with-llm --llm-endpoint http://localhost:11434`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -887,11 +887,6 @@ Examples:
 			}
 			if token, _ := cmd.Flags().GetString("mcp-token"); token != "" {
 				cfg.MCP.AuthToken = token
-			}
-
-			// SOUL
-			if on, _ := cmd.Flags().GetBool("with-soul"); on {
-				cfg.Soul.Enabled = true
 			}
 
 			// REST API
@@ -939,9 +934,6 @@ Examples:
 	cmd.Flags().String("transport", "", "MCP transport: stdio (default), sse, or http")
 	cmd.Flags().String("mcp-addr", "", "bind address for sse/http transport (default localhost:3001)")
 	cmd.Flags().String("mcp-token", "", "bearer token for MCP HTTP transport on non-loopback addresses")
-
-	// SOUL
-	cmd.Flags().Bool("with-soul", false, "enable SOUL identity subsystem (+8 tools, total 17)")
 
 	// REST API
 	cmd.Flags().Bool("with-api", false, "enable the REST HTTP API server")
@@ -1082,39 +1074,39 @@ Use --json for machine-readable output (same data, JSON format).`,
 
 			if asJSON {
 				type doctorReport struct {
-					Version         string   `json:"version"`
-					Uptime          string   `json:"uptime"`
-					ConfigFile      string   `json:"config_file"`
-					StoragePath     string   `json:"storage_path"`
-					Model           string   `json:"model"`
-					MCPTransport    string   `json:"mcp_transport"`
-					MCPAddress      string   `json:"mcp_address,omitempty"`
-					APIEnabled      bool     `json:"api_enabled"`
-					APIAddress      string   `json:"api_address,omitempty"`
-					MetricsEnabled  bool     `json:"metrics_enabled"`
-					PrometheusAddr  string   `json:"prometheus_addr,omitempty"`
-					SOULEnabled     bool     `json:"soul_enabled"`
-					WebhooksEnabled bool     `json:"webhooks_enabled"`
-					WebhookCount    int      `json:"webhook_count"`
-					HNSWKeySet      bool     `json:"hnsw_key_set"`
-					Stats           any      `json:"stats,omitempty"`
-					Models          []string `json:"models,omitempty"`
+					Version            string   `json:"version"`
+					Uptime             string   `json:"uptime"`
+					ConfigFile         string   `json:"config_file"`
+					StoragePath        string   `json:"storage_path"`
+					Model              string   `json:"model"`
+					MCPTransport       string   `json:"mcp_transport"`
+					MCPAddress         string   `json:"mcp_address,omitempty"`
+					APIEnabled         bool     `json:"api_enabled"`
+					APIAddress         string   `json:"api_address,omitempty"`
+					MetricsEnabled     bool     `json:"metrics_enabled"`
+					PrometheusAddr     string   `json:"prometheus_addr,omitempty"`
+					AgentMemoryEnabled bool     `json:"agent_memory_enabled"`
+					WebhooksEnabled    bool     `json:"webhooks_enabled"`
+					WebhookCount       int      `json:"webhook_count"`
+					HNSWKeySet         bool     `json:"hnsw_key_set"`
+					Stats              any      `json:"stats,omitempty"`
+					Models             []string `json:"models,omitempty"`
 				}
 				r := doctorReport{
-					Version:         miraVersion,
-					Uptime:          out.Uptime,
-					ConfigFile:      globalFlags.configPath,
-					StoragePath:     cfg.Storage.Path,
-					Model:           cfg.Embeddings.CurrentModel,
-					MCPTransport:    cfg.MCP.Transport,
-					SOULEnabled:     cfg.Soul.Enabled,
-					WebhooksEnabled: cfg.Webhooks.Enabled,
-					WebhookCount:    len(cfg.Webhooks.Endpoints),
-					HNSWKeySet:      cfg.HNSW.EncryptionKey != "",
-					APIEnabled:      cfg.API.Enabled,
-					MetricsEnabled:  cfg.Metrics.Enabled,
-					Stats:           out.Stats,
-					Models:          out.Models,
+					Version:            miraVersion,
+					Uptime:             out.Uptime,
+					ConfigFile:         globalFlags.configPath,
+					StoragePath:        cfg.Storage.Path,
+					Model:              cfg.Embeddings.CurrentModel,
+					MCPTransport:       cfg.MCP.Transport,
+					AgentMemoryEnabled: cfg.AgentMemory.Enabled,
+					WebhooksEnabled:    cfg.Webhooks.Enabled,
+					WebhookCount:       len(cfg.Webhooks.Endpoints),
+					HNSWKeySet:         cfg.HNSW.EncryptionKey != "",
+					APIEnabled:         cfg.API.Enabled,
+					MetricsEnabled:     cfg.Metrics.Enabled,
+					Stats:              out.Stats,
+					Models:             out.Models,
 				}
 				if cfg.MCP.Transport != "stdio" {
 					r.MCPAddress = cfg.MCP.Address
@@ -1146,7 +1138,7 @@ Use --json for machine-readable output (same data, JSON format).`,
 			}
 			fmt.Println()
 			fmt.Println("Subsystems")
-			fmt.Printf("  SOUL            : %v\n", cfg.Soul.Enabled)
+			fmt.Printf("  Agent memory    : %v\n", cfg.AgentMemory.Enabled)
 			fmt.Printf("  REST API        : enabled=%-5v", cfg.API.Enabled)
 			if cfg.API.Enabled {
 				fmt.Printf("  addr=%s", cfg.API.Address)

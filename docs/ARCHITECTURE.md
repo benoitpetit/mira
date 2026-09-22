@@ -45,8 +45,8 @@ MIRA follows **Uncle Bob's Clean Architecture** with strict dependency direction
 │                              │                                      │
 │   ┌─────────────────────────────────────────────────────────────┐   │
 │   │  INTERFACE ADAPTERS                                         │   │
-│   │  • storage: SQLiteRepository                                │   │
-│   │  • vector: HNSWStore, SQLiteVectorStore, FallbackVectorStore│   │
+│   │  • storage: SQLiteRepository / PostgresRepository             │   │
+│   │  • vector: HNSWStore, BruteForceVectorStore, fallback        │   │
 │   │  • extraction: NativeExtractor, CybertronEmbedder           │   │
 │   │  • webhook, metrics, logging                                │   │
 │   │  • mcp: MCP controller (stdio / SSE / HTTP)                 │   │
@@ -78,8 +78,8 @@ mira/
 │   │   ├── ports/               # Repository and service interfaces
 │   │   └── interactors/         # Use case implementations
 │   ├── adapters/                # Infrastructure implementations
-│   │   ├── storage/             # SQLite repository, migrations
-│   │   ├── vector/              # HNSW, SQLite vector store, overlap cache
+│   │   ├── storage/             # SQL repositories, migrations
+│   │   ├── vector/              # HNSW, portable fallback, SQL caches
 │   │   ├── extraction/          # NLP, embeddings (Cybertron, Simple)
 │   │   ├── logging/             # Structured logging
 │   │   ├── metrics/             # Prometheus and simple collectors
@@ -177,7 +177,7 @@ where:
 
 2. VECTOR SEARCH
    dense ← HNSW_Search(e_q, N=100, wing, room)        # O(log n)
-   lexical ← FTS5_Search(q, N=100, wing, room)        # lexical fallback
+   lexical ← SQL lexical search(q, N=100, wing, room) # FTS5 or PostgreSQL GIN
    candidates ← RRF_Fusion(dense, lexical, k=60)
 
 3. SEARCH-TIME CLUSTERING (optional)
@@ -302,9 +302,11 @@ The recall process in MIRA is a multi-stage retrieval pipeline:
 
 ## Storage Layer
 
-### SQLite Schema
+### SQL Schema
 
-The repository uses SQLite with WAL mode for concurrent read/write performance.
+MIRA supports SQLite (local deployment) and PostgreSQL (shared deployment). Both
+are authoritative stores for T0/T1/T2 data; the vector index and session/overlap
+caches are derived data.
 
 **Main Tables:**
 - `verbatim` — T0 content, wing, room, tokens, timestamp
@@ -316,7 +318,9 @@ The repository uses SQLite with WAL mode for concurrent read/write performance.
 
 **Additional Schema Elements:**
 - `memory_tags` — Extracted tags (entity, subject, keyword) with FK to verbatim
-- `verbatim_fts` — FTS5 virtual table for full-text search with auto-triggers
+- `verbatim_fts` — SQLite FTS5 virtual table with auto-triggers
+- PostgreSQL uses `to_tsvector('simple', content)` with a GIN index
+- `session_memory_cache` — persistent session-selected memory IDs and expiry
 
 ### Migrations
 
@@ -333,18 +337,25 @@ Migrations are applied automatically on startup:
 - **Library**: `github.com/coder/hnsw`
 - **Complexity**: O(log n) approximate nearest neighbor
 - **Persistence**: Saved to `vectors.bin` on shutdown, loaded on startup
-- **Background Build**: If not ready, builds asynchronously from SQLite embeddings
+- **Background Build**: If not ready, builds asynchronously from authoritative SQL embeddings
 - **Platform Support**: Unix (full) and Windows (stub with fallback)
 
-### SQLite Vector Store (Fallback)
+### Portable Brute-Force Fallback
 - **Method**: Brute-force cosine similarity over all embeddings
 - **Complexity**: O(n) where n = number of memories
+- **Implementation**: `BruteForceVectorStore` reads through the repository port
 - **Use Case**: Exact search, filtered queries, or when HNSW is unavailable
 
 ### Fallback Vector Store (Wrapper)
 - Transparently delegates `Search()` to HNSW
-- If HNSW returns "not ready", automatically falls back to SQLite vector store
+- If HNSW returns "not ready", automatically falls back to the portable brute-force store
 - Ensures recall always works even during index warm-up
+- Health checks compare HNSW with the authoritative embedding count and report both missing and orphaned index entries
+
+### Consistency Rules
+- SQL storage is authoritative; HNSW, overlap cache, and session cache are derived data.
+- Consolidation writes a synthesized fact, indexes it, then removes the source notes from both SQL and HNSW. If incremental index work fails, MIRA rebuilds from SQL before proceeding.
+- Identity snapshots are immutable, versioned records that share MIRA's configured SQL backend and bounded recall budget.
 
 ---
 
@@ -368,7 +379,7 @@ The `Config` struct is organized into logical sections:
 | `extraction`  | NLP parameters (entity length, causal lookback) |
 | `mcp`         | Server name, version, transport, address, timeout |
 | `api`         | REST HTTP API: enabled, address, auth_token, timeouts |
-| `soul`        | SOUL identity extension settings            |
+| `agent_memory` | Built-in identity and continuity settings (internal configuration key) |
 
 ### Example: New `recall` Section
 

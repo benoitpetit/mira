@@ -10,8 +10,8 @@ import (
 	"github.com/benoitpetit/mira/internal/usecases/ports"
 )
 
-// SoulAgentSummary is a brief identity snapshot for one SOUL agent.
-type SoulAgentSummary struct {
+// AgentMemoryAgentSummary is a brief identity snapshot for one agent.
+type AgentMemoryAgentSummary struct {
 	AgentID         string  `json:"agent_id"`
 	Version         int     `json:"version"`
 	ConfidenceScore float64 `json:"confidence_score"`
@@ -20,20 +20,21 @@ type SoulAgentSummary struct {
 	DriftScore      float64 `json:"drift_score"`
 }
 
-// SoulStatusSummary is included in GetStatusOutput when SOUL is enabled.
-type SoulStatusSummary struct {
-	Enabled    bool               `json:"enabled"`
-	AgentCount int                `json:"agent_count"`
-	Agents     []SoulAgentSummary `json:"agents"`
+// AgentMemoryStatusSummary is included in GetStatusOutput when agent memory
+// continuity is available.
+type AgentMemoryStatusSummary struct {
+	Enabled    bool                      `json:"enabled"`
+	AgentCount int                       `json:"agent_count"`
+	Agents     []AgentMemoryAgentSummary `json:"agents"`
 }
 
 // GetStatusOutput contains the output of getting status
 type GetStatusOutput struct {
-	Stats   *valueobjects.Stats `json:"stats"`
-	Models  []string            `json:"models"`
-	Version string              `json:"version"`
-	Uptime  string              `json:"uptime"`
-	Soul    *SoulStatusSummary  `json:"soul,omitempty"`
+	Stats       *valueobjects.Stats       `json:"stats"`
+	Models      []string                  `json:"models"`
+	Version     string                    `json:"version"`
+	Uptime      string                    `json:"uptime"`
+	AgentMemory *AgentMemoryStatusSummary `json:"agent_memory,omitempty"`
 }
 
 // GetStatus implements the get status use case

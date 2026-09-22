@@ -24,7 +24,6 @@ func minimalCfg(t *testing.T) *config.Config {
 	cfg.Embeddings.UseSimpleEmbedder = true
 	cfg.Embeddings.Dimension = 16
 	cfg.Extraction.LLM.Enabled = false
-	cfg.Soul.Enabled = false
 	cfg.Metrics.Enabled = false
 	cfg.Webhooks.Enabled = false
 	cfg.API.Enabled = false
@@ -173,19 +172,17 @@ func TestNewApplication_WithEncryptionKey(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// initSoul — enabled path (success or graceful failure both acceptable)
+// initAgentMemory — built-in path is required for every supported backend
 // ──────────────────────────────────────────────────────────────────────────────
 
-func TestNewApplication_WithSoul(t *testing.T) {
+func TestNewApplication_WithAgentMemory(t *testing.T) {
 	cfg := minimalCfg(t)
-	cfg.Soul.Enabled = true
-	// Use zero values — SOUL will either succeed or log a warning and continue.
+	cfg.AgentMemory.Enabled = true
 	app, err := NewApplication(cfg)
 	if err != nil {
-		t.Fatalf("NewApplication (soul): %v", err)
+		t.Fatalf("NewApplication (agent memory): %v", err)
 	}
-	// Whether soulApp is set or not depends on SOUL internals; both are valid.
-	app.Close() // covers soulApp.Close() if set
+	app.Close()
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

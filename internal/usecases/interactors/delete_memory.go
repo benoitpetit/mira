@@ -35,8 +35,8 @@ func (uc *DeleteMemory) Execute(ctx context.Context, input DeleteMemoryInput) er
 		return fmt.Errorf("failed to delete verbatim: %w", err)
 	}
 	if err := uc.vectorStore.Delete(ctx, input.ID); err != nil {
-		// SQLite is authoritative. Repair the derived index when possible; keep
-		// deletion non-fatal for stores that are intentionally SQLite-only.
+		// The repository is authoritative. Repair the derived index when possible;
+		// deletion remains non-fatal for stores without a mutable derived index.
 		repairErr := repairVectorStore(ctx, uc.vectorStore)
 		slog.Warn("failed to remove memory from vector store", "id", input.ID, "error", err, "repair_error", repairErr)
 	}

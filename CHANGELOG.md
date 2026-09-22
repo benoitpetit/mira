@@ -7,7 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No changes yet.
+## [0.7.0] - 2026-09-22
+
+### Added
+- **Portable SQL recall fallback**: HNSW warm-up and recovery now fall back to a repository-backed brute-force search on both SQLite and PostgreSQL.
+- **Persistent session coherence**: selected memory IDs now survive process restarts with TTL cleanup.
+- **PostgreSQL lexical and lifecycle parity**: GIN-backed lexical retrieval, portable SQL caches, and transactional re-embedding are available on PostgreSQL.
+
+### Changed
+- **Identity is core MIRA memory**: continuity snapshots, drift measurement, model-transition reinforcement, and all eight `soul_*` MCP tools are part of the standard runtime.
+- **Public identity naming**: the MCP surface uses only `soul_*` tools; no former extension flag, API alias, or public compatibility facade remains.
+- **PostgreSQL identity parity**: built-in identity memory uses MIRA's configured SQL dialect and initializes on PostgreSQL as well as SQLite.
+- **Health diagnostics**: vector health compares the derived HNSW index with authoritative embeddings and exposes missing/orphaned counts.
+
+### Fixed
+- **Consolidation consistency**: synthesized facts now receive retrieval tags and source vectors are removed or rebuilt after consolidation, preventing deleted notes from remaining recallable.
+- **PostgreSQL parameter binding**: batch UUID and tag lookups now use explicit bound placeholders instead of driver-dependent array arguments.
+- **Cross-platform tests**: shared vector test helpers compile on Windows as well as Unix.
 
 ## [0.6.0] - 2026-09-21
 
@@ -67,8 +83,8 @@ No changes yet.
 ## [0.4.5] - 2026-04-24
 
 ### Added
-- **Unified SOUL configuration in embedded mode**: MIRA now accepts a full `soul.*` configuration block in its own `config.yaml`. All SOUL tuning options (extraction confidence, drift threshold, recall budget, model-swap behaviour, evolution history) can be customised without running a separate SOUL process or config file.
-- **New SOUL API support**: Uses `soul.NewApplicationWithDBAndConfig` to pass configuration directly to the embedded identity subsystem.
+- **Embedded identity configuration**: MIRA accepts identity tuning options in its own configuration, including extraction confidence, drift threshold, recall budget, model-transition behaviour and evolution history.
+- **Embedded identity API**: Identity continuity is initialized directly by the MIRA application and shares its database and memory pipeline.
 
 ### Changed
 - **Version bump**: 0.4.4 → 0.4.5
@@ -76,22 +92,17 @@ No changes yet.
 ## [0.4.4] - 2026-04-23
 
 ### Added
-- **SOUL Identity Extension (opt-in)**: MIRA can now embed the SOUL identity subsystem for agent personality persistence across sessions and model changes
-  - SOUL is **disabled by default** — MIRA runs standalone with 8 tools unless explicitly activated
-  - Activate via CLI flag `--with-soul` or config `soul.enabled: true`
-  - When enabled, SOUL shares MIRA's SQLite database and adds 8 `soul_*` tools (16 total)
-  - SOUL init failures are non-fatal — MIRA gracefully falls back to 8-tool mode
+- **Agent identity continuity (opt-in)**: MIRA can embed identity persistence across sessions and model changes.
+  - Identity continuity was initially opt-in and added eight identity tools to the MCP surface.
+  - Identity snapshots shared the MIRA database and memory context.
 
 ### Changed
-- **Default mode is now MIRA-only**: Previous versions auto-initialized SOUL; now it must be explicitly enabled
-- **CLI flag renamed**: `--no-soul` removed, replaced by `--with-soul` (opt-in instead of opt-out)
+- **Default mode was initially MIRA-only**: Identity continuity was later moved into the core runtime and enabled automatically.
 
 ## [0.4.3] - 2026-04-23
 
 ### Fixed
-- **SOUL MCP Parameter Names**: Corrected SOUL tool parameter names to match actual implementation
-  - `agent` → `agent_id`, `model` → `model_id`
-  - `from` → `from_model`, `to` → `to_model`
+- **Identity MCP parameter names**: Corrected identity tool parameters to use explicit names such as `agent_id`, `model_id`, `from_model` and `to_model`.
 
 ## [0.4.2] - 2026-04-17
 

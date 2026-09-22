@@ -11,11 +11,11 @@ func TestPrepareHookConfigDisablesBackgroundServices(t *testing.T) {
 	cfg.Metrics.Enabled = true
 	cfg.Webhooks.Enabled = true
 	cfg.API.Enabled = true
-	cfg.Soul.Enabled = true
+	cfg.AgentMemory.Enabled = true
 
 	prepareHookConfig(cfg)
 
-	if cfg.Metrics.Enabled || cfg.Webhooks.Enabled || cfg.API.Enabled || cfg.Soul.Enabled {
+	if cfg.Metrics.Enabled || cfg.Webhooks.Enabled || cfg.API.Enabled || !cfg.AgentMemory.Enabled {
 		t.Fatal("hook configuration must disable all background services")
 	}
 }

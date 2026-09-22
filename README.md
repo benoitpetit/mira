@@ -12,10 +12,10 @@
 
   [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.6.0-blue?style=flat-square)]()
+  [![Version](https://img.shields.io/badge/Version-0.7.0-blue?style=flat-square)]()
   [![Tests](https://img.shields.io/badge/Tests-~70%25-yellow?style=flat-square)]()
 
-  [Documentation](docs/INDEX.md) • [API Reference](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [Français](README_FR.md) • [SOUL Extension](https://github.com/benoitpetit/soul)
+  [Documentation](docs/INDEX.md) • [API Reference](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [Français](README_FR.md)
 
 </div>
 
@@ -55,7 +55,7 @@ Claude Code learns your project architecture on Monday. Codex automatically know
 - ✓ Token-efficient — CBA algorithm maximizes information per token
 - ✓ Persistent across models — switch LLMs without losing context
 
-> **Need identity persistence?** The optional [SOUL](https://github.com/benoitpetit/soul) extension adds 8 MCP tools for capturing and recalling an agent's personality across model changes — activated with a single `--with-soul` flag.
+> **Identity persistence is built in.** MIRA includes `soul_*` tools for capturing continuity, recalling identity context, detecting drift, and handling model changes. They are enabled automatically.
 
 ### See the difference
 
@@ -96,7 +96,7 @@ Each memory is stored in three forms — full text (T0), structured facts (T1), 
 
 - **Context Budget Allocation (CBA)** — maximizes information across 6 scoring dimensions
 - **Triple representation (T0/T1/T2)** — adaptive rendering from full text down to a 5-token header
-- **Hybrid search** — HNSW O(log n) + SQLite FTS5, fused with Reciprocal Rank Fusion
+- **Hybrid search** — HNSW O(log n) + backend-native lexical search, fused with Reciprocal Rank Fusion
 - **Causal graph** — automatic detection of cause-effect relationships between memories
 - **Clean architecture** — hexagonal, fully tested, extensible
 
@@ -120,7 +120,7 @@ Both are derived atomically and stored alongside the original verbatim (T0).
 ### Recall
 
 ```
-Query  →  Embed  →  HNSW top-100 (+ FTS5)  →  RRF fusion  →  CBA scoring  →  Greedy selection
+Query  →  Embed  →  HNSW top-100 (+ SQL lexical)  →  RRF fusion  →  CBA scoring  →  Greedy selection
 ```
 
 The CBA algorithm selects memories greedily against a token budget, adjusting each memory's render mode (Verbatim / Fingerprint / Header) based on remaining tokens.
@@ -203,7 +203,7 @@ OUTPUT: List of memories with render mode
 
 2. VECTOR SEARCH
    C ← HNSW_Search(e_q, N=100, w, r)          // O(log n)
-   If HNSW not ready: C ← SQLite_Search(...)    // Fallback
+   If HNSW not ready: C ← BruteForce_SQL(... )  // Portable fallback
 
 3. EARLY PRUNING
    C' ← { c ∈ C : ρ(c,q) > 0.6 }
@@ -249,7 +249,7 @@ OUTPUT: List of memories with render mode
 ## Enhanced Recall Pipeline
 
 ```
-Query → Expansion → Dense (HNSW) + Lexical (FTS5) → RRF Fusion → Clustering → Tag Boost → Adaptive Threshold → CBA Greedy Selection
+Query → Expansion → Dense (HNSW) + Lexical (SQL) → RRF Fusion → Clustering → Tag Boost → Adaptive Threshold → CBA Greedy Selection
 ```
 
 ### 1. Query Expansion
@@ -259,7 +259,7 @@ MIRA generates semantically close variants of the query (cleaned, without stopwo
 ### 2. Hybrid Search (Dense + Lexical)
 
 - **Dense:** HNSW O(log n) vector search
-- **Lexical:** SQLite FTS5 full-text search (auto-enabled if available)
+- **Lexical:** SQLite FTS5 or PostgreSQL GIN-backed simple text search
 - **Fusion:** Reciprocal Rank Fusion (`k=60`) merges both rankings into a single candidate list
 
 ### 3. Search-Time Clustering
@@ -294,7 +294,7 @@ Blend: `0.7 × semantic + 0.3 × rerank`
 
 ### 7. Fallback Vector Store
 
-If HNSW is not ready (e.g., rebuilding from scratch), a transparent fallback wrapper routes searches to the SQLite vector store. Recall never fails.
+If HNSW is not ready (e.g., rebuilding from scratch), a transparent fallback wrapper routes searches through the authoritative SQL repository. The same fallback works with SQLite and PostgreSQL, so recall remains available during index warm-up.
 
 ### 8. Context Compression
 
@@ -474,9 +474,6 @@ unzip mira-windows-amd64.zip
 # Enable the optional REST API
 ./mira server --with-api --api-addr :8080 --api-token my-secret
 
-# Enable the SOUL identity extension
-./mira server --with-soul
-
 # Prometheus metrics (default: :9090)
 ./mira server --prometheus-addr :9091
 
@@ -600,7 +597,7 @@ bash scripts/backup-mira.sh .mira .mira.backup.$(date +%Y%m%d-%H%M%S)
 # Restore (refuses to overwrite an existing target unless --force is explicit)
 bash scripts/restore-mira.sh .mira.backup.20260901 .mira --force
 
-# Rebuild the derived HNSW index from the authoritative SQLite embeddings
+# Rebuild the derived HNSW index from the authoritative SQL embeddings
 mira reindex
 
 # Migrate all embeddings to the configured model (backup first)
@@ -678,7 +675,7 @@ We decided to migrate to PostgreSQL for v2...
 
 ```yaml
 system:
-  version: "0.6.0"
+  version: "0.7.0"
 
 storage:
   path: ".mira"
@@ -753,13 +750,13 @@ recall:
     enabled: false
     top_k: 30
 
-# SOUL identity extension (disabled by default)
-soul:
-  enabled: false
+# Built-in identity memory (enabled automatically)
+agent_memory:
+  enabled: true
 
 mcp:
   name: "mira"
-  version: "0.6.0"
+  version: "0.7.0"
   transport: "stdio"   # "stdio", "sse", or stateless "http" at /mcp
   address: "localhost:3001"
   auth_token: ""         # required for HTTP when address is not loopback
@@ -889,6 +886,39 @@ Choose the right memory type based on what you're storing:
 | `mira_archive` | Archive and clean old memories |
 | `mira_clear_memory` | Permanently delete memories (global or room-scoped) |
 | `mira_compress` | Run rule-based context compression on session_notes |
+| `mira_update` | Update memory content and regenerate derived data |
+| `mira_search` | Run semantic search without CBA allocation |
+| `mira_consolidate` | Merge redundant session notes |
+
+### Built-in identity tools
+
+Agent identity and continuity are part of MIRA's core MCP surface. These tools
+share the MIRA database, recall pipeline and token budget; they are available
+automatically under the `soul_*` prefix.
+
+| Tool | Description | Main arguments |
+|------|-------------|----------------|
+| `soul_capture` | Capture and version identity from a conversation | `agent_id`, `conversation`, `model_id`, `session_id`, `behavioral_metrics` |
+| `soul_recall` | Compose identity context and relevant MIRA memories within one budget | `agent_id`, `context`, `budget` |
+| `soul_drift` | Measure changes across immutable identity versions | `agent_id`, `window` |
+| `soul_swap` | Record a model change and reinforce continuity | `agent_id`, `from_model`, `to_model` |
+| `soul_status` | Return the current identity snapshot | `agent_id` |
+| `soul_history` | List immutable identity versions | `agent_id`, `limit` |
+| `soul_update` | Apply a natural-language identity directive | `agent_id`, `directive`, `reason` |
+| `soul_patch` | Apply explicit bounded identity fields | `agent_id`, identity fields, `reason` |
+
+Example of a model transition:
+
+```json
+{
+  "tool": "soul_swap",
+  "arguments": {
+    "agent_id": "coding-agent",
+    "from_model": "model-a",
+    "to_model": "model-b"
+  }
+}
+```
 
 ### Fallback Wings
 
@@ -1070,20 +1100,22 @@ See [docs/API_REFERENCES.md](docs/API_REFERENCES.md) for full request/response s
 | Metric | Value |
 |--------|-------|
 | HNSW search | ~0.14 ms for 10K vectors (benchmarked) |
-| SQLite fallback search | ~50 ms for 10K vectors (estimated) |
+| Brute-force SQL fallback search | ~50 ms for 10K vectors (estimated) |
 | Full allocation | ~35 ms for 100 candidates (estimated) |
 | Cosine similarity | ~3.3M ops/sec |
 
 ### Optimizations in v0.3.3
 
 - **Query Expansion** — multi-variant embedding averaging for robust cross-lingual retrieval
-- **FTS5 Lexical Search** — SQLite full-text search with auto-triggers and backfill
-- **RRF Hybrid Fusion** — Reciprocal Rank Fusion (`k=60`) combining HNSW and FTS5
+- **SQL Lexical Search** — SQLite FTS5 or PostgreSQL GIN-backed simple text search
+- **RRF Hybrid Fusion** — Reciprocal Rank Fusion (`k=60`) combining HNSW and SQL lexical search
 - **Search-Time Clustering** — real-time deduplication at cosine similarity ≥ 0.88
 - **Tag-Based Retrieval** — `memory_tags` table with automatic tag boosting in CBA
 - **Heuristic Reranker** — optional lightweight lexical reranker
 - **Adaptive Threshold Methods** — dynamic pruning with `iqr`, `elbow`, `mean_stddev`
-- **Fallback Vector Store** — transparent HNSW → SQLite fallback when index not ready
+- **Fallback Vector Store** — transparent HNSW → portable SQL brute-force fallback
+- **Persistent Session Cache** — selected memory IDs survive process restarts with TTL cleanup
+- **Re-embedding** — `mira reembed` updates SQLite or PostgreSQL embeddings transactionally before rebuilding HNSW
 - **Clear Memory Tool** — `mira_clear_memory` for global or room-scoped deletion
 - **Causal Chain T0 Resolution** — `mira_causal_chain` resolves `T0:` verbatim references
 - **ID Visibility in Outputs** — `mira_recall` and `mira_timeline` include memory IDs
@@ -1114,7 +1146,7 @@ See [docs/API_REFERENCES.md](docs/API_REFERENCES.md) for full request/response s
 
 **Interface Adapters** — implements ports
 - `storage`: SQLiteRepository
-- `vector`: HNSWStore, SQLiteVectorStore, overlap cache
+- `vector`: HNSWStore, portable brute-force fallback, SQL caches
 - `extraction`: NativeExtractor, CybertronEmbedder
 - `webhook`, `metrics`
 
@@ -1197,7 +1229,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
 ### Key Libraries
 
-- [tiktoken-go](https://github.com/pkoukk/tiktoken-go) — used by the optional SOUL extension; MIRA core uses a deterministic local estimator
+- deterministic local token estimation — shared by MIRA recall and built-in identity memory, with no tokenizer dependency
 - Native Go implementation — rule-based NLP/NER
 - [cybertron](https://github.com/nlpodyssey/cybertron) — Transformer embeddings
 - [hnsw](https://github.com/coder/hnsw) — HNSW graphs

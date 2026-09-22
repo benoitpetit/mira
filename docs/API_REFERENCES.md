@@ -40,6 +40,40 @@ Practical examples for using MIRA's MCP tools and optional REST HTTP API.
 | `mira_search` | Return raw semantic matches without CBA allocation | `query` (required), `top_k`, `threshold` (optional) |
 | `mira_consolidate` | Merge redundant session notes into a synthesized memory | `wing` (required), `similarity_threshold` (optional) |
 
+### Built-in identity tools
+
+These tools are part of the MIRA MCP server and are always available. They use
+the same database and bounded recall budget as the normal MIRA memory pipeline.
+
+| Tool | Description | Arguments |
+|------|-------------|-----------|
+| `soul_capture` | Capture and version identity from a conversation | `agent_id`, `conversation` (required); `model_id`, `session_id`, `behavioral_metrics` (optional) |
+| `soul_recall` | Compose identity and relevant MIRA memories in one bounded prompt | `agent_id` (required); `context`, `budget` (optional) |
+| `soul_drift` | Measure drift between immutable identity versions | `agent_id` (required); `window` (optional) |
+| `soul_swap` | Record a model transition and generate continuity reinforcement | `agent_id`, `from_model`, `to_model` (required) |
+| `soul_status` | Return the current identity snapshot | `agent_id` (required) |
+| `soul_history` | Return immutable identity snapshots in descending version order | `agent_id` (required); `limit` (optional) |
+| `soul_update` | Apply a supported natural-language identity directive | `agent_id`, `directive` (required); `reason` (optional) |
+| `soul_patch` | Apply explicit identity fields bounded to the range 0–1 where applicable | `agent_id` (required); identity fields and `reason` (optional) |
+
+#### Identity continuity example
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 42,
+  "method": "tools/call",
+  "params": {
+    "name": "soul_capture",
+    "arguments": {
+      "agent_id": "coding-agent",
+      "model_id": "model-a",
+      "conversation": "I prefer concise, precise and transparent technical answers."
+    }
+  }
+}
+```
+
 **Note on `room`**: If omitted, MIRA automatically assigns a standard room based on the detected memory type:
 - `decision` → `decisions`
 - `fact` → `facts`
@@ -557,7 +591,7 @@ mira_recall(query="How should I handle payment retries?", wing="payment-service"
 ```
 MIRA System Status
 ═══════════════════════════════════════
-Version: 0.6.0
+Version: 0.7.0
 Uptime: 2h15m30s
 
 Storage:
@@ -1012,7 +1046,7 @@ Returns system statistics identical to the `mira_status` MCP tool.
 
 ```json
 {
-  "version": "0.6.0",
+  "version": "0.7.0",
   "uptime": "2h15m30s",
   "stats": {
     "verbatim_count": 1250,
@@ -1080,7 +1114,7 @@ curl http://localhost:9090/health
 {
   "status": "healthy",
   "timestamp": "2026-04-10T14:30:00Z",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "checks": {
     "database": {"status": "pass", "message": "connected"},
     "vector_store": {"status": "pass", "message": "HNSW ready"},
@@ -1238,4 +1272,4 @@ recall:
 | `reranker.enabled` | `false` | Enable heuristic lexical reranking |
 
 *Last updated: 2026-04-30*
-*Version: 0.6.0*
+*Version: 0.7.0*

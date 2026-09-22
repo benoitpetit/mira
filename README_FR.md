@@ -12,10 +12,10 @@
 
   [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.6.0-blue?style=flat-square)]()
+  [![Version](https://img.shields.io/badge/Version-0.7.0-blue?style=flat-square)]()
   [![Tests](https://img.shields.io/badge/Tests-~70%25-yellow?style=flat-square)]()
 
-  [Documentation](docs/INDEX.md) • [Référence API](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [English](README.md) • [Extension SOUL](https://github.com/benoitpetit/soul)
+  [Documentation](docs/INDEX.md) • [Référence API](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [English](README.md)
 
 </div>
 
@@ -55,7 +55,7 @@ Claude Code apprend l'architecture de votre projet le lundi. Codex connaît auto
 - ✓ Économe en tokens — l'algorithme CBA maximise l'information par token
 - ✓ Persistant entre modèles — changez de LLM sans perdre le contexte
 
-> **Besoin de persistance d'identité ?** L'extension optionnelle [SOUL](https://github.com/benoitpetit/soul) ajoute 8 outils MCP pour capturer et rappeler la personnalité d'un agent à travers les changements de modèle — activée par un simple flag `--with-soul`.
+> **La persistance d'identité est intégrée.** MIRA expose les outils `soul_*` pour conserver la continuité, rappeler le contexte d'identité, détecter les dérives et gérer les changements de modèle. Ils sont activés automatiquement.
 
 ### Voyez la différence
 
@@ -474,9 +474,6 @@ unzip mira-windows-amd64.zip
 # Activer l'API REST optionnelle
 ./mira server --with-api --api-addr :8080 --api-token mon-secret
 
-# Activer l'extension SOUL
-./mira server --with-soul
-
 # Métriques Prometheus (défaut : :9090)
 ./mira server --prometheus-addr :9091
 
@@ -678,7 +675,7 @@ Nous avons décidé de migrer vers PostgreSQL pour la v2...
 
 ```yaml
 system:
-  version: "0.6.0"
+  version: "0.7.0"
 
 storage:
   path: ".mira"
@@ -753,13 +750,13 @@ recall:
     enabled: false
     top_k: 30
 
-# Extension d'identité SOUL (désactivée par défaut)
-soul:
-  enabled: false
+# Mémoire intégrée de l'agent (activée automatiquement)
+agent_memory:
+  enabled: true
 
 mcp:
   name: "mira"
-  version: "0.6.0"
+  version: "0.7.0"
   transport: "stdio"   # "stdio", "sse", ou "http" stateless sur /mcp
   address: "localhost:3001"
   auth_token: ""         # requis pour HTTP si l'adresse n'est pas locale
@@ -890,6 +887,39 @@ Choisissez le bon type de mémoire en fonction de ce que vous stockez :
 | `mira_archive` | Archiver et nettoyer les vieilles mémoires |
 | `mira_clear_memory` | Suppression permanente (globale ou par room) |
 | `mira_compress` | Compression contextuelle à base de règles pour les session_notes |
+| `mira_update` | Modifier une mémoire et régénérer ses données dérivées |
+| `mira_search` | Recherche sémantique sans allocation CBA |
+| `mira_consolidate` | Fusionner des session_notes redondantes |
+
+### Outils d’identité intégrés
+
+L’identité et la continuité de l’agent font partie du cœur MCP de MIRA. Ces
+outils partagent la base MIRA, son pipeline de recall et son budget de tokens.
+Ils sont disponibles automatiquement avec le préfixe `soul_*`.
+
+| Outil | Description | Arguments principaux |
+|-------|-------------|---------------------|
+| `soul_capture` | Capturer et versionner l’identité depuis une conversation | `agent_id`, `conversation`, `model_id`, `session_id`, `behavioral_metrics` |
+| `soul_recall` | Composer le contexte d’identité et les mémoires MIRA dans un budget borné | `agent_id`, `context`, `budget` |
+| `soul_drift` | Mesurer les changements entre versions immuables | `agent_id`, `window` |
+| `soul_swap` | Enregistrer un changement de modèle et préserver la continuité | `agent_id`, `from_model`, `to_model` |
+| `soul_status` | Retourner le snapshot d’identité courant | `agent_id` |
+| `soul_history` | Lister les versions immuables de l’identité | `agent_id`, `limit` |
+| `soul_update` | Appliquer une directive d’identité en langage naturel | `agent_id`, `directive`, `reason` |
+| `soul_patch` | Modifier des champs d’identité bornés explicitement | `agent_id`, champs d’identité, `reason` |
+
+Exemple de changement de modèle :
+
+```json
+{
+  "tool": "soul_swap",
+  "arguments": {
+    "agent_id": "coding-agent",
+    "from_model": "model-a",
+    "to_model": "model-b"
+  }
+}
+```
 
 ### Wings de secours (Fallback Wings)
 
@@ -1199,7 +1229,7 @@ Voir [CHANGELOG.md](CHANGELOG.md) pour l'historique complet des releases.
 
 ### Bibliothèques clés
 
-- [tiktoken-go](https://github.com/pkoukk/tiktoken-go) — utilisé par l’extension SOUL optionnelle ; le cœur de MIRA utilise un estimateur local déterministe
+- estimation locale déterministe des tokens — partagée par le recall MIRA et la mémoire intégrée, sans dépendance de tokenizer
 - Implémentation Go native — NLP/NER à base de règles
 - [cybertron](https://github.com/nlpodyssey/cybertron) — embeddings Transformer
 - [hnsw](https://github.com/coder/hnsw) — graphes HNSW

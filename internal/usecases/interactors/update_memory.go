@@ -94,7 +94,7 @@ func (uc *UpdateMemory) Execute(ctx context.Context, input UpdateMemoryInput) (*
 	}
 
 	// 5. Update vector store (outside the DB transaction — it is a separate store).
-	// If synchronization fails, rebuild from SQLite, which is authoritative.
+	// If synchronization fails, rebuild from the authoritative repository.
 	vectorErr := uc.vectorStore.Delete(ctx, input.ID)
 	if vectorErr == nil {
 		vectorErr = uc.vectorStore.AddCandidate(ctx, entities.NewCandidate(fp, verbatim, emb.Vector))

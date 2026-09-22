@@ -17,7 +17,7 @@ const (
 	TransportStdio = "stdio"
 	TransportSSE   = "sse"
 	TransportHTTP  = "http"
-	CurrentVersion = "0.6.0"
+	CurrentVersion = "0.7.0"
 )
 
 // Config represents complete configuration
@@ -36,67 +36,76 @@ type Config struct {
 	Metrics           MetricsConfig      `yaml:"metrics"`
 	Webhooks          WebhooksConfig     `yaml:"webhooks"`
 	Recall            RecallConfig       `yaml:"recall"`
-	Soul              SoulConfig         `yaml:"soul"`
-	Compression       CompressionConfig  `yaml:"compression"`
+	// AgentMemory is the built-in identity and continuity memory of the agent.
+	AgentMemory AgentMemoryConfig `yaml:"agent_memory"`
+	Compression CompressionConfig `yaml:"compression"`
 }
 
-// SoulConfig configures the optional SOUL identity subsystem.
-// When Enabled is false, MIRA runs without identity features (8 tools only).
-// All sub-fields are optional and use SOUL defaults when omitted.
-type SoulConfig struct {
+// AgentMemoryConfig controls MIRA's built-in identity and continuity memory.
+type AgentMemoryConfig struct {
 	Enabled bool `yaml:"enabled"`
 
 	// Extraction controls how identity traits are extracted from conversations.
-	Extraction SoulExtractionConfig `yaml:"extraction"`
+	Extraction AgentMemoryExtractionConfig `yaml:"extraction"`
 
 	// Recall controls the identity prompt generation budget and behavior.
-	Recall SoulRecallConfig `yaml:"recall"`
+	Recall AgentMemoryRecallConfig `yaml:"recall"`
 
 	// DriftDetection configures identity drift monitoring.
-	DriftDetection SoulDriftDetectionConfig `yaml:"drift_detection"`
+	DriftDetection AgentMemoryDriftConfig `yaml:"drift_detection"`
 
 	// ModelSwap controls automatic reinforcement after a model change.
-	ModelSwap SoulModelSwapConfig `yaml:"model_swap"`
+	ModelSwap AgentMemoryModelSwapConfig `yaml:"model_swap"`
 
 	// Evolution controls versioned identity history tracking.
-	Evolution SoulEvolutionConfig `yaml:"evolution"`
+	Evolution AgentMemoryEvolutionConfig `yaml:"evolution"`
 
-	// Memory controls SOUL↔MIRA memory enrichment.
-	Memory SoulMemoryConfig `yaml:"memory"`
+	// Memory controls enrichment of agent memory with relevant MIRA memories.
+	Memory AgentMemoryEnrichmentConfig `yaml:"memory"`
 }
 
-// SoulExtractionConfig mirrors SOUL extraction settings.
-type SoulExtractionConfig struct {
+// UnmarshalYAML decodes onto existing defaults so partial configuration files
+// keep the normal MIRA defaults.
+func (c *Config) UnmarshalYAML(node *yaml.Node) error {
+	type plainConfig Config
+	// Decode onto the existing value so Load() keeps defaults for fields omitted
+	// by a partial configuration file.
+	decoded := plainConfig(*c)
+	if err := node.Decode(&decoded); err != nil {
+		return err
+	}
+
+	*c = Config(decoded)
+	return nil
+}
+
+type AgentMemoryExtractionConfig struct {
 	MinTraitConfidence      float64 `yaml:"min_trait_confidence"`
 	MinObservationsForTrait int     `yaml:"min_observations_for_trait"`
 }
 
-// SoulRecallConfig mirrors SOUL recall settings.
-type SoulRecallConfig struct {
+type AgentMemoryRecallConfig struct {
 	DefaultBudgetTokens int `yaml:"default_budget_tokens"`
 }
 
-// SoulDriftDetectionConfig mirrors SOUL drift detection settings.
-type SoulDriftDetectionConfig struct {
+type AgentMemoryDriftConfig struct {
 	Threshold             float64 `yaml:"threshold"`
 	WindowSize            int     `yaml:"window_size"`
 	AutoCheckAfterCapture bool    `yaml:"auto_check_after_capture"`
 }
 
-// SoulModelSwapConfig mirrors SOUL model-swap settings.
-type SoulModelSwapConfig struct {
+type AgentMemoryModelSwapConfig struct {
 	AutoReinforce bool `yaml:"auto_reinforce"`
 }
 
-// SoulEvolutionConfig mirrors SOUL evolution settings.
-type SoulEvolutionConfig struct {
+type AgentMemoryEvolutionConfig struct {
 	Enabled            bool `yaml:"enabled"`
 	MaxHistoryVersions int  `yaml:"max_history_versions"`
 }
 
-// SoulMemoryConfig controls how SOUL enriches identity context with MIRA memories.
-type SoulMemoryConfig struct {
-	// EnrichWithMiraMemories enables injecting MIRA verbatim memories into SOUL
+// AgentMemoryEnrichmentConfig controls enrichment from MIRA memories.
+type AgentMemoryEnrichmentConfig struct {
+	// EnrichWithMiraMemories enables injecting relevant MIRA memories into
 	// identity recall prompts, giving the AI richer personal history context.
 	EnrichWithMiraMemories bool `yaml:"enrich_with_mira_memories"`
 
@@ -405,24 +414,24 @@ func Default() *Config {
 				TopK:    30,
 			},
 		},
-		Soul: SoulConfig{
-			Enabled: false,
-			Extraction: SoulExtractionConfig{
+		AgentMemory: AgentMemoryConfig{
+			Enabled: true,
+			Extraction: AgentMemoryExtractionConfig{
 				MinTraitConfidence:      0.3,
 				MinObservationsForTrait: 5,
 			},
-			Recall: SoulRecallConfig{
+			Recall: AgentMemoryRecallConfig{
 				DefaultBudgetTokens: 1000,
 			},
-			DriftDetection: SoulDriftDetectionConfig{
+			DriftDetection: AgentMemoryDriftConfig{
 				Threshold:             0.3,
 				WindowSize:            10,
 				AutoCheckAfterCapture: true,
 			},
-			ModelSwap: SoulModelSwapConfig{
+			ModelSwap: AgentMemoryModelSwapConfig{
 				AutoReinforce: true,
 			},
-			Evolution: SoulEvolutionConfig{
+			Evolution: AgentMemoryEvolutionConfig{
 				Enabled:            true,
 				MaxHistoryVersions: 100,
 			},
@@ -478,6 +487,12 @@ type WebhooksConfig struct {
 
 // Validate checks if the configuration is valid and applies defaults for invalid values
 func (c *Config) Validate() error {
+	// Version is a property of the running binary, not a deployment setting.
+	// Keeping it configuration-driven caused stale local config.yaml files to
+	// advertise an older MCP server version after an upgrade.
+	c.System.Version = CurrentVersion
+	c.MCP.Version = CurrentVersion
+
 	// Storage validation
 	if storageType := os.Getenv("MIRA_STORAGE_TYPE"); storageType != "" {
 		c.Storage.Type = storageType
@@ -728,9 +743,6 @@ func (c *Config) Validate() error {
 	if c.MCP.Name == "" {
 		c.MCP.Name = "mira"
 	}
-	if c.MCP.Version == "" {
-		c.MCP.Version = CurrentVersion
-	}
 	if c.MCP.Transport == "" {
 		c.MCP.Transport = TransportStdio
 	}
@@ -775,25 +787,35 @@ func (c *Config) Validate() error {
 		c.Embeddings.ModelHash = util.ComputeModelHash("sentence-transformers/all-MiniLM-L6-v2")
 	}
 
-	// Soul validation — apply defaults for zero values so embedded SOUL
-	// behaves identically to standalone SOUL when settings are omitted.
-	if c.Soul.Extraction.MinTraitConfidence <= 0 {
-		c.Soul.Extraction.MinTraitConfidence = 0.3
+	// Agent memory is built into MIRA. The former enabled switch is retained in
+	// the Go shape only for configuration compatibility and cannot disable it.
+	c.AgentMemory.Enabled = true
+	if c.AgentMemory.Extraction.MinTraitConfidence <= 0 {
+		c.AgentMemory.Extraction.MinTraitConfidence = 0.3
 	}
-	if c.Soul.Extraction.MinObservationsForTrait <= 0 {
-		c.Soul.Extraction.MinObservationsForTrait = 5
+	if c.AgentMemory.Extraction.MinObservationsForTrait <= 0 {
+		c.AgentMemory.Extraction.MinObservationsForTrait = 5
 	}
-	if c.Soul.Recall.DefaultBudgetTokens <= 0 {
-		c.Soul.Recall.DefaultBudgetTokens = 1000
+	if c.AgentMemory.Recall.DefaultBudgetTokens <= 0 {
+		c.AgentMemory.Recall.DefaultBudgetTokens = 1000
 	}
-	if c.Soul.DriftDetection.Threshold <= 0 {
-		c.Soul.DriftDetection.Threshold = 0.3
+	// Identity context and factual memory share the same model context window.
+	// The identity budget may have its own lower default, but can never exceed
+	// MIRA's global allocator budget.
+	if c.Allocator.DefaultBudget > 0 && c.AgentMemory.Recall.DefaultBudgetTokens > c.Allocator.DefaultBudget {
+		c.AgentMemory.Recall.DefaultBudgetTokens = c.Allocator.DefaultBudget
 	}
-	if c.Soul.DriftDetection.WindowSize <= 0 {
-		c.Soul.DriftDetection.WindowSize = 10
+	if c.AgentMemory.DriftDetection.Threshold <= 0 {
+		c.AgentMemory.DriftDetection.Threshold = 0.3
 	}
-	if c.Soul.Evolution.MaxHistoryVersions <= 0 {
-		c.Soul.Evolution.MaxHistoryVersions = 100
+	if c.AgentMemory.DriftDetection.WindowSize <= 0 {
+		c.AgentMemory.DriftDetection.WindowSize = 10
+	}
+	if c.AgentMemory.Evolution.MaxHistoryVersions <= 0 {
+		c.AgentMemory.Evolution.MaxHistoryVersions = 100
+	}
+	if c.AgentMemory.Memory.MaxMiraMemories <= 0 {
+		c.AgentMemory.Memory.MaxMiraMemories = 5
 	}
 
 	return nil

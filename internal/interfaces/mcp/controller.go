@@ -250,7 +250,7 @@ func (c *Controller) RegisterTools(mcpServer server.MCPServer) {
 }
 
 // ToolDefinitions returns the MIRA tool definitions.
-// Used for combined registration when SOUL is embedded.
+// Used for combined registration with MIRA's built-in agent memory.
 func (c *Controller) ToolDefinitions() []mcptypes.Tool {
 	return []mcptypes.Tool{
 		{
@@ -611,7 +611,7 @@ Examples:
 }
 
 // Call dispatches a mira_* tool call. Returns an error for unknown tool names.
-// Used for combined registration when SOUL is embedded.
+// Used for combined registration with MIRA's built-in agent memory.
 func (c *Controller) Call(ctx context.Context, name string, arguments map[string]interface{}) (*mcptypes.CallToolResult, error) {
 	switch name {
 	case "mira_store":

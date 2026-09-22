@@ -69,14 +69,14 @@ func (h *HealthChecker) Check(ctx context.Context) HealthStatus {
 	// Check vector store
 	vectorCheck := h.checkVectorStore()
 	status.Checks["vector_store"] = vectorCheck
-	if vectorCheck.Status == statusFail && status.Status == statusHealthy {
+	if vectorCheck.Status != "pass" && status.Status == statusHealthy {
 		status.Status = statusDegraded
 	}
 
 	// Check embedder
 	embedderCheck := h.checkEmbedder(ctx)
 	status.Checks["embedder"] = embedderCheck
-	if embedderCheck.Status == statusFail && status.Status == statusHealthy {
+	if embedderCheck.Status != "pass" && status.Status == statusHealthy {
 		status.Status = statusDegraded
 	}
 
@@ -105,6 +105,11 @@ func (h *HealthChecker) checkVectorStore() HealthCheck {
 	// Check if HNSW is ready (if it's an HNSWStore)
 	if h.app.hnswIndex != nil && !h.app.hnswIndex.IsReady() {
 		return HealthCheck{Status: "warn", Message: "HNSW index not ready"}
+	}
+	if h.app.hnswIndex != nil {
+		if stats, err := h.app.repository.GetStats(context.Background()); err == nil && h.app.hnswIndex.Stats() != stats.EmbeddingCount {
+			return HealthCheck{Status: "warn", Message: "HNSW index differs from the authoritative embedding store"}
+		}
 	}
 
 	return HealthCheck{Status: "pass"}
@@ -220,8 +225,19 @@ func (a *Application) GetVectorStoreStats() map[string]interface{} {
 		stats["type"] = typeHNSW
 		stats["ready"] = a.hnswIndex.IsReady()
 		stats["count"] = a.hnswIndex.Stats()
+		if authoritative, err := a.repository.GetStats(context.Background()); err == nil {
+			stats["authoritative_count"] = authoritative.EmbeddingCount
+			delta := authoritative.EmbeddingCount - a.hnswIndex.Stats()
+			if delta >= 0 {
+				stats["missing_from_index"] = delta
+				stats["orphaned_in_index"] = 0
+			} else {
+				stats["missing_from_index"] = 0
+				stats["orphaned_in_index"] = -delta
+			}
+		}
 	} else {
-		stats["type"] = "sqlite"
+		stats["type"] = "brute_force"
 	}
 
 	return stats

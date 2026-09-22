@@ -65,8 +65,8 @@ async function loadStats() {
             document.getElementById("totalTokens").textContent = (data.stats.total_tokens || 0).toLocaleString();
         }
 
-        if (data.soul && data.soul.enabled) {
-            renderSoulStats(data.soul);
+        if (data.agent_memory && data.agent_memory.enabled) {
+            renderAgentMemoryStats(data.agent_memory);
         }
     } catch (error) {
         console.error("Failed to load stats:", error);
@@ -275,36 +275,36 @@ function similarityClass(score) {
     return "sim-low";
 }
 
-// ── SOUL identity panel ───────────────────────────────────────────────────────
+// ── Built-in agent memory identity panel ─────────────────────────────────────
 
-function renderSoulStats(soul) {
+function renderAgentMemoryStats(agentMemory) {
     // Show agent count in stats grid
-    const agentCard = document.getElementById("soulAgentCard");
+    const agentCard = document.getElementById("agentMemoryCard");
     agentCard.style.display = "";
-    document.getElementById("soulAgentCount").textContent = soul.agent_count || 0;
+    document.getElementById("agentMemoryCount").textContent = agentMemory.agent_count || 0;
 
     // Show agents section
-    const section = document.getElementById("soulSection");
-    const container = document.getElementById("soulAgents");
+    const section = document.getElementById("agentMemorySection");
+    const container = document.getElementById("agentMemoryAgents");
     section.style.display = "";
 
-    const agents = soul.agents || [];
+    const agents = agentMemory.agents || [];
     if (agents.length === 0) {
-        container.innerHTML = '<div class="soul-empty">No agents captured yet. Use <code>soul_capture</code> to start building identity profiles.</div>';
+        container.innerHTML = '<div class="agent-memory-empty">No agents captured yet. Use <code>soul_capture</code> to start building identity profiles.</div>';
         return;
     }
 
-    container.innerHTML = agents.map(agent => renderSoulAgentCard(agent)).join("");
+    container.innerHTML = agents.map(agent => renderAgentMemoryCard(agent)).join("");
 }
 
-function renderSoulAgentCard(agent) {
+function renderAgentMemoryCard(agent) {
     const conf = agent.confidence_score || 0;
     const confPct = (conf * 100).toFixed(1);
     const confWidth = Math.round(conf * 100);
 
-    const driftClass = agent.drift_score > 0.6 ? "soul-drift-alert"
-                     : agent.drift_score > 0.35 ? "soul-drift-warn"
-                     : "soul-drift-ok";
+    const driftClass = agent.drift_score > 0.6 ? "agent-memory-drift-alert"
+                     : agent.drift_score > 0.35 ? "agent-memory-drift-warn"
+                     : "agent-memory-drift-ok";
     const driftLabel = agent.drift_score > 0.6 ? "DRIFT ALERT"
                      : agent.drift_score > 0.35 ? "DRIFT WARN"
                      : "STABLE";
@@ -314,22 +314,22 @@ function renderSoulAgentCard(agent) {
         : "never";
 
     return `
-        <div class="soul-agent-card">
+        <div class="agent-memory-card">
             <div class="agent-header">
                 <span class="agent-id" title="${escapeHtml(agent.agent_id)}">${escapeHtml(agent.agent_id)}</span>
                 <span class="agent-version">v${agent.version || 0}</span>
             </div>
-            <div class="soul-confidence-bar" title="Confidence: ${confPct}%">
-                <div class="soul-confidence-fill" style="width:${confWidth}%"></div>
+            <div class="agent-memory-confidence-bar" title="Confidence: ${confPct}%">
+                <div class="agent-memory-confidence-fill" style="width:${confWidth}%"></div>
             </div>
-            <div class="soul-agent-meta">
+            <div class="agent-memory-meta">
                 <span>Confidence: <strong>${confPct}%</strong></span>
                 <span>Traits: <strong>${agent.trait_count || 0}</strong></span>
             </div>
-            <div class="soul-agent-meta">
+            <div class="agent-memory-meta">
                 <span>Last capture: ${escapeHtml(lastCapture)}</span>
             </div>
-            ${agent.drift_score > 0 ? `<span class="soul-drift-badge ${driftClass}">${driftLabel} (${(agent.drift_score * 100).toFixed(0)}%)</span>` : ""}
+            ${agent.drift_score > 0 ? `<span class="agent-memory-drift-badge ${driftClass}">${driftLabel} (${(agent.drift_score * 100).toFixed(0)}%)</span>` : ""}
         </div>
     `;
 }

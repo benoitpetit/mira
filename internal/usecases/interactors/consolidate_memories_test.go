@@ -177,6 +177,7 @@ func TestConsolidate_SimilarNotesAreMerged(t *testing.T) {
 	embeddings := map[uuid.UUID]*entities.Embedding{id1: e1, id2: e2}
 
 	addCandidateCalled := false
+	deletedFromIndex := make(map[uuid.UUID]bool)
 	vs := &mockStoreVectorStore{}
 
 	var removedIDs []uuid.UUID
@@ -210,6 +211,10 @@ func TestConsolidate_SimilarNotesAreMerged(t *testing.T) {
 			addCandidateCalled = true
 			return nil
 		},
+		deleteFunc: func(_ context.Context, id uuid.UUID) error {
+			deletedFromIndex[id] = true
+			return nil
+		},
 	}
 	_ = vs
 
@@ -230,6 +235,9 @@ func TestConsolidate_SimilarNotesAreMerged(t *testing.T) {
 	}
 	if len(removedIDs) != 2 {
 		t.Errorf("expected 2 IDs removed, got %d", len(removedIDs))
+	}
+	if !deletedFromIndex[id1] || !deletedFromIndex[id2] {
+		t.Error("source note vectors should be removed after consolidation")
 	}
 }
 
@@ -356,7 +364,8 @@ func TestConsolidate_CustomThreshold(t *testing.T) {
 
 // mockConsolidateVectorStore captures AddCandidate calls for consolidation tests.
 type mockConsolidateVectorStore struct {
-	addFunc func(ctx context.Context, c *entities.Candidate) error
+	addFunc    func(ctx context.Context, c *entities.Candidate) error
+	deleteFunc func(ctx context.Context, id uuid.UUID) error
 }
 
 func (m *mockConsolidateVectorStore) Search(ctx context.Context, vector []float32, limit int, wing, room *string) ([]*entities.Candidate, error) {
@@ -371,8 +380,13 @@ func (m *mockConsolidateVectorStore) AddCandidate(ctx context.Context, c *entiti
 	}
 	return nil
 }
-func (m *mockConsolidateVectorStore) Delete(ctx context.Context, id uuid.UUID) error { return nil }
-func (m *mockConsolidateVectorStore) ClearAll(ctx context.Context) error             { return nil }
+func (m *mockConsolidateVectorStore) Delete(ctx context.Context, id uuid.UUID) error {
+	if m.deleteFunc != nil {
+		return m.deleteFunc(ctx, id)
+	}
+	return nil
+}
+func (m *mockConsolidateVectorStore) ClearAll(ctx context.Context) error { return nil }
 func (m *mockConsolidateVectorStore) ClearByRoom(ctx context.Context, wing string, room *string) error {
 	return nil
 }
