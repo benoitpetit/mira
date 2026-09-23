@@ -569,6 +569,15 @@ func (r *SQLiteRepository) HasEdge(ctx context.Context, fromID, toID uuid.UUID) 
 	return err == nil && count > 0
 }
 
+func (r *SQLiteRepository) RelationBetween(ctx context.Context, fromID, toID uuid.UUID) (valueobjects.RelationType, bool) {
+	var relation string
+	err := r.db.QueryRowContext(ctx, `SELECT relation FROM causal_edges WHERE (from_id=? AND to_id=?) OR (from_id=? AND to_id=?) ORDER BY confidence DESC LIMIT 1`, fromID[:], toID[:], toID[:], fromID[:]).Scan(&relation)
+	if err != nil {
+		return "", false
+	}
+	return valueobjects.RelationType(relation), true
+}
+
 // GetChain implements CausalGraphRepository
 // Performs a recursive traversal up the causal chain (ancestors) using a SQLite CTE.
 // This replaces the previous N+1 BFS with a single query, drastically reducing latency.

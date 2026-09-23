@@ -1028,10 +1028,24 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 			}
 			c.MaxOverlap = maxOverlap
 
-			// Causal neighbors are retained as context. Relation-specific edge
-			// semantics are resolved by the graph layer; recall must not suppress
-			// a cause merely because its consequence was selected.
-			c.CausalPenalty = 1
+			// Causal neighbors are retained as context. Reliable relation types
+			// adjust the score instead of applying one blanket penalty.
+			causalFactor := 1.0
+			if reader, ok := uc.causalGraph.(ports.CausalRelationReader); ok {
+				for _, sel := range selected {
+					if relation, found := reader.RelationBetween(ctx, sel.CandidateID, c.ID()); found {
+						switch relation {
+						case valueobjects.RelBecause, valueobjects.RelResolves:
+							causalFactor = math.Max(causalFactor, 1.10)
+						case valueobjects.RelContradicts:
+							causalFactor = math.Max(causalFactor, 1.0) // keep both for an explicit warning
+						case valueobjects.RelUpdates:
+							causalFactor = math.Max(causalFactor, 1.05)
+						}
+					}
+				}
+			}
+			c.CausalPenalty = causalFactor
 
 			// Session boost
 			sessionWindow := float64(uc.sessionWindowSeconds)
@@ -1060,7 +1074,7 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 			if uc.sessionMemoryBoost > 0 && sessionMemoryIDs != nil && sessionMemoryIDs[c.ID()] {
 				initialScore *= uc.sessionMemoryBoost
 			}
-			c.Score = initialScore * (1.0 - c.MaxOverlap) * c.CausalPenalty * c.SessionBoost * diversityBoost
+			c.Score = clampRecallScore(initialScore * (1.0 - c.MaxOverlap) * c.CausalPenalty * c.SessionBoost * diversityBoost)
 
 			// Push back with updated score
 			heap.Push(h, c)

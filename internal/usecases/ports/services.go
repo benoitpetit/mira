@@ -112,6 +112,12 @@ type CausalGraph interface {
 	GetChildren(ctx context.Context, nodeID uuid.UUID, relations ...valueobjects.RelationType) ([]*entities.CausalNode, error)
 }
 
+// CausalRelationReader exposes the reliable relation semantics used by CBA.
+// It is optional so older graph adapters remain source compatible.
+type CausalRelationReader interface {
+	RelationBetween(ctx context.Context, fromID, toID uuid.UUID) (valueobjects.RelationType, bool)
+}
+
 // Extractor combines all extraction capabilities into a single interface.
 // This is provided for backward compatibility and convenience.
 //
