@@ -3,6 +3,7 @@ package agentmemory
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,6 +12,48 @@ import (
 	"github.com/benoitpetit/mira/internal/adapters/storage"
 	"github.com/google/uuid"
 )
+
+func TestCaptureLearnsOnlyFromAssistantMessagesAndStoresBoundedEvidence(t *testing.T) {
+	runtime, err := NewRuntime(testDB(t), DefaultConfig(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := runtime.Capture(context.Background(), CaptureRequest{
+		AgentID: "agent",
+		Messages: []ConversationObservation{
+			{Role: "user", Content: "I am very humorous and direct."},
+			{Role: "assistant", Content: "I will analyze this carefully and explain it step by step."},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, trait := range snapshot.PersonalityTraits {
+		if trait.Name == "humorous" {
+			t.Fatalf("user-only trait was learned: %+v", trait)
+		}
+	}
+	if len(snapshot.Evidence) == 0 || snapshot.Evidence[0].Role != "assistant" {
+		t.Fatalf("assistant evidence was not retained: %+v", snapshot.Evidence)
+	}
+	if len(snapshot.Evidence[0].Excerpt) > maxTraitEvidenceExcerpt {
+		t.Fatalf("evidence excerpt is not bounded: %d", len(snapshot.Evidence[0].Excerpt))
+	}
+}
+
+func TestConversationObservationJSONRoundTripNormalizesUnknownRole(t *testing.T) {
+	encoded, err := json.Marshal(ConversationObservation{Role: "alien", Content: "ignored"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded ConversationObservation
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Role != "unattributed" {
+		t.Fatalf("unknown role was not normalized: %q", decoded.Role)
+	}
+}
 
 type testMemoryProvider struct {
 	requestedBudget int
@@ -60,7 +103,7 @@ func TestUpdateSupportsNegativeDirectiveAndPersistsReason(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := runtime.Capture(context.Background(), CaptureRequest{AgentID: "agent", Conversation: "Please answer formally."})
+	first, err := runtime.Capture(context.Background(), CaptureRequest{AgentID: "agent", AgentResponses: []string{"Please answer formally."}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +140,7 @@ func TestRecallAllocatesRemainingBudgetToDelimitedMemoryEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runtime.Capture(context.Background(), CaptureRequest{AgentID: "agent", Conversation: "I prefer clear answers."}); err != nil {
+	if _, err := runtime.Capture(context.Background(), CaptureRequest{AgentID: "agent", AgentResponses: []string{"I prefer clear answers."}}); err != nil {
 		t.Fatal(err)
 	}
 	prompt, err := runtime.Recall(context.Background(), "agent", "current context", 300)
@@ -156,8 +199,8 @@ func TestCaptureUsesConversationWhenAgentResponsesAreAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Version != 1 || len(snapshot.PersonalityTraits) == 0 {
-		t.Fatalf("capture did not extract identity: version=%d traits=%d", snapshot.Version, len(snapshot.PersonalityTraits))
+	if snapshot.Version != 1 || len(snapshot.PersonalityTraits) != 0 {
+		t.Fatalf("unattributed conversation unexpectedly changed identity: version=%d traits=%d", snapshot.Version, len(snapshot.PersonalityTraits))
 	}
 }
 
@@ -168,7 +211,7 @@ func TestCapturePersistsSessionIDAndRecallWaitsForStableTraits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := runtime.Capture(context.Background(), CaptureRequest{AgentID: "agent", SessionID: "session-a", Conversation: "Please be transparent and direct."})
+	first, err := runtime.Capture(context.Background(), CaptureRequest{AgentID: "agent", SessionID: "session-a", AgentResponses: []string{"Please be transparent and direct."}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +225,7 @@ func TestCapturePersistsSessionIDAndRecallWaitsForStableTraits(t *testing.T) {
 	if strings.Contains(prompt.Content, "transparent (confidence") {
 		t.Fatal("a single observation was exposed as a stable trait")
 	}
-	if _, err := runtime.Capture(context.Background(), CaptureRequest{AgentID: "agent", SessionID: "session-b", Conversation: "Please be transparent and direct."}); err != nil {
+	if _, err := runtime.Capture(context.Background(), CaptureRequest{AgentID: "agent", SessionID: "session-b", AgentResponses: []string{"Please be transparent and direct."}}); err != nil {
 		t.Fatal(err)
 	}
 	second, err := runtime.Latest(context.Background(), "agent")
@@ -209,7 +252,7 @@ func TestRecallNeverExceedsConfiguredBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = runtime.Capture(context.Background(), CaptureRequest{AgentID: "agent", Conversation: "I prefer clear, direct, technical answers with a structured explanation and careful uncertainty."})
+	_, err = runtime.Capture(context.Background(), CaptureRequest{AgentID: "agent", AgentResponses: []string{"I prefer clear, direct, technical answers with a structured explanation and careful uncertainty."}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +270,7 @@ func TestPatchKeepsSnapshotsImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := runtime.Capture(context.Background(), CaptureRequest{AgentID: "agent", Conversation: "I prefer clear answers."})
+	first, err := runtime.Capture(context.Background(), CaptureRequest{AgentID: "agent", AgentResponses: []string{"I prefer clear answers."}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +316,7 @@ func TestModelSwapCreatesInternalizedIdentitySnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := runtime.Capture(context.Background(), CaptureRequest{AgentID: "agent", ModelID: "model-a", Conversation: "I prefer clear answers."})
+	first, err := runtime.Capture(context.Background(), CaptureRequest{AgentID: "agent", ModelID: "model-a", AgentResponses: []string{"I prefer clear answers."}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +343,7 @@ func TestModelSwapHonorsAutoReinforceAndModelLineage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runtime.Capture(context.Background(), CaptureRequest{AgentID: "agent", ModelID: "model-a", Conversation: "I prefer clear answers."}); err != nil {
+	if _, err := runtime.Capture(context.Background(), CaptureRequest{AgentID: "agent", ModelID: "model-a", AgentResponses: []string{"I prefer clear answers."}}); err != nil {
 		t.Fatal(err)
 	}
 	swap, prompt, err := runtime.HandleSwap(context.Background(), "agent", "model-a", "model-b")
@@ -329,10 +372,10 @@ func TestEvolutionDisabledRejectsNewVersionsButRecordsSwap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runtime.Capture(context.Background(), CaptureRequest{AgentID: "agent", ModelID: "model-a", Conversation: "I prefer clear answers."}); err != nil {
+	if _, err := runtime.Capture(context.Background(), CaptureRequest{AgentID: "agent", ModelID: "model-a", AgentResponses: []string{"I prefer clear answers."}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runtime.Capture(context.Background(), CaptureRequest{AgentID: "agent", ModelID: "model-a", Conversation: "I prefer direct answers."}); err == nil {
+	if _, err := runtime.Capture(context.Background(), CaptureRequest{AgentID: "agent", ModelID: "model-a", AgentResponses: []string{"I prefer direct answers."}}); err == nil {
 		t.Fatal("capture created a version while evolution was disabled")
 	}
 	if _, _, err := runtime.Update(context.Background(), "agent", "be concise", "test"); err == nil {
@@ -359,7 +402,7 @@ func TestAgentMemoryUsesSharedEncryptedDatabase(t *testing.T) {
 		_ = repo.Close()
 		t.Fatal(err)
 	}
-	if _, err := runtime.Capture(context.Background(), CaptureRequest{AgentID: "encrypted-agent", Conversation: "I prefer precise answers."}); err != nil {
+	if _, err := runtime.Capture(context.Background(), CaptureRequest{AgentID: "encrypted-agent", AgentResponses: []string{"I prefer precise answers."}}); err != nil {
 		_ = repo.Close()
 		t.Fatal(err)
 	}

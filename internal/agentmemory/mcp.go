@@ -30,7 +30,7 @@ func (c *Controller) ToolDefinitions() []mcptypes.Tool {
 		return map[string]string{"type": "number", "description": description}
 	}
 	return []mcptypes.Tool{
-		text("capture", "Capture and version MIRA's built-in identity from a conversation. The capture is local, deterministic and linked to MIRA memory.", map[string]interface{}{"agent_id": str("Agent identifier (required)"), "conversation": str("Conversation or assistant response (required)"), "model_id": str("Current model identifier"), "session_id": str("Session identifier"), "behavioral_metrics": map[string]interface{}{"type": "object", "description": "Optional runtime metrics object"}}),
+		text("capture", "Capture and version MIRA's built-in identity from structured role-aware messages. Only assistant messages update normative identity; legacy conversation is unattributed.", map[string]interface{}{"agent_id": str("Agent identifier (required)"), "conversation": str("Legacy unattributed context (optional)"), "messages": map[string]interface{}{"type": "array", "description": "Role-aware observations with role, content, timestamp and session_id", "items": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"role": str("assistant, user, system or tool"), "content": str("Message content"), "timestamp": str("RFC3339 timestamp"), "session_id": str("Session identifier")}}}, "model_id": str("Current model identifier"), "session_id": str("Session identifier"), "behavioral_metrics": map[string]interface{}{"type": "object", "description": "Optional runtime metrics object"}}),
 		text("recall", "Compose MIRA's identity and relevant MIRA memories inside one bounded token budget.", map[string]interface{}{"agent_id": str("Agent identifier (required)"), "context": str("Current conversation context"), "budget": num("Maximum identity context tokens")}),
 		text("drift", "Measure identity drift across immutable MIRA identity versions.", map[string]interface{}{"agent_id": str("Agent identifier (required)"), "window": num("Number of versions")}),
 		text("swap", "Record a model transition and generate bounded identity continuity reinforcement.", map[string]interface{}{"agent_id": str("Agent identifier (required)"), "from_model": str("Previous model"), "to_model": str("New model")}),
@@ -55,10 +55,7 @@ func (c *Controller) Call(ctx context.Context, name string, args map[string]inte
 	}
 	switch name {
 	case "capture":
-		conversation, err := requiredString(args, "conversation")
-		if err != nil {
-			return nil, err
-		}
+		conversation, _ := args["conversation"].(string)
 		modelID, _ := args["model_id"].(string)
 		sessionID, _ := args["session_id"].(string)
 		metrics := map[string]interface{}{}
@@ -78,7 +75,20 @@ func (c *Controller) Call(ctx context.Context, name string, args map[string]inte
 				return nil, fmt.Errorf("behavioral_metrics must be an object")
 			}
 		}
-		snap, err := c.runtime.Capture(ctx, CaptureRequest{AgentID: agentID, Conversation: conversation, ModelID: modelID, SessionID: sessionID, BehavioralMetrics: metrics})
+		messages := []ConversationObservation{}
+		if raw, ok := args["messages"]; ok {
+			payload, err := json.Marshal(raw)
+			if err != nil {
+				return nil, fmt.Errorf("messages must be an array: %w", err)
+			}
+			if err := json.Unmarshal(payload, &messages); err != nil {
+				return nil, fmt.Errorf("messages must be an array of role-aware observations: %w", err)
+			}
+		}
+		if strings.TrimSpace(conversation) == "" && len(messages) == 0 {
+			return nil, fmt.Errorf("conversation or messages is required")
+		}
+		snap, err := c.runtime.Capture(ctx, CaptureRequest{AgentID: agentID, Conversation: conversation, Messages: messages, ModelID: modelID, SessionID: sessionID, BehavioralMetrics: metrics})
 		if err != nil {
 			return nil, err
 		}
