@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -38,6 +39,45 @@ func TestCaptureLearnsOnlyFromAssistantMessagesAndStoresBoundedEvidence(t *testi
 	}
 	if len(snapshot.Evidence[0].Excerpt) > maxTraitEvidenceExcerpt {
 		t.Fatalf("evidence excerpt is not bounded: %d", len(snapshot.Evidence[0].Excerpt))
+	}
+}
+
+func TestCompactHistoryRetainsMilestonesAndMarksIntermediates(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxHistoryVersions = 2
+	runtime, err := NewRuntime(testDB(t), cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		if _, err := runtime.Capture(context.Background(), CaptureRequest{AgentID: "retained", AgentResponses: []string{fmt.Sprintf("I analyze iteration %d.", i)}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := runtime.Update(context.Background(), "retained", "be more technical", "explicit milestone"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.CompactHistory(context.Background(), "retained"); err != nil {
+		t.Fatal(err)
+	}
+	var compacted int
+	if err := runtime.db.QueryRow(`SELECT COUNT(*) FROM agent_memory_identities WHERE agent_id=? AND retention_class='compacted'`, "retained").Scan(&compacted); err != nil {
+		t.Fatal(err)
+	}
+	if compacted == 0 {
+		t.Fatal("expected intermediate snapshots to be compacted")
+	}
+	history, err := runtime.History(context.Background(), "retained", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) < 2 || history[0].RetentionClass == "compacted" {
+		t.Fatalf("current snapshot was not retained: %+v", history)
+	}
+	for _, snap := range history {
+		if snap.ChangeReason == "explicit milestone" && snap.RetentionClass == "compacted" {
+			t.Fatal("explicit milestone was compacted")
+		}
 	}
 }
 
