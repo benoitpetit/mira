@@ -203,7 +203,7 @@ agent_memory:
 
   # MIRA memory enrichment
   memory:
-    enrich_with_mira_memories: false  # Inject MIRA memories into identity prompts
+    enrich_with_mira_memories: true   # Evidence non normative, budgeted after identity invariants
     max_mira_memories: 5              # Max MIRA memories to inject per identity recall
 
 # ─── Compression ────────────────────────────────────────────────────────────

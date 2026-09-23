@@ -1253,3 +1253,12 @@ _« La mémoire est la sève de l'intelligence artificielle. »_
 [Référence API](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md)
 
 </div>
+# Cohérence mémoire et soul (v0.7+)
+
+MIRA sépare désormais trois canaux : identité normative (`soul_*`), préférences utilisateur et preuves de travail non normatives. `soul_capture` accepte des `messages` structurés ; seuls les messages `assistant` peuvent apprendre l’identité. Le champ historique `conversation` reste accepté comme contexte non attribué et ne crée plus de traits.
+
+Les snapshots restent immuables et sont compactés selon une politique de rétention : la version courante et les jalons explicites sont conservés, les versions intermédiaires passent en `compacted` sans être supprimées. La consolidation est réversible : les sources T0/T1/T2 passent en `superseded`, gardent leur provenance `consolidated_from`, et peuvent être réactivées en révoquant la synthèse.
+
+Le rappel combine recherche dense/lexicale et CBA sensible à la qualité. La confiance d’extraction, la fraîcheur de validation, le cycle de vie, les preuves causales et les relations influencent le score. Les voisins causaux ne sont plus pénalisés aveuglément. Le registre local de croyances versionnées résout les affirmations actives et accepte un feedback borné (`useful`, `stale`, `contradictory`, `irrelevant`) sans service cloud.
+
+Voir [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/FEATURES.md](docs/FEATURES.md) et [docs/API_REFERENCES.md](docs/API_REFERENCES.md).

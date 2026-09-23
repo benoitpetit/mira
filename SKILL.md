@@ -451,3 +451,8 @@ Did you fix a bug? ────────Yes──► mira_store(type="debug_l
 Did the user state a preference? ──Yes──► mira_store(type="preference")
 Significant work done? ────Yes──► mira_store(type="session_note")
 ```
+# Cohérence autonome mémoire/soul
+
+La capture soul doit fournir `messages: [{role, content, timestamp?, session_id?}]`. Les rôles `user`, `system`, `tool` et inconnus sont conservés comme non attribués ; seul `assistant` met à jour les traits normatifs. Les preuves de traits sont bornées et liées au snapshot.
+
+Les consolidations ne suppriment plus leurs sources dans les adaptateurs SQL officiels : elles les marquent `superseded` et conservent la provenance. Les arêtes causales portent une confiance, un statut et une preuve ; les fenêtres `causal_lookback` et `causal_max_days` sont appliquées par l’extracteur natif. Le rappel tient compte de la confiance d’extraction et du cycle de vie.

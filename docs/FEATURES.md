@@ -6,6 +6,15 @@ Complete inventory of MIRA capabilities.
 
 ## Memory Model
 
+### Coherence and autonomy
+
+- Role-aware soul capture with bounded trait evidence; only assistant observations are normative.
+- Immutable snapshot retention with milestone preservation and non-destructive compaction.
+- Reversible consolidation (`active` → `superseded`; synthesis revocation restores sources).
+- Evidence-backed causal edges with confidence, status, detector and configured temporal windows.
+- Quality-aware CBA using extraction confidence, validation freshness and lifecycle state.
+- Versioned local belief registry with bounded feedback calibration.
+
 | Feature | Description |
 |---------|-------------|
 | T0 Verbatim Storage | Full UTF-8 text up to 64KB |

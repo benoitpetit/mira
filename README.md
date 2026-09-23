@@ -1,7 +1,7 @@
 <div align="center">
   <img src="./logo.png" alt="MIRA Logo" width="800">
 
-  # MIRA
+# MIRA
 
   ### Persistent memory for AI coding agents.
 
@@ -1253,3 +1253,12 @@ _"Memory is the sap of artificial intelligence."_
 [API Reference](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md)
 
 </div>
+# Memory and soul coherence (v0.7+)
+
+MIRA keeps three explicit channels: normative identity (`soul_*`), user preferences, and non-normative work evidence. `soul_capture` accepts structured `messages`; only `assistant` messages can update identity. The legacy `conversation` field remains accepted as unattributed context and cannot create traits.
+
+Snapshots are immutable and compacted by retention policy: current versions and explicit milestones remain visible, while intermediate rows are marked `compacted` instead of deleted. Memory consolidation is reversible: source T0/T1/T2 records become `superseded`, retain `consolidated_from` provenance, and can be reactivated by revoking the synthesis.
+
+Recall combines dense/lexical retrieval with quality-aware CBA. Extraction confidence, validation freshness, lifecycle state, causal evidence and relation semantics influence ranking; causal neighbors are not blindly penalized. The local versioned belief registry resolves active assertions and accepts bounded `useful`, `stale`, `contradictory` or `irrelevant` feedback without any cloud dependency.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/FEATURES.md](docs/FEATURES.md), and [docs/API_REFERENCES.md](docs/API_REFERENCES.md) for the exact contracts.

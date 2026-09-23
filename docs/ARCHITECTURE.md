@@ -105,6 +105,12 @@ mira/
 
 ## T0/T1/T2 Memory Hierarchy
 
+### Autonomous coherence layer
+
+The SQL records remain authoritative while derived indexes stay repairable. Soul capture filters provenance before extraction and stores bounded `TraitEvidence` beside each immutable snapshot. Retention compaction marks intermediate snapshots instead of deleting lineage. Consolidation marks source memories `superseded`, keeps `consolidated_from`, and supports revocation.
+
+Causal edges carry `confidence`, `status`, `evidence`, and `detector`; generic subjects such as `Note` are not sufficient for confirmation, and the configured lookback/age windows are applied. CBA multiplies relevance by calibrated extraction confidence and validation freshness, excludes non-active lifecycle rows, and keeps causal neighbors available for explanation. A local `BeliefRegistry` resolves active subject/predicate/value assertions and bounds feedback calibration to avoid autonomous score drift.
+
 The human brain does not record everything with the same fidelity. MIRA mimics this with three representation levels:
 
 ### T0 — Verbatim (Episodic Memory)

@@ -47,7 +47,7 @@ the same database and bounded recall budget as the normal MIRA memory pipeline.
 
 | Tool | Description | Arguments |
 |------|-------------|-----------|
-| `soul_capture` | Capture and version identity from a conversation | `agent_id`, `conversation` (required); `model_id`, `session_id`, `behavioral_metrics` (optional) |
+| `soul_capture` | Capture and version identity from role-aware observations | `agent_id`; `messages` (recommended) or legacy `conversation`; `model_id`, `session_id`, `behavioral_metrics` (optional) |
 | `soul_recall` | Compose identity and relevant MIRA memories in one bounded prompt | `agent_id` (required); `context`, `budget` (optional) |
 | `soul_drift` | Measure drift between immutable identity versions | `agent_id` (required); `window` (optional) |
 | `soul_swap` | Record a model transition and generate continuity reinforcement | `agent_id`, `from_model`, `to_model` (required) |
@@ -68,7 +68,10 @@ the same database and bounded recall budget as the normal MIRA memory pipeline.
     "arguments": {
       "agent_id": "coding-agent",
       "model_id": "model-a",
-      "conversation": "I prefer concise, precise and transparent technical answers."
+      "messages": [
+        {"role": "assistant", "content": "I prefer concise, precise and transparent technical answers.", "session_id": "s-42"},
+        {"role": "user", "content": "Please answer briefly."}
+      ]
     }
   }
 }
