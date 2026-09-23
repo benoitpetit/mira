@@ -198,6 +198,13 @@ When adding new PostgreSQL migrations:
 
 ## License
 
-By contributing to MIRA, you agree that your contributions will be licensed under the [MIT License](LICENSE).
+By contributing to MIRA, you confirm that you have the right to submit the
+contribution and agree that it may be distributed under the repository's [MIT
+License](LICENSE).
+
+Contributions remain subject to the rights of their respective authors. This
+project does not claim a transfer of copyright through the contribution
+process. If you contribute on behalf of an employer or another rights holder,
+obtain the necessary permission before submitting the contribution.
 
 See the [LICENSE](LICENSE) file for full details.

@@ -19,6 +19,10 @@
 
 </div>
 
+> **Licensing:** MIRA source code is available under the [MIT License](LICENSE).
+> The project name, logo, and branding are not granted by the code license;
+> see [NOTICE.md](NOTICE.md).
+
 ---
 
 ## Table of Contents
