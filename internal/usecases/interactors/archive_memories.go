@@ -17,14 +17,17 @@ type ArchiveMemoriesOutput struct {
 
 // ArchiveMemories implements the archive memories use case
 type ArchiveMemories struct {
-	statsRepo ports.StatsRepository
+	statsRepo   ports.StatsRepository
+	vectorStore ports.VectorStore
 }
 
 // NewArchiveMemories creates a new archive memories interactor
-func NewArchiveMemories(statsRepo ports.StatsRepository) *ArchiveMemories {
-	return &ArchiveMemories{
-		statsRepo: statsRepo,
+func NewArchiveMemories(statsRepo ports.StatsRepository, vectorStores ...ports.VectorStore) *ArchiveMemories {
+	uc := &ArchiveMemories{statsRepo: statsRepo}
+	if len(vectorStores) > 0 {
+		uc.vectorStore = vectorStores[0]
 	}
+	return uc
 }
 
 // Execute archives old memories
@@ -32,6 +35,11 @@ func (uc *ArchiveMemories) Execute(ctx context.Context) (*ArchiveMemoriesOutput,
 	result, err := uc.statsRepo.ArchiveOldMemories(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to archive memories: %w", err)
+	}
+	if uc.vectorStore != nil {
+		if err := repairVectorStore(ctx, uc.vectorStore); err != nil {
+			return nil, fmt.Errorf("archive committed but vector index repair failed: %w", err)
+		}
 	}
 
 	return &ArchiveMemoriesOutput{
