@@ -118,6 +118,7 @@ func (r *PostgreSQLRepository) StoreVerbatim(ctx context.Context, verbatim *enti
 
 // StoreVerbatimTx implements VerbatimRepository
 func (r *PostgreSQLRepository) StoreVerbatimTx(ctx context.Context, tx *sql.Tx, v *entities.Verbatim) error {
+	v.Metadata = lifecycleMetadata(v)
 	metadataJSON, err := json.Marshal(v.Metadata)
 	if err != nil {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
@@ -214,6 +215,7 @@ func (r *PostgreSQLRepository) GetVerbatimByID(ctx context.Context, id uuid.UUID
 	if len(metricsJSON) > 0 {
 		_ = json.Unmarshal(metricsJSON, &v.Metrics)
 	}
+	hydrateLifecycle(&v)
 
 	return &v, nil
 }
@@ -1021,7 +1023,7 @@ func (r *PostgreSQLRepository) GetCandidatesWithEmbeddings(ctx context.Context, 
 
 	args := postgresUUIDArguments(ids)
 	query := `
-		SELECT v.id, v.content, v.wing, v.room, v.token_count, v.created_at, v.valid_from, v.valid_until, v.kind,
+		SELECT v.id, v.content, v.wing, v.room, v.token_count, v.created_at, v.valid_from, v.valid_until, v.kind, v.metadata,
 			   v.summary, v.summary_tokens,
 			   f.id, f.ftype, f.fact_count, f.token_estimate, f.model_hash, f.data,
 			   e.vector::float4[]
@@ -1040,6 +1042,7 @@ func (r *PostgreSQLRepository) GetCandidatesWithEmbeddings(ctx context.Context, 
 	for rows.Next() {
 		var vID, fID uuid.UUID
 		var vContent, vWing, vKind, fType, fModelHash string
+		var vMetadata []byte
 		var vRoom sql.NullString
 		var vSummary sql.NullString
 		var vTokenCount, vSummaryTokens, fFactCount, fTokenEstimate int
@@ -1049,7 +1052,7 @@ func (r *PostgreSQLRepository) GetCandidatesWithEmbeddings(ctx context.Context, 
 		var vector []float32
 
 		err := rows.Scan(
-			&vID, &vContent, &vWing, &vRoom, &vTokenCount, &vCreatedAt, &vValidFrom, &vValidUntil, &vKind,
+			&vID, &vContent, &vWing, &vRoom, &vTokenCount, &vCreatedAt, &vValidFrom, &vValidUntil, &vKind, &vMetadata,
 			&vSummary, &vSummaryTokens,
 			&fID, &fType, &fFactCount, &fTokenEstimate, &fModelHash, &fData,
 			&vector,
@@ -1076,6 +1079,10 @@ func (r *PostgreSQLRepository) GetCandidatesWithEmbeddings(ctx context.Context, 
 			ValidUntil:        nullableUnixTime(vValidUntil),
 			Kind:              valueobjects.MemoryKind(vKind),
 		}
+		if len(vMetadata) > 0 {
+			_ = json.Unmarshal(vMetadata, &verbatim.Metadata)
+		}
+		hydrateLifecycle(verbatim)
 		if vRoom.Valid {
 			verbatim.Room = &vRoom.String
 		}

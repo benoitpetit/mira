@@ -23,7 +23,16 @@ type Verbatim struct {
 	Metrics           map[string]any          `json:"metrics,omitempty"`
 	Summary           *string                 `json:"summary,omitempty"`
 	SummaryTokenCount int                     `json:"summary_token_count,omitempty"`
+	LifecycleState    string                  `json:"lifecycle_state,omitempty"`
+	SupersededBy      *uuid.UUID              `json:"superseded_by,omitempty"`
 }
+
+const (
+	LifecycleActive     = "active"
+	LifecycleSuperseded = "superseded"
+	LifecycleArchived   = "archived"
+	LifecycleContested  = "contested"
+)
 
 // IsValidAt reports whether this memory is valid at the requested time. Both
 // bounds are inclusive: a fact ending at an instant is still valid at that
@@ -38,14 +47,15 @@ func (v *Verbatim) IsValidAt(at time.Time) bool {
 // NewVerbatim creates a new verbatim with generated ID
 func NewVerbatim(content, wing string, room *string) *Verbatim {
 	return &Verbatim{
-		ID:        uuid.New(),
-		Content:   content,
-		Kind:      valueobjects.KindKnowledge,
-		Wing:      wing,
-		Room:      room,
-		CreatedAt: time.Now(),
-		Metadata:  make(map[string]any),
-		Metrics:   make(map[string]any),
+		ID:             uuid.New(),
+		Content:        content,
+		Kind:           valueobjects.KindKnowledge,
+		Wing:           wing,
+		Room:           room,
+		CreatedAt:      time.Now(),
+		Metadata:       make(map[string]any),
+		Metrics:        make(map[string]any),
+		LifecycleState: LifecycleActive,
 	}
 }
 
