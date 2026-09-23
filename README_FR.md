@@ -19,6 +19,10 @@
 
 </div>
 
+> **Licence :** le code source de MIRA est disponible sous [licence MIT](LICENSE).
+> Le nom du projet, le logo et l'identité visuelle ne sont pas concédés par la
+> licence du code ; voir [NOTICE.md](NOTICE.md).
+
 ---
 
 ## Table des matières
