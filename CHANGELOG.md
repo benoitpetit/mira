@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-23
+
+### Changed
+- **License and ownership notices**: MIRA's current source is now offered under PolyForm Noncommercial 1.0.0. Historical versions before v0.8.0 remain under MIT; the MIRA name and branding are reserved separately.
+- **Maintenance funding**: donations are documented as the current sole source of MIRA maintenance funding, without a support or SLA commitment.
+
 ## [0.7.0] - 2026-09-22
 
 ### Added
