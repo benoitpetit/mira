@@ -93,6 +93,64 @@ type Snapshot struct {
 	ChangeReason        string                 `json:"change_reason,omitempty"`
 	BehavioralMetrics   map[string]interface{} `json:"behavioral_metrics,omitempty"`
 	LinkedMiraMemories  []uuid.UUID            `json:"linked_mira_memories"`
+	Evidence            []TraitEvidence        `json:"evidence,omitempty"`
+}
+
+const maxTraitEvidenceExcerpt = 512
+
+// ConversationObservation keeps provenance at the capture boundary. Only
+// assistant observations can update normative identity; every other role is
+// retained as unattributed context for diagnostics.
+type ConversationObservation struct {
+	Role      string    `json:"role"`
+	Content   string    `json:"content"`
+	Timestamp time.Time `json:"timestamp,omitempty"`
+	SessionID string    `json:"session_id,omitempty"`
+}
+
+func (o *ConversationObservation) normalize() {
+	switch strings.ToLower(strings.TrimSpace(o.Role)) {
+	case "assistant", "agent", "mira":
+		o.Role = "assistant"
+	case "user", "system", "tool":
+		o.Role = strings.ToLower(strings.TrimSpace(o.Role))
+	default:
+		o.Role = "unattributed"
+	}
+	if o.Timestamp.IsZero() {
+		o.Timestamp = time.Now().UTC()
+	}
+	if len(o.Content) > maxTraitEvidenceExcerpt {
+		o.Content = o.Content[:maxTraitEvidenceExcerpt]
+	}
+}
+
+func (o ConversationObservation) MarshalJSON() ([]byte, error) {
+	type alias ConversationObservation
+	n := o
+	n.normalize()
+	return json.Marshal(alias(n))
+}
+
+func (o *ConversationObservation) UnmarshalJSON(data []byte) error {
+	type alias ConversationObservation
+	var value alias
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	*o = ConversationObservation(value)
+	o.normalize()
+	return nil
+}
+
+type TraitEvidence struct {
+	SnapshotID uuid.UUID `json:"snapshot_id"`
+	TraitName  string    `json:"trait_name"`
+	Role       string    `json:"role"`
+	Excerpt    string    `json:"excerpt"`
+	SessionID  string    `json:"session_id,omitempty"`
+	ObservedAt time.Time `json:"observed_at"`
+	Confidence float64   `json:"confidence"`
 }
 
 type Trait struct {
@@ -211,6 +269,7 @@ type UpdateResult struct {
 type CaptureRequest struct {
 	AgentID           string
 	Conversation      string
+	Messages          []ConversationObservation
 	AgentResponses    []string
 	ModelID           string
 	SessionID         string
@@ -299,6 +358,13 @@ CREATE TABLE IF NOT EXISTS agent_memory_links (
  PRIMARY KEY(identity_id, memory_id)
 );
 CREATE INDEX IF NOT EXISTS idx_agent_memory_links_identity ON agent_memory_links(identity_id);
+CREATE TABLE IF NOT EXISTS agent_memory_trait_evidence (
+ snapshot_id TEXT NOT NULL, trait_name TEXT NOT NULL, role TEXT NOT NULL,
+ excerpt TEXT NOT NULL, session_id TEXT, observed_at TEXT NOT NULL,
+ confidence REAL NOT NULL DEFAULT 0,
+ PRIMARY KEY(snapshot_id, trait_name, excerpt)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_evidence_snapshot ON agent_memory_trait_evidence(snapshot_id);
 `
 	if r.dialect == PostgreSQLDialect {
 		schema = `
@@ -321,6 +387,13 @@ CREATE TABLE IF NOT EXISTS agent_memory_links (
  PRIMARY KEY(identity_id, memory_id)
 );
 CREATE INDEX IF NOT EXISTS idx_agent_memory_links_identity ON agent_memory_links(identity_id);
+CREATE TABLE IF NOT EXISTS agent_memory_trait_evidence (
+ snapshot_id TEXT NOT NULL, trait_name TEXT NOT NULL, role TEXT NOT NULL,
+ excerpt TEXT NOT NULL, session_id TEXT, observed_at TEXT NOT NULL,
+ confidence DOUBLE PRECISION NOT NULL DEFAULT 0,
+ PRIMARY KEY(snapshot_id, trait_name, excerpt)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_evidence_snapshot ON agent_memory_trait_evidence(snapshot_id);
 `
 	}
 	if _, err := r.db.Exec(schema); err != nil {
@@ -432,11 +505,8 @@ func (r *Runtime) Capture(ctx context.Context, req CaptureRequest) (*Snapshot, e
 	if strings.TrimSpace(req.AgentID) == "" {
 		return nil, errors.New("agent_id is required")
 	}
-	text := strings.TrimSpace(strings.Join(req.AgentResponses, "\n"))
-	if text == "" {
-		text = strings.TrimSpace(req.Conversation)
-	}
-	if text == "" {
+	text := assistantObservationText(req)
+	if text == "" && strings.TrimSpace(req.Conversation) == "" {
 		return nil, errors.New("conversation or agent response is required")
 	}
 	if req.ModelID == "" {
@@ -463,6 +533,9 @@ func (r *Runtime) Capture(ctx context.Context, req CaptureRequest) (*Snapshot, e
 		snapshot.SourceMemoriesCount = len(snapshot.LinkedMiraMemories)
 	}
 	if err := r.storeSnapshot(ctx, snapshot); err != nil {
+		return nil, err
+	}
+	if err := r.storeTraitEvidence(ctx, snapshot); err != nil {
 		return nil, err
 	}
 	if r.provider != nil {
@@ -499,6 +572,20 @@ func (r *Runtime) storeSnapshotWith(ctx context.Context, execer sqlExecer, snap 
 	return err
 }
 
+func (r *Runtime) storeTraitEvidence(ctx context.Context, snap *Snapshot) error {
+	for _, evidence := range snap.Evidence {
+		_, err := r.db.ExecContext(ctx, bindPlaceholders(`INSERT INTO agent_memory_trait_evidence
+ (snapshot_id, trait_name, role, excerpt, session_id, observed_at, confidence)
+ VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`, r.dialect),
+			evidence.SnapshotID.String(), evidence.TraitName, evidence.Role, evidence.Excerpt,
+			evidence.SessionID, evidence.ObservedAt.UTC().Format(time.RFC3339Nano), evidence.Confidence)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func nullableUUID(id *uuid.UUID) interface{} {
 	if id == nil {
 		return nil
@@ -520,6 +607,9 @@ func decodeSnapshot(payload string) (*Snapshot, error) {
 	if snap.LinkedMiraMemories == nil {
 		snap.LinkedMiraMemories = []uuid.UUID{}
 	}
+	if snap.Evidence == nil {
+		snap.Evidence = []TraitEvidence{}
+	}
 	return &snap, nil
 }
 
@@ -536,10 +626,7 @@ func extractSnapshot(req CaptureRequest, previous *Snapshot, cfg Config) *Snapsh
 	}
 	snap.SessionID = req.SessionID
 	snap.ChangeReason = ""
-	text := strings.TrimSpace(strings.Join(req.AgentResponses, "\n"))
-	if text == "" {
-		text = req.Conversation
-	}
+	text := assistantObservationText(req)
 	observed := extractTraits(text, cfg)
 	snap.PersonalityTraits = mergeTraits(snap.PersonalityTraits, observed, now)
 	snap.VoiceProfile = extractVoice(text, snap.VoiceProfile)
@@ -561,7 +648,45 @@ func extractSnapshot(req CaptureRequest, previous *Snapshot, cfg Config) *Snapsh
 		snap.PersonalityTraits = traitsFromMetrics(req.BehavioralMetrics, now)
 		snap.ConfidenceScore = 0.6
 	}
+	for _, trait := range observed {
+		for _, message := range assistantObservations(req) {
+			excerpt := strings.TrimSpace(message.Content)
+			if len(excerpt) > maxTraitEvidenceExcerpt {
+				excerpt = excerpt[:maxTraitEvidenceExcerpt]
+			}
+			if excerpt == "" {
+				continue
+			}
+			snap.Evidence = append(snap.Evidence, TraitEvidence{SnapshotID: snap.ID, TraitName: trait.Name, Role: "assistant", Excerpt: excerpt, SessionID: message.SessionID, ObservedAt: message.Timestamp, Confidence: trait.Confidence})
+			break
+		}
+	}
 	return snap
+}
+
+func assistantObservations(req CaptureRequest) []ConversationObservation {
+	result := make([]ConversationObservation, 0, len(req.Messages)+len(req.AgentResponses))
+	for _, message := range req.Messages {
+		message.normalize()
+		if message.Role == "assistant" && strings.TrimSpace(message.Content) != "" {
+			result = append(result, message)
+		}
+	}
+	for _, response := range req.AgentResponses {
+		if strings.TrimSpace(response) != "" {
+			result = append(result, ConversationObservation{Role: "assistant", Content: response, Timestamp: time.Now().UTC(), SessionID: req.SessionID})
+		}
+	}
+	return result
+}
+
+func assistantObservationText(req CaptureRequest) string {
+	observations := assistantObservations(req)
+	parts := make([]string, 0, len(observations))
+	for _, observation := range observations {
+		parts = append(parts, strings.TrimSpace(observation.Content))
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n"))
 }
 
 func neutralSnapshot(agentID, modelID string, now time.Time) *Snapshot {
