@@ -496,7 +496,7 @@ func (a *Application) initUseCases() {
 	a.getTimeline = interactors.NewGetTimeline(repo)
 	a.getStatus = interactors.NewGetStatus(repo, repo, a.startTime, config.CurrentVersion)
 	a.getCausalChain = interactors.NewGetCausalChain(repo)
-	a.archiveMemories = interactors.NewArchiveMemories(repo)
+	a.archiveMemories = interactors.NewArchiveMemories(repo, a.vectorStore)
 	a.clearMemory = interactors.NewClearMemory(repo, a.vectorStore)
 	a.deleteMemory = interactors.NewDeleteMemory(repo, a.vectorStore)
 	a.searchSemantic = interactors.NewSearchSemantic(a.vectorStore, a.embedder)
