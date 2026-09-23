@@ -552,9 +552,9 @@ func (r *SQLiteRepository) AddEdge(ctx context.Context, edge *entities.CausalEdg
 // AddEdgeTx implements CausalGraphRepository
 func (r *SQLiteRepository) AddEdgeTx(ctx context.Context, tx *sql.Tx, edge *entities.CausalEdge) error {
 	_, err := tx.ExecContext(ctx,
-		`INSERT OR IGNORE INTO causal_edges (from_id, to_id, relation, weight, detected_at)
-		 VALUES (?, ?, ?, ?, ?)`,
-		edge.FromID[:], edge.ToID[:], string(edge.Relation), edge.Weight, float64(edge.DetectedAt.Unix()),
+		`INSERT OR IGNORE INTO causal_edges (from_id, to_id, relation, weight, detected_at, confidence, status, evidence, detector)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		edge.FromID[:], edge.ToID[:], string(edge.Relation), edge.Weight, float64(edge.DetectedAt.Unix()), edge.Confidence, edge.Status, edge.Evidence, edge.Detector,
 	)
 	return err
 }

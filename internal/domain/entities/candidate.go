@@ -6,16 +6,19 @@ import "github.com/google/uuid"
 
 // Candidate represents a potential memory for selection in CBA
 type Candidate struct {
-	Memory        *Fingerprint
-	Verbatim      *Verbatim
-	Embedding     []float32
-	Score         float64
-	Relevance     float64
-	Density       float64
-	Recency       float64
-	SessionBoost  float64
-	MaxOverlap    float64
-	CausalPenalty float64
+	Memory               *Fingerprint
+	Verbatim             *Verbatim
+	Embedding            []float32
+	Score                float64
+	Relevance            float64
+	Density              float64
+	Recency              float64
+	SessionBoost         float64
+	MaxOverlap           float64
+	CausalPenalty        float64
+	ExtractionConfidence float64
+	ValidationFreshness  float64
+	LifecycleFactor      float64
 }
 
 // NewCandidate creates a candidate from memory, verbatim and embedding
