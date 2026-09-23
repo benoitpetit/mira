@@ -94,6 +94,7 @@ type Snapshot struct {
 	BehavioralMetrics   map[string]interface{} `json:"behavioral_metrics,omitempty"`
 	LinkedMiraMemories  []uuid.UUID            `json:"linked_mira_memories"`
 	Evidence            []TraitEvidence        `json:"evidence,omitempty"`
+	RetentionClass      string                 `json:"retention_class,omitempty"`
 }
 
 const maxTraitEvidenceExcerpt = 512
@@ -343,6 +344,7 @@ CREATE TABLE IF NOT EXISTS agent_memory_identities (
  id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, version INTEGER NOT NULL,
  created_at TEXT NOT NULL, derived_from_id TEXT, snapshot_json TEXT NOT NULL,
  confidence_score REAL NOT NULL DEFAULT 0, model_identifier TEXT NOT NULL DEFAULT 'unknown',
+ retention_class TEXT NOT NULL DEFAULT 'current',
  UNIQUE(agent_id, version)
 );
 CREATE INDEX IF NOT EXISTS idx_agent_memory_identities_agent ON agent_memory_identities(agent_id, version);
@@ -372,6 +374,7 @@ CREATE TABLE IF NOT EXISTS agent_memory_identities (
  id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, version INTEGER NOT NULL,
  created_at TEXT NOT NULL, derived_from_id TEXT, snapshot_json TEXT NOT NULL,
  confidence_score DOUBLE PRECISION NOT NULL DEFAULT 0, model_identifier TEXT NOT NULL DEFAULT 'unknown',
+ retention_class TEXT NOT NULL DEFAULT 'current',
  UNIQUE(agent_id, version)
 );
 CREATE INDEX IF NOT EXISTS idx_agent_memory_identities_agent ON agent_memory_identities(agent_id, version);
@@ -397,6 +400,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_memory_evidence_snapshot ON agent_memory_tr
 `
 	}
 	if _, err := r.db.Exec(schema); err != nil {
+		return err
+	}
+	if _, err := r.db.Exec(`ALTER TABLE agent_memory_identities ADD COLUMN retention_class TEXT NOT NULL DEFAULT 'current'`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate") && !strings.Contains(strings.ToLower(err.Error()), "already exists") {
 		return err
 	}
 	return r.migrateLegacyTables()
@@ -481,7 +487,7 @@ func (r *Runtime) History(ctx context.Context, agentID string, limit int) ([]*Sn
 	if limit > r.cfg.MaxHistoryVersions {
 		limit = r.cfg.MaxHistoryVersions
 	}
-	rows, err := r.db.QueryContext(ctx, bindPlaceholders(`SELECT snapshot_json FROM agent_memory_identities WHERE agent_id=? ORDER BY version DESC LIMIT ?`, r.dialect), agentID, limit)
+	rows, err := r.db.QueryContext(ctx, bindPlaceholders(`SELECT snapshot_json FROM agent_memory_identities WHERE agent_id=? AND COALESCE(retention_class, 'current') <> 'compacted' ORDER BY version DESC LIMIT ?`, r.dialect), agentID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -499,6 +505,53 @@ func (r *Runtime) History(ctx context.Context, agentID string, limit int) ([]*Sn
 		result = append(result, snap)
 	}
 	return result, rows.Err()
+}
+
+// CompactHistory marks intermediate immutable versions as compacted instead of
+// deleting them. Parents remain resolvable for audit and rollback.
+func (r *Runtime) CompactHistory(ctx context.Context, agentID string) (int, error) {
+	rows, err := r.db.QueryContext(ctx, bindPlaceholders(`SELECT id, version, snapshot_json FROM agent_memory_identities WHERE agent_id=? ORDER BY version DESC`, r.dialect), agentID)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	type rowData struct {
+		id      string
+		version int
+		payload string
+	}
+	var all []rowData
+	for rows.Next() {
+		var row rowData
+		if err := rows.Scan(&row.id, &row.version, &row.payload); err != nil {
+			return 0, err
+		}
+		all = append(all, row)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	changed := 0
+	for index, row := range all {
+		snap, err := decodeSnapshot(row.payload)
+		if err != nil {
+			return changed, err
+		}
+		keep := index == 0 || row.version == 1 || strings.TrimSpace(snap.ChangeReason) != ""
+		if keep || snap.RetentionClass == "compacted" {
+			continue
+		}
+		snap.RetentionClass = "compacted"
+		payload, err := json.Marshal(snap)
+		if err != nil {
+			return changed, err
+		}
+		if _, err := r.db.ExecContext(ctx, bindPlaceholders(`UPDATE agent_memory_identities SET retention_class=?, snapshot_json=? WHERE id=?`, r.dialect), "compacted", string(payload), row.id); err != nil {
+			return changed, err
+		}
+		changed++
+	}
+	return changed, nil
 }
 
 func (r *Runtime) Capture(ctx context.Context, req CaptureRequest) (*Snapshot, error) {
@@ -535,6 +588,7 @@ func (r *Runtime) Capture(ctx context.Context, req CaptureRequest) (*Snapshot, e
 	if err := r.storeSnapshot(ctx, snapshot); err != nil {
 		return nil, err
 	}
+	_, _ = r.CompactHistory(ctx, req.AgentID)
 	if err := r.storeTraitEvidence(ctx, snapshot); err != nil {
 		return nil, err
 	}
@@ -560,15 +614,18 @@ func (r *Runtime) storeSnapshot(ctx context.Context, snap *Snapshot) error {
 }
 
 func (r *Runtime) storeSnapshotWith(ctx context.Context, execer sqlExecer, snap *Snapshot) error {
+	if snap.RetentionClass == "" {
+		snap.RetentionClass = "current"
+	}
 	payload, err := json.Marshal(snap)
 	if err != nil {
 		return err
 	}
 	_, err = execer.ExecContext(ctx, bindPlaceholders(`INSERT INTO agent_memory_identities
- (id, agent_id, version, created_at, derived_from_id, snapshot_json, confidence_score, model_identifier)
- VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, r.dialect), snap.ID.String(), snap.AgentID, snap.Version,
+ (id, agent_id, version, created_at, derived_from_id, snapshot_json, confidence_score, model_identifier, retention_class)
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, r.dialect), snap.ID.String(), snap.AgentID, snap.Version,
 		snap.CreatedAt.UTC().Format(time.RFC3339Nano), nullableUUID(snap.DerivedFromID), string(payload),
-		snap.ConfidenceScore, snap.ModelIdentifier)
+		snap.ConfidenceScore, snap.ModelIdentifier, snap.RetentionClass)
 	return err
 }
 
@@ -1042,6 +1099,7 @@ func (r *Runtime) HandleSwap(ctx context.Context, agentID, fromModel, toModel st
 		if err := tx.Commit(); err != nil {
 			return nil, nil, err
 		}
+		_, _ = r.CompactHistory(ctx, agentID)
 		prompt, err := r.Recall(ctx, agentID, "", r.cfg.DefaultBudgetTokens)
 		if err != nil {
 			return nil, nil, err
@@ -1160,6 +1218,7 @@ func (r *Runtime) Update(ctx context.Context, agentID, directive, reason string)
 	if err := r.storeSnapshot(ctx, next); err != nil {
 		return nil, nil, err
 	}
+	_, _ = r.CompactHistory(ctx, agentID)
 	return next, &UpdateResult{AgentID: agentID, NewVersion: next.Version, ChangesApplied: changes, Timestamp: next.CreatedAt}, nil
 }
 
@@ -1244,6 +1303,7 @@ func (r *Runtime) Patch(ctx context.Context, agentID string, patch map[string]in
 	if err := r.storeSnapshot(ctx, next); err != nil {
 		return nil, nil, err
 	}
+	_, _ = r.CompactHistory(ctx, agentID)
 	return next, &UpdateResult{AgentID: agentID, NewVersion: next.Version, ChangesApplied: changes, Timestamp: next.CreatedAt}, nil
 }
 
