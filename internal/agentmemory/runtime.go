@@ -537,7 +537,7 @@ func (r *Runtime) CompactHistory(ctx context.Context, agentID string) (int, erro
 		if err != nil {
 			return changed, err
 		}
-		keep := index == 0 || row.version == 1 || strings.TrimSpace(snap.ChangeReason) != ""
+		keep := index < r.cfg.MaxHistoryVersions || row.version == 1 || strings.TrimSpace(snap.ChangeReason) != ""
 		if keep || snap.RetentionClass == "compacted" {
 			continue
 		}
