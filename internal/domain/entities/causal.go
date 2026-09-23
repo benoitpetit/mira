@@ -37,6 +37,10 @@ type CausalEdge struct {
 	Relation   valueobjects.RelationType
 	Weight     float64
 	DetectedAt time.Time
+	Confidence float64 `json:"confidence"`
+	Status     string  `json:"status"`
+	Evidence   string  `json:"evidence,omitempty"`
+	Detector   string  `json:"detector,omitempty"`
 }
 
 // NewCausalEdge creates a new causal edge
@@ -47,5 +51,8 @@ func NewCausalEdge(fromID, toID uuid.UUID, relation valueobjects.RelationType) *
 		Relation:   relation,
 		Weight:     0.7,
 		DetectedAt: time.Now(),
+		Confidence: 0.7,
+		Status:     "confirmed",
+		Detector:   "native",
 	}
 }

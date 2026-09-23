@@ -5,6 +5,7 @@ import (
 	"container/heap"
 	"container/list"
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -647,6 +648,30 @@ func (uc *RecallMemory) scoreCandidates(candidates []*entities.Candidate, queryV
 	now := time.Now()
 
 	for _, c := range candidates {
+		c.LifecycleFactor = 1
+		if c.Verbatim != nil && c.Verbatim.LifecycleState != "" && c.Verbatim.LifecycleState != entities.LifecycleActive {
+			c.LifecycleFactor = 0
+		}
+		// Legacy fingerprints have no quality metadata; preserve their score
+		// while newer extractions opt into calibrated confidence.
+		c.ExtractionConfidence = 1
+		if c.Memory != nil {
+			if raw, ok := c.Memory.Data.Custom["extraction_confidence"].(float64); ok {
+				c.ExtractionConfidence = clampRecallScore(raw)
+			}
+			if raw, ok := c.Memory.Data.Custom["extraction_confidence"].(json.Number); ok {
+				if value, err := raw.Float64(); err == nil {
+					c.ExtractionConfidence = clampRecallScore(value)
+				}
+			}
+		}
+		c.ValidationFreshness = 1
+		if c.Memory != nil && c.Memory.Data.ValidatedBy != "" {
+			ageDays := now.Sub(c.Verbatim.CreatedAt).Hours() / 24
+			if ageDays > 0 {
+				c.ValidationFreshness = clampRecallScore(math.Exp(-ageDays / 90))
+			}
+		}
 		// ρ: semantic relevance [0,1]
 		c.Relevance = util.CosineSimilarity(c.Embedding, queryVec)
 		// Normalize from [-1,1] to [0,1] only if needed
@@ -685,7 +710,7 @@ func (uc *RecallMemory) scoreCandidates(candidates []*entities.Candidate, queryV
 		c.Recency = clampRecallScore(c.Recency)
 
 		// Initial score (without overlap/causal/session)
-		c.Score = c.Relevance * c.Density * c.Recency
+		c.Score = c.Relevance * c.Density * c.Recency * c.ExtractionConfidence * c.ValidationFreshness * c.LifecycleFactor
 	}
 
 	return candidates
@@ -972,6 +997,9 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 	for h.Len() > 0 && budget-tokensUsed >= 50 {
 		// Extract best from heap (O(log n))
 		c := heap.Pop(h).(*entities.Candidate)
+		if c.LifecycleFactor == 0 {
+			continue
+		}
 
 		// Lazily compute overlap and update scores on first pop.
 		// We use needsScore instead of (MaxOverlap == 0 && Score > 0) because
@@ -1000,17 +1028,10 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 			}
 			c.MaxOverlap = maxOverlap
 
-			// Causal penalty
-			causalCount := 0
-			if uc.causalGraph != nil {
-				for _, sel := range selected {
-					if uc.causalGraph.HasEdge(ctx, sel.CandidateID, c.ID()) ||
-						uc.causalGraph.HasEdge(ctx, c.ID(), sel.CandidateID) {
-						causalCount++
-					}
-				}
-			}
-			c.CausalPenalty = math.Exp(-uc.causalPenaltyAlpha * float64(causalCount))
+			// Causal neighbors are retained as context. Relation-specific edge
+			// semantics are resolved by the graph layer; recall must not suppress
+			// a cause merely because its consequence was selected.
+			c.CausalPenalty = 1
 
 			// Session boost
 			sessionWindow := float64(uc.sessionWindowSeconds)
@@ -1035,7 +1056,7 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 				diversityBoost = 1.0 + uc.diversityBoostAlpha*float64(newSubjects)/float64(len(c.Memory.Subjects))
 			}
 
-			initialScore := c.Relevance * c.Density * c.Recency
+			initialScore := c.Relevance * c.Density * c.Recency * c.ExtractionConfidence * c.ValidationFreshness * c.LifecycleFactor
 			if uc.sessionMemoryBoost > 0 && sessionMemoryIDs != nil && sessionMemoryIDs[c.ID()] {
 				initialScore *= uc.sessionMemoryBoost
 			}

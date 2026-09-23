@@ -205,7 +205,8 @@ func (a *Application) initAgentMemory() error {
 		return memories, nil
 	}
 	store := func(ctx context.Context, content, wing string, room *string, memoryType *valueobjects.MemoryType) (uuid.UUID, error) {
-		out, err := a.storeMemory.Execute(ctx, interactors.StoreMemoryInput{Content: content, Wing: wing, Room: room, Type: memoryType})
+		kind := valueobjects.KindIdentity
+		out, err := a.storeMemory.Execute(ctx, interactors.StoreMemoryInput{Content: content, Wing: wing, Room: room, Type: memoryType, Kind: &kind})
 		if err != nil {
 			return uuid.Nil, err
 		}
@@ -285,6 +286,8 @@ func (a *Application) initExtractor() error {
 	nativeOpts := extraction.NativeExtractorOptions{
 		ModelName:       cfg.Embeddings.CurrentModel,
 		MinEntityLength: cfg.Extraction.MinEntityLength,
+		CausalLookback:  cfg.Extraction.CausalLookback,
+		CausalMaxDays:   cfg.Extraction.CausalMaxDays,
 	}
 
 	if cfg.Extraction.LLM.Enabled {

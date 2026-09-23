@@ -503,10 +503,10 @@ func (r *PostgreSQLRepository) AddEdge(ctx context.Context, edge *entities.Causa
 // AddEdgeTx implements CausalGraphRepository
 func (r *PostgreSQLRepository) AddEdgeTx(ctx context.Context, tx *sql.Tx, edge *entities.CausalEdge) error {
 	_, err := tx.ExecContext(ctx,
-		`INSERT INTO causal_edges (from_id, to_id, relation, weight, detected_at)
-		 VALUES ($1, $2, $3, $4, $5)
+		`INSERT INTO causal_edges (from_id, to_id, relation, weight, detected_at, confidence, status, evidence, detector)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		 ON CONFLICT (from_id, to_id, relation) DO NOTHING`,
-		edge.FromID, edge.ToID, string(edge.Relation), edge.Weight, float64(edge.DetectedAt.Unix()),
+		edge.FromID, edge.ToID, string(edge.Relation), edge.Weight, float64(edge.DetectedAt.Unix()), edge.Confidence, edge.Status, edge.Evidence, edge.Detector,
 	)
 	return err
 }

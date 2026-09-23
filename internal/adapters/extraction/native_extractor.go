@@ -39,6 +39,8 @@ type NativeExtractor struct {
 	factDataPattern    *regexp.Regexp
 	subjectPatterns    []*regexp.Regexp
 	negationPatterns   []*regexp.Regexp
+	causalLookback     int
+	causalMaxDays      int
 
 	// Gazetteers for NER
 	commonFirstNames map[string]bool
@@ -50,6 +52,8 @@ type NativeExtractor struct {
 type NativeExtractorOptions struct {
 	ModelName       string
 	MinEntityLength int
+	CausalLookback  int
+	CausalMaxDays   int
 }
 
 // NewNativeExtractor creates a new native extractor (prose replacement)
@@ -66,6 +70,14 @@ func NewNativeExtractor(embedder ports.Embedder, opts NativeExtractorOptions) (*
 		embedder:        embedder,
 		modelHash:       modelHash,
 		minEntityLength: minEntityLen,
+		causalLookback:  opts.CausalLookback,
+		causalMaxDays:   opts.CausalMaxDays,
+	}
+	if e.causalLookback <= 0 {
+		e.causalLookback = 50
+	}
+	if e.causalMaxDays <= 0 {
+		e.causalMaxDays = 30
 	}
 
 	e.compilePatterns()
@@ -561,16 +573,24 @@ func (e *NativeExtractor) DetectCausalRelations(ctx context.Context, newFp *enti
 	contentLower := strings.ToLower(verbatimContent)
 	seen := make(map[uuid.UUID]bool)
 
+	considered := 0
 	for _, cp := range e.causalPatterns {
 		if cp.pattern.MatchString(contentLower) {
 			// Find first recent fingerprint with semantic overlap
 			for _, recentFp := range recentFps {
-				if recentFp == nil || seen[recentFp.ID] {
+				if recentFp == nil || seen[recentFp.ID] || considered >= e.causalLookback {
+					continue
+				}
+				considered++
+				if !newFp.ExtractedAt.IsZero() && !recentFp.ExtractedAt.IsZero() && newFp.ExtractedAt.Sub(recentFp.ExtractedAt) > time.Duration(e.causalMaxDays)*24*time.Hour {
 					continue
 				}
 				// Require semantic overlap (shared subject or entity) to reduce false positives
-				if hasSemanticOverlap(newFp, recentFp) {
+				if hasReliableSemanticOverlap(newFp, recentFp) {
 					edge := entities.NewCausalEdge(recentFp.ID, newFp.ID, cp.relType)
+					edge.Confidence = 0.85
+					edge.Status = "confirmed"
+					edge.Evidence = truncateEvidence(verbatimContent, 240)
 					edges = append(edges, edge)
 					seen[recentFp.ID] = true
 					break
@@ -618,6 +638,46 @@ func hasSemanticOverlap(a, b *entities.Fingerprint) bool {
 		}
 	}
 	return false
+}
+
+func hasReliableSemanticOverlap(a, b *entities.Fingerprint) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	for _, left := range a.Subjects {
+		if isGenericSubject(left) {
+			continue
+		}
+		for _, right := range b.Subjects {
+			if !isGenericSubject(right) && strings.EqualFold(strings.TrimSpace(left), strings.TrimSpace(right)) {
+				return true
+			}
+		}
+	}
+	for _, left := range a.Entities {
+		for _, right := range b.Entities {
+			if strings.EqualFold(strings.TrimSpace(left), strings.TrimSpace(right)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isGenericSubject(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "note", "memory", "thing", "item", "general":
+		return true
+	}
+	return false
+}
+
+func truncateEvidence(value string, max int) string {
+	runes := []rune(strings.TrimSpace(value))
+	if len(runes) > max {
+		return string(runes[:max])
+	}
+	return string(runes)
 }
 
 // Ensure NativeExtractor implements the Extractor interface

@@ -3,6 +3,7 @@ package extraction
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
@@ -16,6 +17,24 @@ func newTestExtractor(t *testing.T) *NativeExtractor {
 		t.Fatalf("NewNativeExtractor failed: %v", err)
 	}
 	return e
+}
+
+func TestDetectCausalRelationsRejectsGenericSubjectsAndHonorsWindow(t *testing.T) {
+	e, err := NewNativeExtractor(NewSimpleEmbedder(384), NativeExtractorOptions{ModelName: "test-model", CausalMaxDays: 2, CausalLookback: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := &entities.Fingerprint{Subjects: []string{"Note"}, ExtractedAt: time.Now().Add(-72 * time.Hour)}
+	old.ID = [16]byte{1}
+	current := &entities.Fingerprint{Subjects: []string{"Note"}, ExtractedAt: time.Now()}
+	current.ID = [16]byte{2}
+	edges, err := e.DetectCausalRelations(context.Background(), current, []*entities.Fingerprint{old}, "This updates the previous note")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(edges) != 0 {
+		t.Fatalf("generic/out-of-window subject created an edge: %+v", edges)
+	}
 }
 
 func TestDetectCausalRelations_English(t *testing.T) {
