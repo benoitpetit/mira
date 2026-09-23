@@ -521,6 +521,15 @@ func (r *PostgreSQLRepository) HasEdge(ctx context.Context, fromID, toID uuid.UU
 	return err == nil && count > 0
 }
 
+func (r *PostgreSQLRepository) RelationBetween(ctx context.Context, fromID, toID uuid.UUID) (valueobjects.RelationType, bool) {
+	var relation string
+	err := r.db.QueryRowContext(ctx, `SELECT relation FROM causal_edges WHERE (from_id=$1 AND to_id=$2) OR (from_id=$3 AND to_id=$4) ORDER BY confidence DESC LIMIT 1`, fromID, toID, toID, fromID).Scan(&relation)
+	if err != nil {
+		return "", false
+	}
+	return valueobjects.RelationType(relation), true
+}
+
 // GetChain implements CausalGraphRepository
 func (r *PostgreSQLRepository) GetChain(ctx context.Context, id uuid.UUID, maxDepth int) ([]*entities.CausalNode, error) {
 	if maxDepth <= 0 {
