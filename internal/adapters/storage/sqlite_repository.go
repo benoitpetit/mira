@@ -120,6 +120,7 @@ func (r *SQLiteRepository) StoreVerbatim(ctx context.Context, verbatim *entities
 
 // StoreVerbatimTx implements VerbatimRepository
 func (r *SQLiteRepository) StoreVerbatimTx(ctx context.Context, tx *sql.Tx, v *entities.Verbatim) error {
+	v.Metadata = lifecycleMetadata(v)
 	metadataJSON, err := json.Marshal(v.Metadata)
 	if err != nil {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
@@ -227,8 +228,25 @@ func (r *SQLiteRepository) GetVerbatimByID(ctx context.Context, id uuid.UUID) (*
 	if len(metricsJSON) > 0 {
 		_ = json.Unmarshal(metricsJSON, &v.Metrics)
 	}
+	hydrateLifecycle(&v)
 
 	return &v, nil
+}
+
+func lifecycleMetadata(v *entities.Verbatim) map[string]any {
+	metadata := v.Metadata
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	state := v.LifecycleState
+	if state == "" {
+		state = entities.LifecycleActive
+	}
+	metadata["lifecycle_state"] = state
+	if v.SupersededBy != nil {
+		metadata["superseded_by"] = v.SupersededBy.String()
+	}
+	return metadata
 }
 
 // UpdateVerbatimSummary implements VerbatimRepository
@@ -1177,7 +1195,7 @@ func (r *SQLiteRepository) SearchLexical(ctx context.Context, query string, limi
 	}
 
 	sqlQuery := `
-		SELECT v.id, v.content, v.wing, v.room, v.token_count, v.created_at, v.valid_from, v.valid_until, v.kind,
+		SELECT v.id, v.content, v.wing, v.room, v.token_count, v.created_at, v.valid_from, v.valid_until, v.kind, v.metadata,
 			   v.summary, v.summary_tokens,
 			   f.id, f.ftype, f.fact_count, f.token_estimate, f.model_hash, f.data,
 			   e.vector, e.dim
@@ -1210,6 +1228,7 @@ func (r *SQLiteRepository) SearchLexical(ctx context.Context, query string, limi
 	for rows.Next() {
 		var vID, fID []byte
 		var vContent, vWing, vKind, fType, fModelHash string
+		var vMetadata []byte
 		var vRoom sql.NullString
 		var vSummary sql.NullString
 		var vTokenCount, vSummaryTokens, fFactCount, fTokenEstimate, eDim int
@@ -1219,7 +1238,7 @@ func (r *SQLiteRepository) SearchLexical(ctx context.Context, query string, limi
 		var eVector []byte
 
 		err := rows.Scan(
-			&vID, &vContent, &vWing, &vRoom, &vTokenCount, &vCreatedAt, &vValidFrom, &vValidUntil, &vKind,
+			&vID, &vContent, &vWing, &vRoom, &vTokenCount, &vCreatedAt, &vValidFrom, &vValidUntil, &vKind, &vMetadata,
 			&vSummary, &vSummaryTokens,
 			&fID, &fType, &fFactCount, &fTokenEstimate, &fModelHash, &fData,
 			&eVector, &eDim,
@@ -1254,6 +1273,10 @@ func (r *SQLiteRepository) SearchLexical(ctx context.Context, query string, limi
 			ValidUntil:        nullableUnixTime(vValidUntil),
 			Kind:              valueobjects.MemoryKind(vKind),
 		}
+		if len(vMetadata) > 0 {
+			_ = json.Unmarshal(vMetadata, &verbatim.Metadata)
+		}
+		hydrateLifecycle(verbatim)
 		if vRoom.Valid {
 			verbatim.Room = &vRoom.String
 		}

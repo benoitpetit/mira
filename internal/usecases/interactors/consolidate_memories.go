@@ -33,6 +33,10 @@ type ConsolidateMemories struct {
 	extractor   ports.Extractor //nolint:staticcheck // extractor methods are consumed together by consolidation
 }
 
+type lifecycleWriter interface {
+	SetVerbatimLifecycle(ctx context.Context, id uuid.UUID, state string, supersededBy *uuid.UUID) error
+}
+
 // NewConsolidateMemories creates a new consolidation interactor
 func NewConsolidateMemories(
 	repository ports.Repository,
@@ -206,26 +210,38 @@ func (uc *ConsolidateMemories) Execute(ctx context.Context, input ConsolidateMem
 
 		output.ConsolidatedCount++
 
-		// Remove original notes by ID (not by room, to avoid deleting unrelated memories)
-		idsToRemove := make([]uuid.UUID, 0, len(cluster))
+		// Keep original notes for provenance and rollback. Normal recall filters
+		// superseded rows, while the authoritative SQL lineage remains intact.
+		idsToSupersede := make([]uuid.UUID, 0, len(cluster))
 		for _, n := range cluster {
-			idsToRemove = append(idsToRemove, n.verbatim.ID)
+			idsToSupersede = append(idsToSupersede, n.verbatim.ID)
 		}
-		deleted, err := uc.repository.ClearByIDs(ctx, idsToRemove)
-		if err != nil {
-			return nil, fmt.Errorf("failed to remove consolidated source memories: %w", err)
+		writer, ok := uc.repository.(lifecycleWriter)
+		if !ok {
+			// Keep compatibility with lightweight test/legacy repositories. The
+			// production SQL adapters implement lifecycleWriter and never take
+			// this destructive fallback.
+			deleted, err := uc.repository.ClearByIDs(ctx, idsToSupersede)
+			if err != nil {
+				return nil, fmt.Errorf("failed to remove consolidated source memories: %w", err)
+			}
+			for _, id := range idsToSupersede {
+				_ = uc.vectorStore.Delete(ctx, id)
+			}
+			output.RemovedCount += deleted
+			continue
 		}
-		for _, id := range idsToRemove {
+		for _, id := range idsToSupersede {
+			if err := writer.SetVerbatimLifecycle(ctx, id, entities.LifecycleSuperseded, &verbatim.ID); err != nil {
+				return nil, fmt.Errorf("failed to supersede consolidated source memory: %w", err)
+			}
 			if err := uc.vectorStore.Delete(ctx, id); err != nil {
-				// Sources are already gone from the authoritative repository. Rebuild
-				// the derived index so deleted notes cannot remain recallable.
 				if repairErr := repairVectorStore(ctx, uc.vectorStore); repairErr != nil {
-					return nil, fmt.Errorf("source memories removed but vector index repair failed: %w", repairErr)
+					return nil, fmt.Errorf("source memory superseded but vector index repair failed: %w", repairErr)
 				}
-				break
 			}
 		}
-		output.RemovedCount += deleted
+		output.RemovedCount += len(idsToSupersede)
 	}
 
 	return output, nil
