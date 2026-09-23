@@ -78,5 +78,5 @@ MIRA is a **long-term memory system for Large Language Models (LLMs)** designed 
 
 ---
 
-*Version documented: 0.7.0*
+*Version documented: 0.8.0*
 *Last updated: 2026-09-21*

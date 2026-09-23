@@ -196,15 +196,20 @@ When adding new PostgreSQL migrations:
 
 ---
 
-## License
+## Contribution rights and license
 
-By contributing to MIRA, you confirm that you have the right to submit the
-contribution and agree that it may be distributed under the repository's [MIT
-License](LICENSE).
+MIRA is source-available under the PolyForm Noncommercial 1.0.0 license from
+v0.8.0 onward. To keep the project maintainable and allow future relicensing,
+contributors must provide a signed written rights agreement before a
+contribution is merged. Use
+[CONTRIBUTOR_ASSIGNMENT_TEMPLATE.md](./CONTRIBUTOR_ASSIGNMENT_TEMPLATE.md) as
+a starting point and contact the maintainer if you need an individual
+agreement.
 
-Contributions remain subject to the rights of their respective authors. This
-project does not claim a transfer of copyright through the contribution
-process. If you contribute on behalf of an employer or another rights holder,
-obtain the necessary permission before submitting the contribution.
+Submitting a pull request does not by itself transfer copyright. Contributions
+already accepted without a separate written agreement remain subject to the
+rights of their respective authors and to the license under which they were
+accepted. Third-party code and assets must retain their original notices and
+licenses.
 
-See the [LICENSE](LICENSE) file for full details.
+See the [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md) files for full details.

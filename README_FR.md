@@ -11,17 +11,25 @@
   ✓ 100% local · ✓ Pas de clé API · ✓ Pas de cloud · ✓ MCP natif · ✓ Économe en tokens · ✓ Persistant entre modèles
 
   [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
-  [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.7.0-blue?style=flat-square)]()
+  [![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue?style=flat-square)](LICENSE)
+  [![Version](https://img.shields.io/badge/Version-0.8.0-blue?style=flat-square)]()
   [![Tests](https://img.shields.io/badge/Tests-~70%25-yellow?style=flat-square)]()
 
   [Documentation](docs/INDEX.md) • [Référence API](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [English](README.md)
 
 </div>
 
-> **Licence :** le code source de MIRA est disponible sous [licence MIT](LICENSE).
-> Le nom du projet, le logo et l'identité visuelle ne sont pas concédés par la
-> licence du code ; voir [NOTICE.md](NOTICE.md).
+> **Licence :** le code source de MIRA est disponible sous [licence PolyForm
+> Noncommercial 1.0.0](LICENSE). L'usage commercial, l'hébergement commercial,
+> l'intégration payante et la redistribution commerciale nécessitent une
+> licence écrite distincte de Benoît Petit. Le nom, le logo et l'identité
+> visuelle sont séparés ; voir [NOTICE.md](NOTICE.md) et
+> [BRAND_POLICY.md](BRAND_POLICY.md).
+
+> **Financement :** les donations sont actuellement la seule source de revenus
+> de la maintenance de MIRA. Le projet évolue au rythme des donations et des
+> priorités du mainteneur. Une donation ne donne aucun droit commercial, support
+> garanti ou SLA.
 
 ---
 
@@ -679,7 +687,7 @@ Nous avons décidé de migrer vers PostgreSQL pour la v2...
 
 ```yaml
 system:
-  version: "0.7.0"
+  version: "0.8.0"
 
 storage:
   path: ".mira"
@@ -760,7 +768,7 @@ agent_memory:
 
 mcp:
   name: "mira"
-  version: "0.7.0"
+  version: "0.8.0"
   transport: "stdio"   # "stdio", "sse", ou "http" stateless sur /mcp
   address: "localhost:3001"
   auth_token: ""         # requis pour HTTP si l'adresse n'est pas locale
@@ -1224,6 +1232,10 @@ make prepublish VERSION=x.y.z  # Préparer une release
 ```
 
 ## Changelog
+
+### v0.8.0 (2026-09-23)
+
+- 🚀 Nouvelle version 0.8.0
 
 Voir [CHANGELOG.md](CHANGELOG.md) pour l'historique complet des releases.
 

@@ -11,17 +11,23 @@
   ✓ 100% local · ✓ No API key · ✓ No cloud · ✓ MCP native · ✓ Token-efficient · ✓ Persistent across models
 
   [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
-  [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.7.0-blue?style=flat-square)]()
+  [![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue?style=flat-square)](LICENSE)
+  [![Version](https://img.shields.io/badge/Version-0.8.0-blue?style=flat-square)]()
   [![Tests](https://img.shields.io/badge/Tests-~70%25-yellow?style=flat-square)]()
 
   [Documentation](docs/INDEX.md) • [API Reference](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [Français](README_FR.md)
 
 </div>
 
-> **Licensing:** MIRA source code is available under the [MIT License](LICENSE).
-> The project name, logo, and branding are not granted by the code license;
-> see [NOTICE.md](NOTICE.md).
+> **Licensing:** MIRA source code is source-available under the [PolyForm
+> Noncommercial 1.0.0 license](LICENSE). Commercial use, commercial hosting,
+> paid integration, and commercial redistribution require a separate written
+> license from Benoît Petit. The project name, logo, and branding are separate;
+> see [NOTICE.md](NOTICE.md) and [BRAND_POLICY.md](BRAND_POLICY.md).
+
+> **Funding:** Donations are currently the sole source of MIRA maintenance.
+> The project evolves according to donations and maintainer priorities.
+> Donations do not grant commercial rights, support, or an SLA.
 
 ---
 
@@ -679,7 +685,7 @@ We decided to migrate to PostgreSQL for v2...
 
 ```yaml
 system:
-  version: "0.7.0"
+  version: "0.8.0"
 
 storage:
   path: ".mira"
@@ -760,7 +766,7 @@ agent_memory:
 
 mcp:
   name: "mira"
-  version: "0.7.0"
+  version: "0.8.0"
   transport: "stdio"   # "stdio", "sse", or stateless "http" at /mcp
   address: "localhost:3001"
   auth_token: ""         # required for HTTP when address is not loopback
@@ -1224,6 +1230,10 @@ make prepublish VERSION=x.y.z  # Prepare a release
 ```
 
 ## Changelog
+
+### v0.8.0 (2026-09-23)
+
+- 🚀 New version 0.8.0
 
 See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
