@@ -360,8 +360,39 @@ Migrations are applied automatically on startup:
 
 ### Consistency Rules
 - SQL storage is authoritative; HNSW, overlap cache, and session cache are derived data.
-- Consolidation writes a synthesized fact, indexes it, then removes the source notes from both SQL and HNSW. If incremental index work fails, MIRA rebuilds from SQL before proceeding.
+- Consolidation writes a synthesized fact in one SQL transaction, marks source notes `superseded`, and keeps their provenance. Revoking the synthesis restores source lifecycle state; if incremental index work fails, MIRA rebuilds derived indexes from SQL.
 - Identity snapshots are immutable, versioned records that share MIRA's configured SQL backend and bounded recall budget.
+
+### Autonomous coherence pipeline
+
+```text
+capture → authoritative T0/T1/T2 transaction
+        → lifecycle + tags + causal + belief projections
+        → dense/lexical retrieval with temporal/status filters
+        → quality-aware CBA and bounded render
+```
+
+Lifecycle state is stored explicitly on the verbatim record and mirrored in
+metadata for compatibility. Vector, tag, causal and belief projections only
+serve active records during recall; they are repairable read models, never a
+second source of truth. A structured decision or preference can produce a
+deterministic belief keyed by its source, with `valid_from`/`valid_until`,
+confidence and source provenance. Feedback is counted locally and changes the
+source calibration only within `0.75..1.20`.
+
+Soul recall has a deliberate budget partition: 60% is reserved for identity
+invariants and 40% for MIRA evidence. Evidence is truncated before provider
+rendering, while milestone history is bounded by
+`agent_memory.evolution.max_milestone_versions` (default: 8).
+
+### Compatibility and migrations
+
+The lifecycle authority is additive: migration `017_lifecycle_authority` adds
+explicit columns and indexes while backfilling the metadata already written by
+older MIRA versions. Migration `016_beliefs_quality_feedback` remains the
+storage contract for local beliefs and feedback. Existing MCP, REST and CLI
+operations keep their shapes; the new lifecycle, belief and calibration rules
+are automatic projections behind those boundaries.
 
 ---
 

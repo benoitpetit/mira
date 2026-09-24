@@ -456,3 +456,16 @@ Significant work done? ────Yes──► mira_store(type="session_note")
 La capture soul doit fournir `messages: [{role, content, timestamp?, session_id?}]`. Les rôles `user`, `system`, `tool` et inconnus sont conservés comme non attribués ; seul `assistant` met à jour les traits normatifs. Les preuves de traits sont bornées et liées au snapshot.
 
 Les consolidations ne suppriment plus leurs sources dans les adaptateurs SQL officiels : elles les marquent `superseded` et conservent la provenance. Les arêtes causales portent une confiance, un statut et une preuve ; les fenêtres `causal_lookback` et `causal_max_days` sont appliquées par l’extracteur natif. Le rappel tient compte de la confiance d’extraction et du cycle de vie.
+
+Les décisions et préférences explicites peuvent aussi produire une croyance
+locale déterministe, liée à sa source et à ses bornes temporelles. Les
+feedbacks `useful`, `stale`, `contradictory` et `irrelevant` restent bornés à
+une calibration de `0.75..1.20`, puis influencent le score de rappel sans
+service distant. La calibration, les index vectoriels et les tags sont des
+projections réparables de SQL : ils ne remplacent jamais les enregistrements
+T0/T1/T2.
+
+`soul_recall` réserve 60 % du budget à l'identité et 40 % aux preuves MIRA ;
+les preuves sont tronquées avant l'appel au provider. Les jalons d'évolution
+sont plafonnés par `agent_memory.evolution.max_milestone_versions` (8 par
+défaut).
