@@ -129,9 +129,9 @@ func (r *SQLiteRepository) StoreVerbatimTx(ctx context.Context, tx *sql.Tx, v *e
 	metricsJSON, _ := json.Marshal(v.Metrics)
 
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO verbatim (id, content, token_count, created_at, valid_from, valid_until, kind, wing, room, metadata, metrics)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		v.ID[:], v.Content, v.TokenCount, float64(v.CreatedAt.Unix()), unixTimeOrNil(v.ValidFrom), unixTimeOrNil(v.ValidUntil), v.Kind, v.Wing, v.Room, string(metadataJSON), string(metricsJSON),
+		`INSERT INTO verbatim (id, content, token_count, created_at, valid_from, valid_until, kind, wing, room, metadata, metrics, lifecycle_state, superseded_by)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		v.ID[:], v.Content, v.TokenCount, float64(v.CreatedAt.Unix()), unixTimeOrNil(v.ValidFrom), unixTimeOrNil(v.ValidUntil), v.Kind, v.Wing, v.Room, string(metadataJSON), string(metricsJSON), lifecycleState(v), lifecycleUUID(v.SupersededBy),
 	)
 	return err
 }
@@ -188,7 +188,7 @@ func (r *SQLiteRepository) DeleteVerbatimByIDTx(ctx context.Context, tx *sql.Tx,
 // GetVerbatimByID implements VerbatimRepository
 func (r *SQLiteRepository) GetVerbatimByID(ctx context.Context, id uuid.UUID) (*entities.Verbatim, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, content, token_count, created_at, valid_from, valid_until, kind, wing, room, metadata, metrics, summary, summary_tokens FROM verbatim WHERE id = ?`,
+		`SELECT id, content, token_count, created_at, valid_from, valid_until, kind, wing, room, metadata, metrics, summary, summary_tokens, lifecycle_state, superseded_by FROM verbatim WHERE id = ?`,
 		id[:],
 	)
 
@@ -198,10 +198,12 @@ func (r *SQLiteRepository) GetVerbatimByID(ctx context.Context, id uuid.UUID) (*
 	var metricsJSON []byte
 	var room sql.NullString
 	var summary sql.NullString
+	var lifecycleState sql.NullString
+	var supersededBy sql.NullString
 	var createdAt float64
 	var validFrom, validUntil sql.NullFloat64
 
-	err := row.Scan(&idBytes, &v.Content, &v.TokenCount, &createdAt, &validFrom, &validUntil, &v.Kind, &v.Wing, &room, &metadataJSON, &metricsJSON, &summary, &v.SummaryTokenCount)
+	err := row.Scan(&idBytes, &v.Content, &v.TokenCount, &createdAt, &validFrom, &validUntil, &v.Kind, &v.Wing, &room, &metadataJSON, &metricsJSON, &summary, &v.SummaryTokenCount, &lifecycleState, &supersededBy)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, &NotFoundError{Resource: "verbatim"}
@@ -228,7 +230,7 @@ func (r *SQLiteRepository) GetVerbatimByID(ctx context.Context, id uuid.UUID) (*
 	if len(metricsJSON) > 0 {
 		_ = json.Unmarshal(metricsJSON, &v.Metrics)
 	}
-	hydrateLifecycle(&v)
+	hydrateLifecycleColumns(&v, lifecycleState.String, supersededBy)
 
 	return &v, nil
 }
@@ -247,6 +249,20 @@ func lifecycleMetadata(v *entities.Verbatim) map[string]any {
 		metadata["superseded_by"] = v.SupersededBy.String()
 	}
 	return metadata
+}
+
+func lifecycleState(v *entities.Verbatim) string {
+	if v == nil || v.LifecycleState == "" {
+		return entities.LifecycleActive
+	}
+	return v.LifecycleState
+}
+
+func lifecycleUUID(id *uuid.UUID) any {
+	if id == nil {
+		return nil
+	}
+	return id.String()
 }
 
 // UpdateVerbatimSummary implements VerbatimRepository
@@ -938,15 +954,12 @@ func (r *SQLiteRepository) ArchiveOldMemories(ctx context.Context) (*valueobject
 	result.DebugLogs = len(debugIDs)
 	result.TokensFreed += debugTokens
 
-	// Delete all related data
+	// Keep all T0/T1/T2 rows and transition only the authoritative lifecycle.
 	allIDs := append(append([]uuid.UUID(nil), sessionIDs...), debugIDs...)
 	for _, id := range allIDs {
-		idBytes := id[:]
-		_, _ = tx.ExecContext(ctx, `DELETE FROM causal_edges WHERE from_id = ? OR to_id = ?`, idBytes, idBytes)
-		_, _ = tx.ExecContext(ctx, `DELETE FROM causal_nodes WHERE id = ?`, idBytes)
-		_, _ = tx.ExecContext(ctx, `DELETE FROM embeddings WHERE id = ?`, idBytes)
-		_, _ = tx.ExecContext(ctx, `DELETE FROM fingerprints WHERE id = ? OR verbatim_id = ?`, idBytes, idBytes)
-		_, _ = tx.ExecContext(ctx, `DELETE FROM verbatim WHERE id = ?`, idBytes)
+		if err := updateLifecycle(ctx, tx, id, entities.LifecycleArchived, nil, false); err != nil {
+			return nil, fmt.Errorf("failed to archive memory %s: %w", id, err)
+		}
 	}
 
 	_, _ = tx.ExecContext(ctx, `DELETE FROM overlap_cache WHERE ttl < ?`, now)
@@ -1167,7 +1180,7 @@ func (r *SQLiteRepository) collectArchiveTargets(ctx context.Context, tx *sql.Tx
 	rows, err := tx.QueryContext(ctx,
 		`SELECT v.id, v.token_count FROM verbatim v
 		 JOIN fingerprints f ON v.id = f.verbatim_id
-		 WHERE v.created_at < ? AND f.ftype = ?`,
+		 WHERE v.created_at < ? AND f.ftype = ? AND COALESCE(v.lifecycle_state, 'active') = 'active'`,
 		threshold, ftype,
 	)
 	if err != nil {
@@ -1212,7 +1225,7 @@ func (r *SQLiteRepository) SearchLexical(ctx context.Context, query string, limi
 		JOIN verbatim v ON v.rowid = fts.rowid
 		JOIN fingerprints f ON v.id = f.verbatim_id
 		JOIN embeddings e ON v.id = e.id
-		WHERE fts.content MATCH ?`
+		WHERE fts.content MATCH ? AND COALESCE(v.lifecycle_state, 'active') = 'active'`
 	args := []interface{}{ftsQuery}
 
 	if wing != nil {
@@ -1327,7 +1340,7 @@ func (r *SQLiteRepository) SearchExact(ctx context.Context, query string, limit 
 		FROM verbatim v
 		JOIN fingerprints f ON v.id = f.verbatim_id
 		JOIN embeddings e ON v.id = e.id
-		WHERE v.content = ?`
+		WHERE v.content = ? AND COALESCE(v.lifecycle_state, 'active') = 'active'`
 	args := []interface{}{query}
 
 	if wing != nil {
@@ -1515,13 +1528,13 @@ func (r *SQLiteRepository) GetCandidatesWithEmbeddings(ctx context.Context, ids 
 	//nolint:gosec // the IN list contains only generated placeholders
 	query := fmt.Sprintf(`
 		SELECT v.id, v.content, v.wing, v.room, v.token_count, v.created_at, v.valid_from, v.valid_until, v.kind,
-			   v.summary, v.summary_tokens,
+			   v.summary, v.summary_tokens, v.metadata, v.lifecycle_state, v.superseded_by,
 			   f.id, f.ftype, f.fact_count, f.token_estimate, f.model_hash, f.data,
 			   e.vector, e.dim
 		FROM verbatim v
 		JOIN fingerprints f ON v.id = f.verbatim_id
 		JOIN embeddings e ON v.id = e.id
-		WHERE v.id IN (%s)
+		WHERE COALESCE(v.lifecycle_state, 'active') = 'active' AND v.id IN (%s)
 	`, strings.Join(placeholders, ","))
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
@@ -1536,6 +1549,9 @@ func (r *SQLiteRepository) GetCandidatesWithEmbeddings(ctx context.Context, ids 
 		var vContent, vWing, vKind, fType, fModelHash string
 		var vRoom sql.NullString
 		var vSummary sql.NullString
+		var vMetadata []byte
+		var lifecycleState sql.NullString
+		var supersededBy sql.NullString
 		var vTokenCount, vSummaryTokens, fFactCount, fTokenEstimate, eDim int
 		var vCreatedAt float64
 		var vValidFrom, vValidUntil sql.NullFloat64
@@ -1544,7 +1560,7 @@ func (r *SQLiteRepository) GetCandidatesWithEmbeddings(ctx context.Context, ids 
 
 		err := rows.Scan(
 			&vID, &vContent, &vWing, &vRoom, &vTokenCount, &vCreatedAt, &vValidFrom, &vValidUntil, &vKind,
-			&vSummary, &vSummaryTokens,
+			&vSummary, &vSummaryTokens, &vMetadata, &lifecycleState, &supersededBy,
 			&fID, &fType, &fFactCount, &fTokenEstimate, &fModelHash, &fData,
 			&eVector, &eDim,
 		)
@@ -1595,6 +1611,10 @@ func (r *SQLiteRepository) GetCandidatesWithEmbeddings(ctx context.Context, ids 
 		if vSummary.Valid && vSummary.String != "" {
 			verbatim.Summary = &vSummary.String
 		}
+		if len(vMetadata) > 0 {
+			_ = json.Unmarshal(vMetadata, &verbatim.Metadata)
+		}
+		hydrateLifecycleColumns(verbatim, lifecycleState.String, supersededBy)
 
 		fpID, _ := uuid.FromBytes(fID)
 		fp := &entities.Fingerprint{
@@ -1624,6 +1644,7 @@ func (r *SQLiteRepository) GetAllEmbeddings(ctx context.Context) ([]*entities.Em
 		SELECT v.id, e.model_hash, e.vector, e.dim
 		FROM verbatim v
 		JOIN embeddings e ON v.id = e.id
+		WHERE COALESCE(v.lifecycle_state, 'active') = 'active'
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query embeddings: %w", err)

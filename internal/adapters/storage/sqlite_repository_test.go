@@ -477,20 +477,35 @@ func TestArchiveOldMemories(t *testing.T) {
 		t.Errorf("TokensFreed = %d, expected %d", result.TokensFreed, expectedTokens)
 	}
 
-	// Verify old session note was archived (deleted)
-	_, err = repo.GetVerbatimByID(ctx, oldSessionNote.ID)
-	if err == nil {
-		t.Error("Old session note should have been archived")
+	// Archiving is a reversible lifecycle transition: T0/T1/T2 remain stored.
+	oldSession, err := repo.GetVerbatimByID(ctx, oldSessionNote.ID)
+	if err != nil {
+		t.Fatalf("archived session note should remain stored: %v", err)
 	}
-	_, err = repo.GetFingerprintByID(ctx, oldSessionFp.ID)
-	if err == nil {
-		t.Error("Old session note fingerprint should have been archived")
+	if oldSession.LifecycleState != entities.LifecycleArchived {
+		t.Errorf("archived session lifecycle = %q, want %q", oldSession.LifecycleState, entities.LifecycleArchived)
+	}
+	if _, err = repo.GetFingerprintByID(ctx, oldSessionFp.ID); err != nil {
+		t.Fatalf("archived session fingerprint should remain stored: %v", err)
 	}
 
-	// Verify old debug log was archived (deleted)
-	_, err = repo.GetVerbatimByID(ctx, oldDebugLog.ID)
-	if err == nil {
-		t.Error("Old debug log should have been archived")
+	oldDebug, err := repo.GetVerbatimByID(ctx, oldDebugLog.ID)
+	if err != nil {
+		t.Fatalf("archived debug log should remain stored: %v", err)
+	}
+	if oldDebug.LifecycleState != entities.LifecycleArchived {
+		t.Errorf("archived debug lifecycle = %q, want %q", oldDebug.LifecycleState, entities.LifecycleArchived)
+	}
+
+	if err := repo.SetVerbatimLifecycle(ctx, oldSessionNote.ID, entities.LifecycleActive, nil); err != nil {
+		t.Fatalf("restore archived session note: %v", err)
+	}
+	restored, err := repo.GetVerbatimByID(ctx, oldSessionNote.ID)
+	if err != nil {
+		t.Fatalf("get restored session note: %v", err)
+	}
+	if restored.LifecycleState != entities.LifecycleActive {
+		t.Errorf("restored session lifecycle = %q, want %q", restored.LifecycleState, entities.LifecycleActive)
 	}
 
 	// Verify recent session note was NOT archived
@@ -1120,6 +1135,10 @@ func TestGetCandidatesWithEmbeddings(t *testing.T) {
 
 	v1 := storeFullMemory(t, repo, "candidate one", "wing1")
 	v2 := storeFullMemory(t, repo, "candidate two", "wing2")
+	supersededBy := v1.ID
+	if err := repo.SetVerbatimLifecycle(ctx, v2.ID, entities.LifecycleSuperseded, &supersededBy); err != nil {
+		t.Fatalf("set candidate lifecycle: %v", err)
+	}
 
 	// Empty ids returns nil
 	empty, err := repo.GetCandidatesWithEmbeddings(ctx, nil, nil, nil)
@@ -1135,8 +1154,8 @@ func TestGetCandidatesWithEmbeddings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetCandidatesWithEmbeddings: %v", err)
 	}
-	if len(candidates) != 2 {
-		t.Errorf("expected 2 candidates, got %d", len(candidates))
+	if len(candidates) != 1 {
+		t.Errorf("expected only active candidate, got %d", len(candidates))
 	}
 
 	// Wing filter keeps only wing1
@@ -1176,21 +1195,64 @@ func TestGetAllEmbeddings(t *testing.T) {
 		t.Errorf("expected 0 embeddings for empty DB, got %d", len(embs))
 	}
 
-	storeFullMemory(t, repo, "embedding one", "wing")
-	storeFullMemory(t, repo, "embedding two", "wing")
+	v1 := storeFullMemory(t, repo, "embedding one", "wing")
+	v2 := storeFullMemory(t, repo, "embedding two", "wing")
+	if err := repo.SetVerbatimLifecycle(ctx, v2.ID, entities.LifecycleArchived, nil); err != nil {
+		t.Fatalf("set embedding lifecycle: %v", err)
+	}
 
 	embs, err = repo.GetAllEmbeddings(ctx)
 	if err != nil {
 		t.Fatalf("GetAllEmbeddings: %v", err)
 	}
-	if len(embs) != 2 {
-		t.Errorf("expected 2 embeddings, got %d", len(embs))
+	if len(embs) != 1 {
+		t.Errorf("expected only active embedding, got %d", len(embs))
+	}
+	if len(embs) == 1 && embs[0].ID != v1.ID {
+		t.Errorf("active embedding ID = %s, want %s", embs[0].ID, v1.ID)
 	}
 	for _, e := range embs {
 		if len(e.Vector) == 0 {
 			t.Error("embedding vector should not be empty")
 		}
 	}
+}
+
+func TestSearchLexicalExcludesNonActiveLifecycle(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	active := storeFullMemory(t, repo, "lifecycle searchable active", "wing")
+	archived := storeFullMemory(t, repo, "lifecycle searchable archived", "wing")
+	if err := repo.SetVerbatimLifecycle(ctx, archived.ID, entities.LifecycleContested, nil); err != nil {
+		t.Fatalf("set lexical lifecycle: %v", err)
+	}
+	archivedRow, err := repo.GetVerbatimByID(ctx, archived.ID)
+	if err != nil {
+		t.Fatalf("get contested lexical memory: %v", err)
+	}
+	if archivedRow.LifecycleState != entities.LifecycleContested {
+		t.Fatalf("contested lexical lifecycle = %q", archivedRow.LifecycleState)
+	}
+
+	results, err := repo.SearchLexical(ctx, "lifecycle searchable", 10, nil, nil)
+	if err != nil {
+		t.Fatalf("SearchLexical: %v", err)
+	}
+	if len(results) != 1 || results[0].Verbatim.ID != active.ID {
+		t.Fatalf("SearchLexical returned %v, want only active %s", candidateIDs(results), active.ID)
+	}
+}
+
+func candidateIDs(candidates []*entities.Candidate) []uuid.UUID {
+	ids := make([]uuid.UUID, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate != nil && candidate.Verbatim != nil {
+			ids = append(ids, candidate.Verbatim.ID)
+		}
+	}
+	return ids
 }
 
 func TestGetChildren(t *testing.T) {

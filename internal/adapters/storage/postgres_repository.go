@@ -127,9 +127,9 @@ func (r *PostgreSQLRepository) StoreVerbatimTx(ctx context.Context, tx *sql.Tx, 
 	metricsJSON, _ := json.Marshal(v.Metrics)
 
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO verbatim (id, content, token_count, created_at, valid_from, valid_until, kind, wing, room, metadata, metrics)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-		v.ID, v.Content, v.TokenCount, float64(v.CreatedAt.Unix()), unixTimeOrNil(v.ValidFrom), unixTimeOrNil(v.ValidUntil), v.Kind, v.Wing, v.Room, metadataJSON, metricsJSON,
+		`INSERT INTO verbatim (id, content, token_count, created_at, valid_from, valid_until, kind, wing, room, metadata, metrics, lifecycle_state, superseded_by)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		v.ID, v.Content, v.TokenCount, float64(v.CreatedAt.Unix()), unixTimeOrNil(v.ValidFrom), unixTimeOrNil(v.ValidUntil), v.Kind, v.Wing, v.Room, metadataJSON, metricsJSON, lifecycleState(v), lifecycleUUID(v.SupersededBy),
 	)
 	return err
 }
@@ -181,7 +181,7 @@ func (r *PostgreSQLRepository) DeleteVerbatimByIDTx(ctx context.Context, tx *sql
 // GetVerbatimByID implements VerbatimRepository
 func (r *PostgreSQLRepository) GetVerbatimByID(ctx context.Context, id uuid.UUID) (*entities.Verbatim, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, content, token_count, created_at, valid_from, valid_until, kind, wing, room, metadata, metrics, summary, summary_tokens FROM verbatim WHERE id = $1`,
+		`SELECT id, content, token_count, created_at, valid_from, valid_until, kind, wing, room, metadata, metrics, summary, summary_tokens, lifecycle_state, superseded_by FROM verbatim WHERE id = $1`,
 		id,
 	)
 
@@ -189,10 +189,12 @@ func (r *PostgreSQLRepository) GetVerbatimByID(ctx context.Context, id uuid.UUID
 	var metadataJSON, metricsJSON []byte
 	var room sql.NullString
 	var summary sql.NullString
+	var lifecycleState sql.NullString
+	var supersededBy sql.NullString
 	var createdAt float64
 	var validFrom, validUntil sql.NullFloat64
 
-	err := row.Scan(&v.ID, &v.Content, &v.TokenCount, &createdAt, &validFrom, &validUntil, &v.Kind, &v.Wing, &room, &metadataJSON, &metricsJSON, &summary, &v.SummaryTokenCount)
+	err := row.Scan(&v.ID, &v.Content, &v.TokenCount, &createdAt, &validFrom, &validUntil, &v.Kind, &v.Wing, &room, &metadataJSON, &metricsJSON, &summary, &v.SummaryTokenCount, &lifecycleState, &supersededBy)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, &NotFoundError{Resource: "verbatim"}
@@ -215,7 +217,7 @@ func (r *PostgreSQLRepository) GetVerbatimByID(ctx context.Context, id uuid.UUID
 	if len(metricsJSON) > 0 {
 		_ = json.Unmarshal(metricsJSON, &v.Metrics)
 	}
-	hydrateLifecycle(&v)
+	hydrateLifecycleColumns(&v, lifecycleState.String, supersededBy)
 
 	return &v, nil
 }
@@ -845,17 +847,8 @@ func (r *PostgreSQLRepository) ArchiveOldMemories(ctx context.Context) (*valueob
 
 	allIDs := append(append([]uuid.UUID(nil), sessionIDs...), debugIDs...)
 	for _, id := range allIDs {
-		for _, query := range []string{
-			`DELETE FROM causal_edges WHERE from_id = $1 OR to_id = $1`,
-			`DELETE FROM causal_nodes WHERE id = $1`,
-			`DELETE FROM embeddings WHERE id = $1`,
-			`DELETE FROM fingerprints WHERE id = $1 OR verbatim_id = $1`,
-			`DELETE FROM memory_tags WHERE verbatim_id = $1`,
-			`DELETE FROM verbatim WHERE id = $1`,
-		} {
-			if _, err := tx.ExecContext(ctx, query, id); err != nil {
-				return nil, fmt.Errorf("failed to archive memory %s: %w", id, err)
-			}
+		if err := updateLifecycle(ctx, tx, id, entities.LifecycleArchived, nil, true); err != nil {
+			return nil, fmt.Errorf("failed to archive memory %s: %w", id, err)
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM overlap_cache WHERE ttl < $1`, now); err != nil {
@@ -868,7 +861,7 @@ func (r *PostgreSQLRepository) ArchiveOldMemories(ctx context.Context) (*valueob
 }
 
 func collectPostgresArchiveTargets(ctx context.Context, tx *sql.Tx, ftype string, threshold float64) ([]uuid.UUID, int, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT v.id, v.token_count FROM verbatim v JOIN fingerprints f ON v.id = f.verbatim_id WHERE v.created_at < $1 AND f.ftype = $2`, threshold, ftype)
+	rows, err := tx.QueryContext(ctx, `SELECT v.id, v.token_count FROM verbatim v JOIN fingerprints f ON v.id = f.verbatim_id WHERE v.created_at < $1 AND f.ftype = $2 AND COALESCE(v.lifecycle_state, 'active') = 'active'`, threshold, ftype)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to select %s memories for archive: %w", ftype, err)
 	}
@@ -1039,7 +1032,7 @@ func (r *PostgreSQLRepository) GetCandidatesWithEmbeddings(ctx context.Context, 
 		FROM verbatim v
 		JOIN fingerprints f ON v.id = f.verbatim_id
 		JOIN embeddings e ON v.id = e.id
-		WHERE v.id IN (` + postgresPlaceholders(1, len(args)) + `)
+		WHERE COALESCE(v.lifecycle_state, 'active') = 'active' AND v.id IN (` + postgresPlaceholders(1, len(args)) + `)
 	` //nolint:gosec // placeholders are generated, IDs are bound
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -1119,8 +1112,9 @@ func (r *PostgreSQLRepository) GetCandidatesWithEmbeddings(ctx context.Context, 
 func (r *PostgreSQLRepository) GetAllEmbeddings(ctx context.Context) ([]*entities.Embedding, error) {
 	rows, err := r.db.QueryContext(ctx, `
 			SELECT v.id, e.model_hash, e.vector::float4[], e.dim
-			FROM verbatim v
-			JOIN embeddings e ON v.id = e.id
+		FROM verbatim v
+		JOIN embeddings e ON v.id = e.id
+		WHERE COALESCE(v.lifecycle_state, 'active') = 'active'
 	`)
 	if err != nil {
 		return nil, err
