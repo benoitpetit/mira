@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">MIRA memory core logo</title>
+  <desc id="desc">Light MIRA memory core symbol on a deep dark field.</desc>
+  <rect width="1024" height="1024" fill="#10100f"/>
+  <g fill="none" stroke="#f2efe7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M274 244A356 356 0 0 0 274 780" stroke-width="24"/>
+    <path d="M342 316A284 284 0 0 0 342 708" stroke-width="8" stroke-opacity=".72"/>
+    <path d="M414 398A202 202 0 0 0 414 626" stroke-width="5" stroke-dasharray="2 22" stroke-opacity=".72"/>
+    <path d="M294 394C356 394 392 435 448 474" stroke-width="14"/>
+    <path d="M294 512H448" stroke-width="14"/>
+    <path d="M294 630C356 630 392 589 448 550" stroke-width="14"/>
+    <circle cx="520" cy="512" r="92" stroke-width="18"/>
+    <circle cx="520" cy="512" r="28" fill="#f2efe7" stroke="none"/>
+    <path d="M612 474C672 430 720 394 780 394" stroke-width="14"/>
+    <path d="M612 512H820" stroke-width="14"/>
+    <path d="M612 550C672 594 720 630 780 630" stroke-width="14"/>
+    <circle cx="226" cy="394" r="15" fill="#f2efe7" stroke="none"/>
+    <circle cx="226" cy="512" r="15" fill="#f2efe7" stroke="none"/>
+    <circle cx="226" cy="630" r="15" fill="#f2efe7" stroke="none"/>
+    <circle cx="820" cy="394" r="24" fill="#f2efe7" stroke="none"/>
+    <circle cx="860" cy="512" r="24" fill="#f2efe7" stroke="none"/>
+    <circle cx="820" cy="630" r="24" fill="#f2efe7" stroke="none"/>
+  </g>
+</svg>
