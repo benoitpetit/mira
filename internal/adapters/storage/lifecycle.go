@@ -27,20 +27,42 @@ func hydrateLifecycle(v *entities.Verbatim) {
 		return
 	}
 	if v.LifecycleState == "" {
-		v.LifecycleState = entities.LifecycleActive
+		if value, ok := v.Metadata["lifecycle_state"].(string); ok && value != "" {
+			v.LifecycleState = value
+		} else {
+			v.LifecycleState = entities.LifecycleActive
+		}
 	}
-	if value, ok := v.Metadata["lifecycle_state"].(string); ok && value != "" {
-		v.LifecycleState = value
-	}
-	if value, ok := v.Metadata["superseded_by"].(string); ok {
+	if v.SupersededBy == nil {
+		value, _ := v.Metadata["superseded_by"].(string)
 		if parsed, err := uuid.Parse(value); err == nil {
 			v.SupersededBy = &parsed
 		}
 	}
 }
 
-func updateLifecycle(ctx context.Context, db *sql.DB, id uuid.UUID, state string, supersededBy *uuid.UUID, postgres bool) error {
-	row := db.QueryRowContext(ctx, func() string {
+func hydrateLifecycleColumns(v *entities.Verbatim, state string, supersededBy sql.NullString) {
+	if v == nil {
+		return
+	}
+	if state != "" {
+		v.LifecycleState = state
+	}
+	if supersededBy.Valid {
+		if parsed, err := uuid.Parse(supersededBy.String); err == nil {
+			v.SupersededBy = &parsed
+		}
+	}
+	hydrateLifecycle(v)
+}
+
+type lifecycleSQL interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func updateLifecycle(ctx context.Context, execer lifecycleSQL, id uuid.UUID, state string, supersededBy *uuid.UUID, postgres bool) error {
+	row := execer.QueryRowContext(ctx, func() string {
 		if postgres {
 			return `SELECT metadata FROM verbatim WHERE id=$1`
 		}
@@ -67,7 +89,18 @@ func updateLifecycle(ctx context.Context, db *sql.DB, id uuid.UUID, state string
 	if !postgres {
 		query, args = `UPDATE verbatim SET metadata=? WHERE id=?`, []any{string(payload), id[:]}
 	}
-	_, err = db.ExecContext(ctx, query, args...)
+	supersededByValue := any(nil)
+	if supersededBy != nil {
+		supersededByValue = supersededBy.String()
+	}
+	if postgres {
+		query = `UPDATE verbatim SET metadata=$1, lifecycle_state=$2, superseded_by=$3 WHERE id=$4`
+		args = []any{payload, state, supersededByValue, id}
+	} else {
+		query = `UPDATE verbatim SET metadata=?, lifecycle_state=?, superseded_by=? WHERE id=?`
+		args = []any{string(payload), state, supersededByValue, id[:]}
+	}
+	_, err = execer.ExecContext(ctx, query, args...)
 	return err
 }
 
