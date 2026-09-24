@@ -34,7 +34,11 @@ func reindexMemoryDerivedData(ctx context.Context, repository ports.Repository, 
 	if causalDetector == nil {
 		return
 	}
-	recentFps, err := repository.GetRecentFingerprintsByWing(ctx, verbatim.Wing, fp.ID, 50)
+	lookback := 50
+	if configured, ok := causalDetector.(interface{ CausalLookback() int }); ok && configured.CausalLookback() > 0 {
+		lookback = configured.CausalLookback()
+	}
+	recentFps, err := repository.GetRecentFingerprintsByWing(ctx, verbatim.Wing, fp.ID, lookback)
 	if err != nil {
 		warnDerivedIndex(logger, "failed to get recent fingerprints for causal detection", "error", err, "wing", verbatim.Wing)
 		return

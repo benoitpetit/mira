@@ -716,6 +716,20 @@ func (uc *RecallMemory) scoreCandidates(candidates []*entities.Candidate, queryV
 	return candidates
 }
 
+func causalRelationFactor(relation valueobjects.RelationType, alpha float64) float64 {
+	alpha = clampRecallScore(alpha)
+	switch relation {
+	case valueobjects.RelBecause, valueobjects.RelResolves:
+		return 1 + alpha
+	case valueobjects.RelUpdates:
+		return 1 + alpha*0.5
+	case valueobjects.RelContradicts:
+		return 1 // keep both memories so the conflict is explicit
+	default:
+		return 1 + alpha*0.25
+	}
+}
+
 func clampRecallScore(value float64) float64 {
 	return math.Max(0, math.Min(1, value))
 }
@@ -1034,14 +1048,7 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 			if reader, ok := uc.causalGraph.(ports.CausalRelationReader); ok {
 				for _, sel := range selected {
 					if relation, found := reader.RelationBetween(ctx, sel.CandidateID, c.ID()); found {
-						switch relation {
-						case valueobjects.RelBecause, valueobjects.RelResolves:
-							causalFactor = math.Max(causalFactor, 1.10)
-						case valueobjects.RelContradicts:
-							causalFactor = math.Max(causalFactor, 1.0) // keep both for an explicit warning
-						case valueobjects.RelUpdates:
-							causalFactor = math.Max(causalFactor, 1.05)
-						}
+						causalFactor = math.Max(causalFactor, causalRelationFactor(relation, uc.causalPenaltyAlpha))
 					}
 				}
 			}

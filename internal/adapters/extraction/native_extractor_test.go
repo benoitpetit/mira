@@ -37,6 +37,24 @@ func TestDetectCausalRelationsRejectsGenericSubjectsAndHonorsWindow(t *testing.T
 	}
 }
 
+func TestDetectCausalRelationsRejectsFutureCauses(t *testing.T) {
+	e, err := NewNativeExtractor(NewSimpleEmbedder(384), NativeExtractorOptions{ModelName: "test-model", CausalMaxDays: 2, CausalLookback: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	future := &entities.Fingerprint{Subjects: []string{"database"}, Entities: []string{"PostgreSQL"}, ExtractedAt: time.Now().Add(time.Hour)}
+	future.ID = [16]byte{1}
+	current := &entities.Fingerprint{Subjects: []string{"database"}, Entities: []string{"PostgreSQL"}, ExtractedAt: time.Now()}
+	current.ID = [16]byte{2}
+	edges, err := e.DetectCausalRelations(context.Background(), current, []*entities.Fingerprint{future}, "This updates the previous database decision")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(edges) != 0 {
+		t.Fatalf("future fingerprint was accepted as a cause: %+v", edges)
+	}
+}
+
 func TestDetectCausalRelations_English(t *testing.T) {
 	e := newTestExtractor(t)
 	ctx := context.Background()

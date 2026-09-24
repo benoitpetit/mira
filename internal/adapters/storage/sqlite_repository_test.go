@@ -324,6 +324,52 @@ func TestAddAndHasEdge(t *testing.T) {
 	}
 }
 
+func TestCausalGraphFiltersRelationsAndConfirmedStatus(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	parentA := entities.NewCausalNode(uuid.New(), "fact", "A", "wing", nil)
+	parentB := entities.NewCausalNode(uuid.New(), "fact", "B", "wing", nil)
+	child := entities.NewCausalNode(uuid.New(), "fact", "child", "wing", nil)
+	for _, node := range []*entities.CausalNode{parentA, parentB, child} {
+		if err := repo.AddNode(ctx, node); err != nil {
+			t.Fatalf("AddNode: %v", err)
+		}
+	}
+	confirmedBecause := entities.NewCausalEdge(parentA.ID, child.ID, valueobjects.RelBecause)
+	confirmedUpdates := entities.NewCausalEdge(parentB.ID, child.ID, valueobjects.RelUpdates)
+	proposed := entities.NewCausalEdge(uuid.New(), child.ID, valueobjects.RelTriggered)
+	proposed.Status = "proposed"
+	proposedParent := entities.NewCausalNode(proposed.FromID, "fact", "proposed", "wing", nil)
+	if err := repo.AddNode(ctx, proposedParent); err != nil {
+		t.Fatalf("AddNode proposed: %v", err)
+	}
+	for _, edge := range []*entities.CausalEdge{confirmedBecause, confirmedUpdates, proposed} {
+		if err := repo.AddEdge(ctx, edge); err != nil {
+			t.Fatalf("AddEdge: %v", err)
+		}
+	}
+
+	parents, err := repo.GetParents(ctx, child.ID, valueobjects.RelBecause, valueobjects.RelUpdates)
+	if err != nil {
+		t.Fatalf("GetParents: %v", err)
+	}
+	if len(parents) != 2 {
+		t.Fatalf("GetParents returned %d nodes, want 2 confirmed filtered parents", len(parents))
+	}
+	children, err := repo.GetChildren(ctx, parentA.ID, valueobjects.RelUpdates)
+	if err != nil {
+		t.Fatalf("GetChildren: %v", err)
+	}
+	if len(children) != 0 {
+		t.Fatalf("GetChildren relation filter returned %d nodes, want 0", len(children))
+	}
+	if repo.HasEdge(ctx, proposed.FromID, proposed.ToID) {
+		t.Fatal("HasEdge must ignore proposed edges")
+	}
+}
+
 func TestGetRecentFingerprintsByWing(t *testing.T) {
 	repo, cleanup := setupTestDB(t)
 	defer cleanup()

@@ -106,3 +106,17 @@ func TestEarlyPruneCandidatesHonorsConfiguredThreshold(t *testing.T) {
 		t.Fatalf("expected threshold to remove low-relevance candidate, got %+v", filtered)
 	}
 }
+
+func TestEarlyPruneCandidatesUsesCompositeScore(t *testing.T) {
+	v1 := entities.NewVerbatim("high relevance but low quality", "w", nil)
+	v2 := entities.NewVerbatim("lower relevance but trusted", "w", nil)
+	c1 := entities.NewCandidate(&entities.Fingerprint{ID: v1.ID}, v1, []float32{1, 0})
+	c2 := entities.NewCandidate(&entities.Fingerprint{ID: v2.ID}, v2, []float32{0, 1})
+	c1.Relevance, c1.Score = .95, .20
+	c2.Relevance, c2.Score = .70, .80
+
+	filtered := earlyPruneCandidates([]*entities.Candidate{c1, c2}, .6)
+	if len(filtered) != 1 || filtered[0].ID() != v2.ID {
+		t.Fatalf("expected composite score to remove low-quality candidate, got %+v", filtered)
+	}
+}

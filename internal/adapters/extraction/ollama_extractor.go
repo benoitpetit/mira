@@ -81,6 +81,9 @@ func NewOllamaExtractor(embedder ports.Embedder, opts OllamaExtractorOptions) (*
 // ModelHash returns the embedding model hash (same as the native extractor).
 func (o *OllamaExtractor) ModelHash() string { return o.modelHash }
 
+// CausalLookback delegates the configured derived-index window.
+func (o *OllamaExtractor) CausalLookback() int { return o.native.CausalLookback() }
+
 // Encode delegates to the underlying embedder (satisfies ports.Embedder).
 func (o *OllamaExtractor) Encode(ctx context.Context, text string) ([]float32, error) {
 	return o.embedder.Encode(ctx, text)
