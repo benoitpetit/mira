@@ -207,6 +207,12 @@ agent_memory:
     enrich_with_mira_memories: true   # Evidence non normative, budgeted after identity invariants
     max_mira_memories: 5              # Max MIRA memories to inject per identity recall
 
+# Agent installation is configured separately in .mira/agent.yaml.
+# Install it with:
+#   mira agent install --client auto --scope project --policy standard --wing auto
+# The manifest controls client hooks, transparent recall injection, capture
+# limits and redaction without changing this database configuration.
+
 # ─── Compression ────────────────────────────────────────────────────────────
 # Rule-based context compression for session_notes.
 # Summarised text is stored alongside the original verbatim and surfaced by

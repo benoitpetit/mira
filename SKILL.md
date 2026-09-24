@@ -94,6 +94,23 @@ This downloads the embedding model on first run (~80 MB).
 
 ### 6. MCP Client Configuration
 
+For a transparent autonomous installation, prefer the lifecycle command:
+
+```bash
+./mira agent install --client auto --scope project --policy standard --wing auto
+./mira agent doctor
+```
+
+This writes `.mira/agent.yaml`, installs a managed instruction block, and
+enables bounded automatic recall/capture where the client exposes native
+hooks. `minimal`, `standard` and `complete` control capture; `standard` is
+the prudent default. Retrieved context is reference-only and secrets are
+redacted before storage or injection. Use `./mira agent status` to inspect the
+active policy and `./mira agent uninstall` to remove only MIRA-managed files.
+
+The existing `mira setup` commands below remain a lower-level compatibility
+path for explicit MCP configuration.
+
 **Claude Code** (official CLI, private to the current project by default):
 ```bash
 ./mira setup --client claude-code --scope local
