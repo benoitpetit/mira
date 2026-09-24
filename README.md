@@ -422,6 +422,16 @@ go build -tags fts5 -o mira ./cmd/mira
 go install github.com/benoitpetit/mira/cmd/mira@latest
 ```
 
+### Easy Install
+
+```bash
+# Linux/macOS
+curl -fsSL https://mira.devbyben.fr/install | bash
+
+# Windows PowerShell
+irm https://mira.devbyben.fr/install.ps1 | iex
+```
+
 ### Binary Releases
 
 Download pre-compiled binaries from the [Releases](https://github.com/benoitpetit/mira/releases) page:

@@ -112,6 +112,7 @@ jobs:
               fi
             fi
           done
+          sha256sum mira-*.tar.gz mira-*.zip > SHA256SUMS
           ls -la
 
       - name: Get version
@@ -135,6 +136,7 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/*.zip
+            dist/SHA256SUMS
           body: |
             ## MIRA v${{ steps.get_version.outputs.version }}
 
