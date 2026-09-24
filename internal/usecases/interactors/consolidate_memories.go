@@ -3,6 +3,7 @@ package interactors
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 
@@ -35,6 +36,11 @@ type ConsolidateMemories struct {
 
 type lifecycleWriter interface {
 	SetVerbatimLifecycle(ctx context.Context, id uuid.UUID, state string, supersededBy *uuid.UUID) error
+}
+
+type transactionalLifecycleWriter interface {
+	lifecycleWriter
+	SetVerbatimLifecycleTx(ctx context.Context, tx *sql.Tx, id uuid.UUID, state string, supersededBy *uuid.UUID) error
 }
 
 // NewConsolidateMemories creates a new consolidation interactor
@@ -188,22 +194,44 @@ func (uc *ConsolidateMemories) Execute(ctx context.Context, input ConsolidateMem
 			_ = tx.Rollback()
 			return nil, fmt.Errorf("failed to store consolidated embedding: %w", err)
 		}
+
+		idsToSupersede := make([]uuid.UUID, 0, len(cluster))
+		for _, n := range cluster {
+			idsToSupersede = append(idsToSupersede, n.verbatim.ID)
+		}
+		writer, hasWriter := uc.repository.(lifecycleWriter)
+		txWriter, hasTxWriter := uc.repository.(transactionalLifecycleWriter)
+		if !hasWriter {
+			_ = tx.Rollback()
+			return nil, fmt.Errorf("repository does not support reversible consolidation")
+		}
+		if hasTxWriter {
+			for _, id := range idsToSupersede {
+				if err := txWriter.SetVerbatimLifecycleTx(ctx, tx, id, entities.LifecycleSuperseded, &verbatim.ID); err != nil {
+					_ = tx.Rollback()
+					return nil, fmt.Errorf("failed to supersede consolidated source memory: %w", err)
+				}
+			}
+		}
 		if err := tx.Commit(); err != nil {
 			_ = tx.Rollback()
 			return nil, fmt.Errorf("failed to commit consolidation transaction: %w", err)
+		}
+		if !hasTxWriter {
+			for _, id := range idsToSupersede {
+				if err := writer.SetVerbatimLifecycle(ctx, id, entities.LifecycleSuperseded, &verbatim.ID); err != nil {
+					return nil, fmt.Errorf("failed to supersede consolidated source memory: %w", err)
+				}
+			}
 		}
 		reindexMemoryDerivedData(ctx, uc.repository, fp, verbatim, syntheticContent, uc.extractor, nil)
 
 		candidate := entities.NewCandidate(fp, verbatim, emb.Vector)
 		if err := uc.vectorStore.AddCandidate(ctx, candidate); err != nil {
-			// The SQL repository is authoritative. Repair the derived index before
-			// removing sources; if repair cannot complete, compensate by deleting the
-			// synthesized memory so a retry cannot create a duplicate consolidation.
+			// The SQL transaction is already coherent. Repair the derived index before
+			// reporting failure, but never delete the committed synthesis as a
+			// compensation: deletion would strand superseded source lineage.
 			if repairErr := repairVectorStore(ctx, uc.vectorStore); repairErr != nil {
-				cleanupErr := uc.repository.DeleteVerbatimByID(ctx, verbatim.ID)
-				if cleanupErr != nil {
-					return nil, fmt.Errorf("failed to index consolidated memory: %w (rollback of synthesized memory also failed: %v)", err, cleanupErr)
-				}
 				return nil, fmt.Errorf("failed to index consolidated memory: %w (repair failed: %v)", err, repairErr)
 			}
 		}
@@ -212,29 +240,7 @@ func (uc *ConsolidateMemories) Execute(ctx context.Context, input ConsolidateMem
 
 		// Keep original notes for provenance and rollback. Normal recall filters
 		// superseded rows, while the authoritative SQL lineage remains intact.
-		idsToSupersede := make([]uuid.UUID, 0, len(cluster))
-		for _, n := range cluster {
-			idsToSupersede = append(idsToSupersede, n.verbatim.ID)
-		}
-		writer, ok := uc.repository.(lifecycleWriter)
-		if !ok {
-			// Keep compatibility with lightweight test/legacy repositories. The
-			// production SQL adapters implement lifecycleWriter and never take
-			// this destructive fallback.
-			deleted, err := uc.repository.ClearByIDs(ctx, idsToSupersede)
-			if err != nil {
-				return nil, fmt.Errorf("failed to remove consolidated source memories: %w", err)
-			}
-			for _, id := range idsToSupersede {
-				_ = uc.vectorStore.Delete(ctx, id)
-			}
-			output.RemovedCount += deleted
-			continue
-		}
 		for _, id := range idsToSupersede {
-			if err := writer.SetVerbatimLifecycle(ctx, id, entities.LifecycleSuperseded, &verbatim.ID); err != nil {
-				return nil, fmt.Errorf("failed to supersede consolidated source memory: %w", err)
-			}
 			if err := uc.vectorStore.Delete(ctx, id); err != nil {
 				if repairErr := repairVectorStore(ctx, uc.vectorStore); repairErr != nil {
 					return nil, fmt.Errorf("source memory superseded but vector index repair failed: %w", repairErr)

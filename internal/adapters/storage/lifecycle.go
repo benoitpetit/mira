@@ -108,6 +108,14 @@ func (r *SQLiteRepository) SetVerbatimLifecycle(ctx context.Context, id uuid.UUI
 	return updateLifecycle(ctx, r.db, id, state, supersededBy, false)
 }
 
+func (r *SQLiteRepository) SetVerbatimLifecycleTx(ctx context.Context, tx *sql.Tx, id uuid.UUID, state string, supersededBy *uuid.UUID) error {
+	return updateLifecycle(ctx, tx, id, state, supersededBy, false)
+}
+
 func (r *PostgreSQLRepository) SetVerbatimLifecycle(ctx context.Context, id uuid.UUID, state string, supersededBy *uuid.UUID) error {
 	return updateLifecycle(ctx, r.db, id, state, supersededBy, true)
+}
+
+func (r *PostgreSQLRepository) SetVerbatimLifecycleTx(ctx context.Context, tx *sql.Tx, id uuid.UUID, state string, supersededBy *uuid.UUID) error {
+	return updateLifecycle(ctx, tx, id, state, supersededBy, true)
 }

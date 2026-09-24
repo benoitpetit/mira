@@ -29,10 +29,12 @@ func TestTruncateMemoryContentPreservesUTF8(t *testing.T) {
 // used by ConsolidateMemories so we can inject test data without a real database.
 type mockConsolidateRepository struct {
 	*mockStoreRepository
-	getTimelineFunc  func(ctx context.Context, wing string, room *string, memType *valueobjects.MemoryType, since, until *string, limit int, cursor *string) ([]*valueobjects.TimelineItem, error)
-	getVerbatimFunc  func(ctx context.Context, id uuid.UUID) (*entities.Verbatim, error)
-	getEmbeddingFunc func(ctx context.Context, id uuid.UUID) (*entities.Embedding, error)
-	clearByIDsFunc   func(ctx context.Context, ids []uuid.UUID) (int, error)
+	getTimelineFunc                 func(ctx context.Context, wing string, room *string, memType *valueobjects.MemoryType, since, until *string, limit int, cursor *string) ([]*valueobjects.TimelineItem, error)
+	getVerbatimFunc                 func(ctx context.Context, id uuid.UUID) (*entities.Verbatim, error)
+	getEmbeddingFunc                func(ctx context.Context, id uuid.UUID) (*entities.Embedding, error)
+	clearByIDsFunc                  func(ctx context.Context, ids []uuid.UUID) (int, error)
+	transactionalLifecycleCalls     int
+	rejectNonTransactionalLifecycle bool
 }
 
 func (m *mockConsolidateRepository) GetTimeline(ctx context.Context, wing string, room *string, memType *valueobjects.MemoryType, since, until *string, limit int, cursor *string) ([]*valueobjects.TimelineItem, error) {
@@ -61,6 +63,31 @@ func (m *mockConsolidateRepository) ClearByIDs(ctx context.Context, ids []uuid.U
 		return m.clearByIDsFunc(ctx, ids)
 	}
 	return len(ids), nil
+}
+
+func (m *mockConsolidateRepository) SetVerbatimLifecycle(_ context.Context, id uuid.UUID, state string, supersededBy *uuid.UUID) error {
+	if m.rejectNonTransactionalLifecycle {
+		return errors.New("non-transactional lifecycle mutation rejected")
+	}
+	m.applyLifecycle(id, state, supersededBy)
+	return nil
+}
+
+func (m *mockConsolidateRepository) SetVerbatimLifecycleTx(_ context.Context, _ *sql.Tx, id uuid.UUID, state string, supersededBy *uuid.UUID) error {
+	m.transactionalLifecycleCalls++
+	m.applyLifecycle(id, state, supersededBy)
+	return nil
+}
+
+func (m *mockConsolidateRepository) applyLifecycle(id uuid.UUID, state string, supersededBy *uuid.UUID) {
+	verbatim := m.verbatims[id]
+	if verbatim == nil && m.getVerbatimFunc != nil {
+		verbatim, _ = m.getVerbatimFunc(context.Background(), id)
+	}
+	if verbatim != nil {
+		verbatim.LifecycleState = state
+		verbatim.SupersededBy = supersededBy
+	}
 }
 
 // Add missing methods to satisfy the full Repository interface
@@ -246,8 +273,14 @@ func TestConsolidate_SimilarNotesAreMerged(t *testing.T) {
 	if !addCandidateCalled {
 		t.Error("AddCandidate should have been called on vector store")
 	}
-	if len(removedIDs) != 2 {
-		t.Errorf("expected 2 IDs removed, got %d", len(removedIDs))
+	if len(removedIDs) != 0 {
+		t.Errorf("source rows must not be destructively removed, got %d IDs", len(removedIDs))
+	}
+	if repo.transactionalLifecycleCalls != 2 {
+		t.Errorf("expected 2 transactional lifecycle transitions, got %d", repo.transactionalLifecycleCalls)
+	}
+	if v1.LifecycleState != entities.LifecycleSuperseded || v2.LifecycleState != entities.LifecycleSuperseded {
+		t.Errorf("source lifecycle states = %q/%q, want superseded/superseded", v1.LifecycleState, v2.LifecycleState)
 	}
 	if !deletedFromIndex[id1] || !deletedFromIndex[id2] {
 		t.Error("source note vectors should be removed after consolidation")
@@ -405,3 +438,47 @@ func (m *mockConsolidateVectorStore) ClearByRoom(ctx context.Context, wing strin
 }
 
 var _ ports.VectorStore = (*mockConsolidateVectorStore)(nil)
+
+func TestRevokeConsolidationUsesAtomicLifecycleTransaction(t *testing.T) {
+	ctx := context.Background()
+	sourceID := uuid.New()
+	synthesisID := uuid.New()
+	source := &entities.Verbatim{ID: sourceID, LifecycleState: entities.LifecycleSuperseded}
+	synthesis := &entities.Verbatim{
+		ID:             synthesisID,
+		LifecycleState: entities.LifecycleActive,
+		Metadata:       map[string]any{"consolidated_from": []string{sourceID.String()}},
+	}
+	repo := &mockConsolidateRepository{
+		mockStoreRepository:             newMockStoreRepository(),
+		rejectNonTransactionalLifecycle: true,
+		getVerbatimFunc: func(_ context.Context, id uuid.UUID) (*entities.Verbatim, error) {
+			switch id {
+			case sourceID:
+				return source, nil
+			case synthesisID:
+				return synthesis, nil
+			default:
+				return nil, errors.New("memory not found")
+			}
+		},
+	}
+	repo.verbatims[sourceID] = source
+	repo.verbatims[synthesisID] = synthesis
+
+	if err := NewRevokeConsolidation(repo).Execute(ctx, synthesisID); err != nil {
+		t.Fatalf("first revoke failed: %v", err)
+	}
+	if err := NewRevokeConsolidation(repo).Execute(ctx, synthesisID); err != nil {
+		t.Fatalf("second revoke should be idempotent: %v", err)
+	}
+	if repo.transactionalLifecycleCalls != 4 {
+		t.Errorf("transactional lifecycle calls = %d, want 4", repo.transactionalLifecycleCalls)
+	}
+	if source.LifecycleState != entities.LifecycleActive {
+		t.Errorf("source lifecycle = %q, want active", source.LifecycleState)
+	}
+	if synthesis.LifecycleState != entities.LifecycleContested {
+		t.Errorf("synthesis lifecycle = %q, want contested", synthesis.LifecycleState)
+	}
+}
