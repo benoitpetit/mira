@@ -1,5 +1,5 @@
 system:
-  version: "0.8.0"
+  version: "0.8.1"
 
 storage:
   path: ".mira"
@@ -89,7 +89,7 @@ recall:
 
 mcp:
   name: "mira"
-  version: "0.8.0"
+  version: "0.8.1"
   transport: "stdio"      # "stdio", "sse", or stateless "http" (POST /mcp)
   address: "localhost:3001" # Bind address when transport is "sse" or "http"
   auth_token: ""            # Required for HTTP on non-loopback addresses; SSE stays loopback-only

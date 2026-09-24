@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-09-24
+
+### Changed
+- **Version metadata**: Runtime, configuration examples, agent skill metadata, API references, and public documentation now report MIRA 0.8.1 consistently.
+- **Release maintenance**: The pre-publish script now updates the actual runtime version constant instead of rewriting CLI output directly.
+
 ## [0.8.0] - 2026-09-23
 
 ### Changed

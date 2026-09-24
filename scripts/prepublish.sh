@@ -35,16 +35,13 @@ echo -e "${BLUE}  MIRA Pre-publish Script v${VERSION}${NC}"
 echo -e "${BLUE}═══════════════════════════════════════════════════${NC}\n"
 
 # Store old version for comparison
-OLD_VERSION=$(grep -oP 'Version:.*"\K[0-9.]+' internal/config/config.go 2>/dev/null | head -1 || echo "unknown")
+OLD_VERSION=$(sed -n 's/.*CurrentVersion = "\([0-9.]*\)".*/\1/p' internal/config/config.go | head -1)
+OLD_VERSION=${OLD_VERSION:-unknown}
 
 echo -e "${YELLOW}Step 1/6: Updating version from ${OLD_VERSION} to ${VERSION}...${NC}"
 
-# Update version in config.go
-sed -i "s/Version:.*\"[0-9.]*\"/Version:              \"${VERSION}\"/g" internal/config/config.go
-sed -i "s/Version:.*\"[0-9.]*\"/Version:        \"${VERSION}\"/g" internal/config/config.go
-
-# Update version in cmd/mira/main.go
-sed -i "s/MIRA v[0-9.]*/MIRA v${VERSION}/g" cmd/mira/main.go
+# Update the single runtime version source.
+sed -i "s/CurrentVersion = \"[0-9.]*\"/CurrentVersion = \"${VERSION}\"/g" internal/config/config.go
 
 # Update version in config files (example + local if exists)
 sed -i "s/version: \"[0-9.]*\"/version: \"${VERSION}\"/g" config.example.yaml
@@ -57,6 +54,10 @@ fi
 # Update version in README files
 sed -i "s/\*\*Version:\*\* [0-9.]*/**Version:** ${VERSION}/g" README.md README_FR.md
 sed -i "s/version: \"[0-9.]*\"/version: \"${VERSION}\"/g" README.md README_FR.md docs/API_REFERENCES.md
+sed -i "s/Version-[0-9.]*/Version-${VERSION}/g" README.md README_FR.md
+sed -i "s/^version: \"[0-9.]*\"$/version: \"${VERSION}\"/" SKILL.md
+sed -i "s/\*Version: [0-9.]*\*/\\*Version: ${VERSION}\\*/g" docs/API_REFERENCES.md docs/FEATURES.md
+sed -i "s/Version documented: [0-9.]*/Version documented: ${VERSION}/g" docs/INDEX.md
 
 # Update changelog headers (only if not already updated)
 if ! grep -q "### v${VERSION}" README.md 2>/dev/null; then
