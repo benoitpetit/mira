@@ -103,8 +103,18 @@ func newAgentDoctorCmd() *cobra.Command {
 			root := projectRootFromAgentManifest(path)
 			instructionPath := agentInstructionPath(manifest.Client, root, home, manifest.Scope)
 			issues := make([]string, 0)
+			if manifest.Scope == agentinstall.ScopeProject {
+				if _, err := os.Stat(filepath.Join(root, ".mira", "config.yaml")); err != nil {
+					issues = append(issues, "project MIRA config is missing")
+				}
+			}
 			if _, err := os.Stat(instructionPath); err != nil {
 				issues = append(issues, "managed instructions are missing")
+			}
+			if executable, err := os.Executable(); err != nil {
+				issues = append(issues, "local MIRA executable is unavailable")
+			} else if _, err := os.Stat(executable); err != nil {
+				issues = append(issues, "local MIRA executable is unavailable")
 			}
 			if manifest.Client == clientCodex || manifest.Client == clientClaudeCode {
 				if _, err := exec.LookPath(manifest.Client); err != nil {
@@ -112,6 +122,11 @@ func newAgentDoctorCmd() *cobra.Command {
 				}
 			} else if manifest.Client == agentClientCursor || manifest.Client == agentClientClaudeDesktop {
 				fmt.Fprintln(cmd.OutOrStdout(), "warning: this client uses instruction-guided fallback; deterministic event interception is unavailable")
+			}
+			if manifest.ClientConfigPath != "" && manifest.Client != clientCodex && manifest.Client != clientClaudeCode {
+				if _, err := os.Stat(manifest.ClientConfigPath); err != nil {
+					issues = append(issues, "client MCP configuration is missing")
+				}
 			}
 			if len(issues) > 0 {
 				for _, issue := range issues {
@@ -148,7 +163,7 @@ func newAgentUninstallCmd() *cobra.Command {
 			if err := removeManagedInstructions(instructionPath, dryRun, cmd.OutOrStdout()); err != nil {
 				return err
 			}
-			if err := removeAgentClientFiles(manifest.Client, root, home, path, dryRun, cmd.OutOrStdout()); err != nil {
+			if err := removeAgentClientFiles(manifest, root, home, path, dryRun, cmd.OutOrStdout()); err != nil {
 				return err
 			}
 			if dryRun {
@@ -270,6 +285,8 @@ func runAgentInstall(cmd *cobra.Command, options agentInstallOptions) error {
 			options.ManifestPath = defaultAgentManifestPath(root)
 		}
 	}
+	manifest.ClientConfigPath = resolvedAgentMCPPath(client, root, home, options)
+	manifest.HookConfigPath = resolvedAgentHookPath(client, options, home)
 	instructionPath := agentInstructionPath(client, root, home, options.Scope)
 	body := agentManagedInstructions(manifest, configPath)
 	if err := installManagedInstructions(instructionPath, body, options.DryRun, cmd.OutOrStdout()); err != nil {
@@ -278,8 +295,8 @@ func runAgentInstall(cmd *cobra.Command, options agentInstallOptions) error {
 	if err := installAgentMCP(cmd, client, root, home, options); err != nil {
 		return err
 	}
-	if !options.DryRun && policy.InjectionEnabled() {
-		if err := installAgentHooks(client, root, home, options, instructionPath); err != nil {
+	if policy.InjectionEnabled() {
+		if err := installAgentHooks(cmd, client, root, home, options, instructionPath); err != nil {
 			return err
 		}
 	}
@@ -423,21 +440,42 @@ func removeManagedInstructions(path string, dryRun bool, out io.Writer) error {
 	return writeAgentFile(path, []byte(cleaned), 0o644)
 }
 
-func removeAgentClientFiles(client, projectRoot, home, manifestPath string, dryRun bool, out io.Writer) error {
+func removeAgentClientFiles(manifest agentinstall.Manifest, projectRoot, home, manifestPath string, dryRun bool, out io.Writer) error {
+	client := manifest.Client
 	paths := make([]string, 0, 2)
 	switch client {
 	case agentClientCursor:
-		paths = append(paths, filepath.Join(projectRoot, ".cursor", "mcp.json"))
+		path := manifest.ClientConfigPath
+		if path == "" {
+			path = filepath.Join(projectRoot, ".cursor", "mcp.json")
+		}
+		paths = append(paths, path)
 	case clientWindsurf:
-		paths = append(paths, windsurfMCPConfigPath(home), windsurfHooksConfigPath(home))
+		mcpPath := manifest.ClientConfigPath
+		if mcpPath == "" {
+			mcpPath = windsurfMCPConfigPath(home)
+		}
+		hookPath := manifest.HookConfigPath
+		if hookPath == "" {
+			hookPath = windsurfHooksConfigPath(home)
+		}
+		paths = append(paths, mcpPath, hookPath)
 	case agentClientClaudeDesktop:
 		if path, err := claudeDesktopMCPConfigPath(runtime.GOOS, home, os.Getenv("APPDATA")); err == nil {
 			paths = append(paths, path)
 		}
 	case clientCodex:
-		paths = append(paths, codexHooksConfigPath(home))
+		hookPath := manifest.HookConfigPath
+		if hookPath == "" {
+			hookPath = codexHooksConfigPath(home)
+		}
+		paths = append(paths, hookPath)
 	case clientClaudeCode:
-		paths = append(paths, claudeCodeHooksConfigPath(filepath.Join(projectRoot, ".mira", "config.yaml"), "project", home))
+		hookPath := manifest.HookConfigPath
+		if hookPath == "" {
+			hookPath = claudeCodeHooksConfigPath(filepath.Join(projectRoot, ".mira", "config.yaml"), "project", home)
+		}
+		paths = append(paths, hookPath)
 	}
 	for _, path := range paths {
 		if strings.HasSuffix(path, "hooks.json") || strings.HasSuffix(path, "settings.json") || strings.HasSuffix(path, "settings.local.json") {
@@ -577,6 +615,42 @@ func writeAgentFile(path string, data []byte, mode os.FileMode) error {
 	return os.Rename(tmpName, path)
 }
 
+func resolvedAgentMCPPath(client, projectRoot, home string, options agentInstallOptions) string {
+	if options.ClientConfig != "" {
+		return options.ClientConfig
+	}
+	switch client {
+	case agentClientCursor:
+		return cursorMCPConfigPath(options.MiraConfig)
+	case clientWindsurf:
+		return windsurfMCPConfigPath(home)
+	case agentClientClaudeDesktop:
+		if path, err := claudeDesktopMCPConfigPath(runtime.GOOS, home, os.Getenv("APPDATA")); err == nil {
+			return path
+		}
+		return ""
+	}
+	_ = projectRoot
+	return ""
+}
+
+func resolvedAgentHookPath(client string, options agentInstallOptions, home string) string {
+	switch client {
+	case clientCodex:
+		return codexHooksConfigPath(home)
+	case clientClaudeCode:
+		scope := "project"
+		if options.Scope == agentinstall.ScopeUser {
+			scope = "user"
+		}
+		return claudeCodeHooksConfigPath(options.MiraConfig, scope, home)
+	case clientWindsurf:
+		return windsurfHooksConfigPath(home)
+	default:
+		return ""
+	}
+}
+
 func installAgentMCP(cmd *cobra.Command, client, projectRoot, home string, options agentInstallOptions) error {
 	if client == clientCodex || client == clientClaudeCode {
 		var args []string
@@ -605,19 +679,13 @@ func installAgentMCP(cmd *cobra.Command, client, projectRoot, home string, optio
 		}
 		return nil
 	}
-	path := options.ClientConfig
+	path := resolvedAgentMCPPath(client, projectRoot, home, options)
 	var data []byte
 	var err error
 	switch client {
 	case agentClientCursor:
-		if path == "" {
-			path = cursorMCPConfigPath(options.MiraConfig)
-		}
 		data, err = configureCursorMCP(path, options.BinaryPath, options.MiraConfig, options.Force)
 	case clientWindsurf:
-		if path == "" {
-			path = windsurfMCPConfigPath(home)
-		}
 		data, err = configureWindsurfMCP(path, options.BinaryPath, options.MiraConfig, options.Force)
 	case agentClientClaudeDesktop:
 		if path == "" {
@@ -637,7 +705,7 @@ func installAgentMCP(cmd *cobra.Command, client, projectRoot, home string, optio
 	return writeAgentFile(path, data, 0o600)
 }
 
-func installAgentHooks(client, projectRoot, home string, options agentInstallOptions, _ string) error {
+func installAgentHooks(cmd *cobra.Command, client, projectRoot, home string, options agentInstallOptions, _ string) error {
 	if client != clientCodex && client != clientClaudeCode && client != clientWindsurf {
 		return nil
 	}
@@ -646,19 +714,17 @@ func installAgentHooks(client, projectRoot, home string, options agentInstallOpt
 		return strings.Join([]string{shellQuote(options.BinaryPath), "--config", shellQuote(options.MiraConfig), "agent event --client", shellQuote(client), "--event", shellQuote(event), "--manifest", shellQuote(manifestPath)}, " ")
 	}
 	includeAssistant := options.Policy == string(agentinstall.PolicyComplete)
-	var path string
+	path := resolvedAgentHookPath(client, options, home)
 	var data []byte
 	var err error
 	switch client {
 	case clientCodex:
-		path = codexHooksConfigPath(home)
 		specs := []memoryHookSpec{{event: "UserPromptSubmit", command: commandFor(agentbridge.EventPromptSubmit)}}
 		if includeAssistant {
 			specs = append(specs, memoryHookSpec{event: "Stop", command: commandFor(agentbridge.EventResponseComplete)})
 		}
 		data, err = configureMemoryHooks(path, "Codex", specs...)
 	case clientClaudeCode:
-		path = claudeCodeHooksConfigPath(options.MiraConfig, "project", home)
 		specs := []memoryHookSpec{{event: "UserPromptSubmit", command: commandFor(agentbridge.EventPromptSubmit)}}
 		if includeAssistant {
 			specs = append(specs, memoryHookSpec{event: "Stop", command: commandFor(agentbridge.EventResponseComplete)})
@@ -670,6 +736,10 @@ func installAgentHooks(client, projectRoot, home string, options agentInstallOpt
 	}
 	if err != nil {
 		return err
+	}
+	if options.DryRun {
+		fmt.Fprintf(cmd.OutOrStdout(), "Would write %s:\n%s", path, redactedSetupPreview(data))
+		return nil
 	}
 	return writeAgentFile(path, data, 0o600)
 }

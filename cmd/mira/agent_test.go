@@ -136,3 +136,47 @@ func TestAgentUninstallPreservesUserInstructionContent(t *testing.T) {
 		t.Fatalf("manifest was not removed: %v", err)
 	}
 }
+
+func TestAgentUninstallUsesExplicitClientConfigPath(t *testing.T) {
+	projectDir := t.TempDir()
+	initCmd := newInitCmd()
+	initCmd.SetArgs([]string{"--dir", projectDir})
+	if err := initCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(projectDir, ".mira", "config.yaml")
+	clientPath := filepath.Join(projectDir, "settings", "cursor.json")
+	install := newAgentCmd()
+	install.SetArgs([]string{"install", "--client", "cursor", "--mira-config", configPath, "--client-config", clientPath})
+	if err := install.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	uninstall := newAgentCmd()
+	uninstall.SetArgs([]string{"uninstall", "--manifest", filepath.Join(projectDir, ".mira", "agent.yaml")})
+	if err := uninstall.Execute(); err != nil {
+		t.Fatalf("uninstall failed: %v", err)
+	}
+	data, err := os.ReadFile(clientPath)
+	if err != nil || strings.Contains(string(data), `"mira"`) {
+		t.Fatalf("explicit client config was not cleaned: %s err=%v", data, err)
+	}
+}
+
+func TestAgentDryRunReportsHookChanges(t *testing.T) {
+	projectDir := t.TempDir()
+	initCmd := newInitCmd()
+	initCmd.SetArgs([]string{"--dir", projectDir})
+	if err := initCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	cmd := newAgentCmd()
+	var output bytes.Buffer
+	cmd.SetOut(&output)
+	cmd.SetArgs([]string{"install", "--client", "windsurf", "--mira-config", filepath.Join(projectDir, ".mira", "config.yaml"), "--client-config", filepath.Join(projectDir, "windsurf.json"), "--dry-run"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("dry-run install failed: %v", err)
+	}
+	if !strings.Contains(output.String(), "hooks.json") {
+		t.Fatalf("dry-run did not report hook changes: %s", output.String())
+	}
+}

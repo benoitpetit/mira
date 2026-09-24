@@ -6,7 +6,6 @@ import (
 
 	"github.com/benoitpetit/mira/internal/agentmemory"
 	"github.com/benoitpetit/mira/internal/app"
-	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/benoitpetit/mira/internal/usecases/interactors"
 )
 
@@ -43,12 +42,10 @@ func (b *MiraBackend) Capture(ctx context.Context, input CaptureInput) error {
 	if room != "" {
 		roomRef = &room
 	}
-	kind := valueobjects.KindHistory
 	_, err := b.application.StoreMemoryUC().Execute(ctx, interactors.StoreMemoryInput{
 		Content: input.Content,
 		Wing:    input.Wing,
 		Room:    roomRef,
-		Kind:    &kind,
 		Metrics: map[string]any{
 			"source":     "agent_bridge",
 			"role":       input.Role,
