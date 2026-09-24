@@ -521,6 +521,25 @@ MIRA uses cross-lingual embeddings (`all-MiniLM-L6-v2`), so you can query in any
 
 ## Integration Patterns
 
+### Autonomous agent lifecycle
+
+The CLI can install the MCP server, managed instructions, and bounded event
+hooks in one operation:
+
+```bash
+mira agent install --client auto --scope project --policy standard --wing auto
+mira agent status
+mira agent doctor
+mira agent uninstall
+```
+
+`standard` captures substantive user prompts when a deterministic hook exists;
+`complete` also captures exposed assistant completions. `minimal` is
+instruction-guided only. The bridge emits recall inside
+`<MIRA_CONTEXT trust="reference-only">` and redacts secrets before storage or
+injection. Cursor and Claude Desktop are reported as instruction-guided
+fallbacks because they do not provide the same deterministic event surface.
+
 ### Session-Based Knowledge Building
 
 Build up knowledge during a working session:

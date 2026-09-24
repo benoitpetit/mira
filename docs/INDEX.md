@@ -26,6 +26,7 @@ MIRA is a **long-term memory system for Large Language Models (LLMs)** designed 
 | [API_REFERENCES.md](API_REFERENCES.md) | MCP tool examples, REST HTTP API (13 endpoints), integration patterns |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Clean Architecture, T0/T1/T2 memory model, CBA algorithm, causal graph |
 | [FEATURES.md](FEATURES.md) | Complete feature catalog |
+| [agent-integration.md](agent-integration.md) | Autonomous agent installation, policies and lifecycle |
 | [MARKET_REFERENCES.md](MARKET_REFERENCES.md) | Published market context and fair-comparison protocol |
 | [CHANGELOG.md](../CHANGELOG.md) | Full release history and version notes |
 | [SKILL.md](../SKILL.md) | Agent guidelines for MCP memory loops |

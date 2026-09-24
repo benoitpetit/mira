@@ -19,6 +19,26 @@ This document provides a comprehensive technical deep-dive into MIRA's architect
 
 ## Clean Architecture
 
+## Autonomous agent bridge
+
+Agent installation is a thin outer adapter around the existing MIRA use cases:
+
+```text
+agent install
+  ├─ client adapter → MCP registration + managed instructions
+  ├─ manifest       → .mira/agent.yaml policy and stable wing
+  └─ native hook    → short-lived event bridge
+                         ├─ redact secrets
+                         ├─ filter transient content
+                         ├─ bounded recall (reference-only)
+                         └─ StoreMemory history / soul evidence
+```
+
+The bridge does not create a second memory pipeline. It calls the same
+`RecallMemory` and `StoreMemory` use cases used by MCP and REST. Hook failures
+are fail-open, diagnostics never include captured content, and clients without
+native interception are marked instruction-guided by `mira agent doctor`.
+
 MIRA follows **Uncle Bob's Clean Architecture** with strict dependency direction from outer layers inward.
 
 ```

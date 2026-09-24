@@ -456,7 +456,12 @@ unzip mira-windows-amd64.exe.zip
 # Verify the local database, embeddings and effective configuration
 ./mira --config .mira/config.yaml doctor
 
-# Register the project-local MIRA server in your MCP client (optional)
+# Recommended: install MIRA autonomously in the detected agent. This registers
+# MCP, managed instructions, recall injection and prudent automatic capture.
+./mira agent install --client auto --scope project --policy standard --wing auto
+./mira agent doctor
+
+# Low-level compatibility setup remains available:
 ./mira setup --client codex
 ./mira setup --client claude-code --scope local
 ./mira setup --client codex --automatic-memory --memory-wing api

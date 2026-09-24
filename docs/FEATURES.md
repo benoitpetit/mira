@@ -6,6 +6,14 @@ Complete inventory of MIRA capabilities.
 
 ## Memory Model
 
+### Autonomous agent installation
+
+- `mira agent install` configures MIRA in Codex, Claude Code, Windsurf, Cursor or Claude Desktop.
+- Managed instruction blocks are idempotent and preserve user-authored content.
+- `minimal`, `standard` and `complete` policies bound automatic capture and recall injection.
+- Native hooks use a short-lived fail-open event bridge; fallback clients are reported honestly by `mira agent doctor`.
+- Credential-shaped values are redacted before storage or injected context.
+
 ### Coherence and autonomy
 
 - Role-aware soul capture with bounded trait evidence; only assistant observations are normative.
