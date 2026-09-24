@@ -88,7 +88,7 @@ func earlyPruneCandidates(candidates []*entities.Candidate, threshold float64) [
 	}
 	filtered := make([]*entities.Candidate, 0, len(candidates))
 	for _, candidate := range candidates {
-		if candidate != nil && candidate.Relevance >= threshold {
+		if candidate != nil && candidatePruneScore(candidate) >= threshold {
 			filtered = append(filtered, candidate)
 		}
 	}
@@ -98,7 +98,7 @@ func earlyPruneCandidates(candidates []*entities.Candidate, threshold float64) [
 	// If the complete result set is below the threshold, keep a small bounded
 	// fallback so sparse or cross-language queries still return evidence.
 	sorted := append([]*entities.Candidate(nil), candidates...)
-	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Relevance > sorted[j].Relevance })
+	sort.SliceStable(sorted, func(i, j int) bool { return candidatePruneScore(sorted[i]) > candidatePruneScore(sorted[j]) })
 	if len(sorted) > 5 {
 		sorted = sorted[:5]
 	}

@@ -517,7 +517,7 @@ func (r *PostgreSQLRepository) AddEdgeTx(ctx context.Context, tx *sql.Tx, edge *
 func (r *PostgreSQLRepository) HasEdge(ctx context.Context, fromID, toID uuid.UUID) bool {
 	var count int
 	err := r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM causal_edges WHERE (from_id = $1 AND to_id = $2) OR (from_id = $3 AND to_id = $4)`,
+		`SELECT COUNT(*) FROM causal_edges WHERE COALESCE(status, 'confirmed') = 'confirmed' AND ((from_id = $1 AND to_id = $2) OR (from_id = $3 AND to_id = $4))`,
 		fromID, toID, toID, fromID,
 	).Scan(&count)
 	return err == nil && count > 0
@@ -525,7 +525,7 @@ func (r *PostgreSQLRepository) HasEdge(ctx context.Context, fromID, toID uuid.UU
 
 func (r *PostgreSQLRepository) RelationBetween(ctx context.Context, fromID, toID uuid.UUID) (valueobjects.RelationType, bool) {
 	var relation string
-	err := r.db.QueryRowContext(ctx, `SELECT relation FROM causal_edges WHERE (from_id=$1 AND to_id=$2) OR (from_id=$3 AND to_id=$4) ORDER BY confidence DESC LIMIT 1`, fromID, toID, toID, fromID).Scan(&relation)
+	err := r.db.QueryRowContext(ctx, `SELECT relation FROM causal_edges WHERE COALESCE(status, 'confirmed') = 'confirmed' AND ((from_id=$1 AND to_id=$2) OR (from_id=$3 AND to_id=$4)) ORDER BY confidence DESC LIMIT 1`, fromID, toID, toID, fromID).Scan(&relation)
 	if err != nil {
 		return "", false
 	}
@@ -546,7 +546,7 @@ func (r *PostgreSQLRepository) GetChain(ctx context.Context, id uuid.UUID, maxDe
 			UNION ALL
 			SELECT n.id, n.node_type, n.summary, n.timestamp, n.wing, n.room, a.depth + 1
 			FROM causal_nodes n
-			JOIN causal_edges e ON n.id = e.from_id
+			JOIN causal_edges e ON n.id = e.from_id AND COALESCE(e.status, 'confirmed') = 'confirmed'
 			JOIN ancestors a ON e.to_id = a.id
 			WHERE a.depth < $2
 		)
@@ -579,7 +579,7 @@ func (r *PostgreSQLRepository) GetConsequences(ctx context.Context, id uuid.UUID
 			UNION ALL
 			SELECT n.id, n.node_type, n.summary, n.timestamp, n.wing, n.room, d.depth + 1
 			FROM causal_nodes n
-			JOIN causal_edges e ON n.id = e.to_id
+			JOIN causal_edges e ON n.id = e.to_id AND COALESCE(e.status, 'confirmed') = 'confirmed'
 			JOIN descendants d ON e.from_id = d.id
 			WHERE d.depth < $2
 		)
@@ -635,6 +635,7 @@ func (r *PostgreSQLRepository) GetParents(ctx context.Context, nodeID uuid.UUID,
 		}
 		query += " AND e.relation IN (" + strings.Join(placeholders, ",") + ")"
 	}
+	query += " AND COALESCE(e.status, 'confirmed') = 'confirmed'"
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -651,8 +652,16 @@ func (r *PostgreSQLRepository) GetChildren(ctx context.Context, nodeID uuid.UUID
 		SELECT n.id, n.node_type, n.summary, n.timestamp, n.wing, n.room
 		FROM causal_nodes n
 		JOIN causal_edges e ON n.id = e.to_id
-		WHERE e.from_id = $1`
+		WHERE e.from_id = $1 AND COALESCE(e.status, 'confirmed') = 'confirmed'`
 	args := []interface{}{nodeID}
+	if len(relations) > 0 {
+		placeholders := make([]string, len(relations))
+		for i, rel := range relations {
+			placeholders[i] = fmt.Sprintf("$%d", i+2)
+			args = append(args, string(rel))
+		}
+		query += " AND e.relation IN (" + strings.Join(placeholders, ",") + ")"
+	}
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {

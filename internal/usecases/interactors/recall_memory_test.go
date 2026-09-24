@@ -77,6 +77,18 @@ type mockRecallVectorStore struct {
 	lexicalErr error
 }
 
+func TestCausalRelationFactorUsesConfiguredAlpha(t *testing.T) {
+	if got := causalRelationFactor(valueobjects.RelBecause, 0.2); got != 1.2 {
+		t.Fatalf("because factor = %.2f, want 1.20", got)
+	}
+	if got := causalRelationFactor(valueobjects.RelUpdates, 0.2); got != 1.1 {
+		t.Fatalf("updates factor = %.2f, want 1.10", got)
+	}
+	if got := causalRelationFactor(valueobjects.RelContradicts, 0.2); got != 1 {
+		t.Fatalf("contradiction factor = %.2f, want 1.00", got)
+	}
+}
+
 func (m *mockRecallVectorStore) Search(ctx context.Context, vector []float32, limit int, wing, room *string) ([]*entities.Candidate, error) {
 	if m.searchFunc != nil {
 		return m.searchFunc(ctx, vector, limit, wing, room)

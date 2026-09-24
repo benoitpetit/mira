@@ -579,7 +579,7 @@ func (r *SQLiteRepository) AddEdgeTx(ctx context.Context, tx *sql.Tx, edge *enti
 func (r *SQLiteRepository) HasEdge(ctx context.Context, fromID, toID uuid.UUID) bool {
 	var count int
 	err := r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM causal_edges WHERE (from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?)`,
+		`SELECT COUNT(*) FROM causal_edges WHERE COALESCE(status, 'confirmed') = 'confirmed' AND ((from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?))`,
 		fromID[:], toID[:], toID[:], fromID[:],
 	).Scan(&count)
 	return err == nil && count > 0
@@ -587,7 +587,7 @@ func (r *SQLiteRepository) HasEdge(ctx context.Context, fromID, toID uuid.UUID) 
 
 func (r *SQLiteRepository) RelationBetween(ctx context.Context, fromID, toID uuid.UUID) (valueobjects.RelationType, bool) {
 	var relation string
-	err := r.db.QueryRowContext(ctx, `SELECT relation FROM causal_edges WHERE (from_id=? AND to_id=?) OR (from_id=? AND to_id=?) ORDER BY confidence DESC LIMIT 1`, fromID[:], toID[:], toID[:], fromID[:]).Scan(&relation)
+	err := r.db.QueryRowContext(ctx, `SELECT relation FROM causal_edges WHERE COALESCE(status, 'confirmed') = 'confirmed' AND ((from_id=? AND to_id=?) OR (from_id=? AND to_id=?)) ORDER BY confidence DESC LIMIT 1`, fromID[:], toID[:], toID[:], fromID[:]).Scan(&relation)
 	if err != nil {
 		return "", false
 	}
@@ -610,7 +610,7 @@ func (r *SQLiteRepository) GetChain(ctx context.Context, id uuid.UUID, maxDepth 
 			UNION ALL
 			SELECT n.id, n.node_type, n.summary, n.timestamp, n.wing, n.room, a.depth + 1
 			FROM causal_nodes n
-			JOIN causal_edges e ON n.id = e.from_id
+			JOIN causal_edges e ON n.id = e.from_id AND COALESCE(e.status, 'confirmed') = 'confirmed'
 			JOIN ancestors a ON e.to_id = a.id
 			WHERE a.depth < ?
 		)
@@ -644,7 +644,7 @@ func (r *SQLiteRepository) GetConsequences(ctx context.Context, id uuid.UUID, ma
 			UNION ALL
 			SELECT n.id, n.node_type, n.summary, n.timestamp, n.wing, n.room, d.depth + 1
 			FROM causal_nodes n
-			JOIN causal_edges e ON n.id = e.to_id
+			JOIN causal_edges e ON n.id = e.to_id AND COALESCE(e.status, 'confirmed') = 'confirmed'
 			JOIN descendants d ON e.from_id = d.id
 			WHERE d.depth < ?
 		)
@@ -702,8 +702,9 @@ func (r *SQLiteRepository) GetParents(ctx context.Context, nodeID uuid.UUID, rel
 			placeholders[i] = "?"
 			args = append(args, string(rel))
 		}
-		query += " AND e.relation IN (" + placeholders[0] + ")"
+		query += " AND e.relation IN (" + strings.Join(placeholders, ",") + ")"
 	}
+	query += " AND COALESCE(e.status, 'confirmed') = 'confirmed'"
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -739,8 +740,16 @@ func (r *SQLiteRepository) GetChildren(ctx context.Context, nodeID uuid.UUID, re
 		SELECT n.id, n.node_type, n.summary, n.timestamp, n.wing, n.room
 		FROM causal_nodes n
 		JOIN causal_edges e ON n.id = e.to_id
-		WHERE e.from_id = ?`
+		WHERE e.from_id = ? AND COALESCE(e.status, 'confirmed') = 'confirmed'`
 	args := []interface{}{nodeID[:]}
+	if len(relations) > 0 {
+		placeholders := make([]string, len(relations))
+		for i, rel := range relations {
+			placeholders[i] = "?"
+			args = append(args, string(rel))
+		}
+		query += " AND e.relation IN (" + strings.Join(placeholders, ",") + ")"
+	}
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {

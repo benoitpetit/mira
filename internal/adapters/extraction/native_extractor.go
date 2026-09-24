@@ -85,6 +85,10 @@ func NewNativeExtractor(embedder ports.Embedder, opts NativeExtractorOptions) (*
 	return e, nil
 }
 
+// CausalLookback returns the configured number of recent fingerprints offered
+// to the causal detector by derived-index maintenance.
+func (e *NativeExtractor) CausalLookback() int { return e.causalLookback }
+
 func (e *NativeExtractor) compilePatterns() {
 	// Same patterns as prose extractor
 	e.decisionPatterns = []*regexp.Regexp{
@@ -582,8 +586,11 @@ func (e *NativeExtractor) DetectCausalRelations(ctx context.Context, newFp *enti
 					continue
 				}
 				considered++
-				if !newFp.ExtractedAt.IsZero() && !recentFp.ExtractedAt.IsZero() && newFp.ExtractedAt.Sub(recentFp.ExtractedAt) > time.Duration(e.causalMaxDays)*24*time.Hour {
-					continue
+				if !newFp.ExtractedAt.IsZero() && !recentFp.ExtractedAt.IsZero() {
+					age := newFp.ExtractedAt.Sub(recentFp.ExtractedAt)
+					if age < 0 || age > time.Duration(e.causalMaxDays)*24*time.Hour {
+						continue
+					}
 				}
 				// Require semantic overlap (shared subject or entity) to reduce false positives
 				if hasReliableSemanticOverlap(newFp, recentFp) {
