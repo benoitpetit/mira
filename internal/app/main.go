@@ -453,6 +453,12 @@ func (a *Application) initUseCases() {
 	a.storeMemory.WithCompression(cfg.Compression.AutoCompress, cfg.Compression.MinTokens)
 
 	recallLogger := logging.NewSimpleLoggerWithPrefix("[RecallMemory]", false)
+	beliefCalibration := func(sourceID uuid.UUID) float64 {
+		if beliefRepo, ok := repo.(ports.BeliefRepository); ok {
+			return beliefRepo.CalibrationForSource(sourceID)
+		}
+		return 1
+	}
 	a.recallMemory = interactors.NewRecallMemory(
 		a.vectorStore,
 		a.overlapCache,
@@ -488,6 +494,7 @@ func (a *Application) initUseCases() {
 			RerankerTopK:                  cfg.Recall.Reranker.TopK,
 			TagRepo:                       repo,
 			DecayRates:                    cfg.DecayRates,
+			BeliefCalibration:             beliefCalibration,
 		},
 		a.metricsCollector,
 		recallLogger,

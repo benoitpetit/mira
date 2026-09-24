@@ -12,6 +12,7 @@ package ports
 import (
 	"context"
 	"database/sql"
+	"time"
 
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
@@ -80,6 +81,17 @@ type EmbeddingRepository interface {
 
 	// GetEmbeddingByID retrieves an embedding by its unique identifier (same as verbatim ID).
 	GetEmbeddingByID(ctx context.Context, id uuid.UUID) (*entities.Embedding, error)
+}
+
+// BeliefRepository is an optional projection store for versioned assertions.
+// It is intentionally not embedded in Repository so lightweight integrations
+// can continue to operate without enabling belief persistence.
+type BeliefRepository interface {
+	UpsertBelief(ctx context.Context, belief *entities.Belief) error
+	ResolveBelief(ctx context.Context, subject, predicate string, at time.Time) (*entities.Belief, error)
+	RetractBelief(ctx context.Context, id uuid.UUID, contested bool) error
+	RecordBeliefFeedback(ctx context.Context, id uuid.UUID, feedback entities.BeliefFeedback) error
+	CalibrationForSource(sourceID uuid.UUID) float64
 }
 
 // CausalGraphRepository defines the interface for causal graph storage.

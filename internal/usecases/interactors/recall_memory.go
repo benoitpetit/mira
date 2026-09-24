@@ -171,6 +171,7 @@ type RecallMemory struct {
 	rerankerTopK                  int
 	sessionMemoryBoost            float64
 	decayRates                    map[string]float64
+	beliefCalibration             func(uuid.UUID) float64
 	sessionCacheTTLSeconds        int
 	sessionCacheStore             ports.SessionCacheStore
 
@@ -216,6 +217,7 @@ type RecallMemoryConfig struct {
 	TagRepo                       ports.TagRepository
 	Reranker                      ports.Reranker
 	DecayRates                    map[string]float64
+	BeliefCalibration             func(uuid.UUID) float64
 }
 
 // DefaultRecallMemoryConfig returns default configuration
@@ -314,6 +316,7 @@ func NewRecallMemory(
 		tagRepo:                       config.TagRepo,
 		reranker:                      config.Reranker,
 		decayRates:                    decayRates,
+		beliefCalibration:             config.BeliefCalibration,
 		sessionCache:                  make(map[string]sessionCacheEntry),
 	}
 }
@@ -652,6 +655,10 @@ func (uc *RecallMemory) scoreCandidates(candidates []*entities.Candidate, queryV
 		if c.Verbatim != nil && c.Verbatim.LifecycleState != "" && c.Verbatim.LifecycleState != entities.LifecycleActive {
 			c.LifecycleFactor = 0
 		}
+		c.BeliefCalibration = 1
+		if uc.beliefCalibration != nil && c.Verbatim != nil {
+			c.BeliefCalibration = clampBeliefCalibration(uc.beliefCalibration(c.Verbatim.ID))
+		}
 		// Legacy fingerprints have no quality metadata; preserve their score
 		// while newer extractions opt into calibrated confidence.
 		c.ExtractionConfidence = 1
@@ -710,7 +717,7 @@ func (uc *RecallMemory) scoreCandidates(candidates []*entities.Candidate, queryV
 		c.Recency = clampRecallScore(c.Recency)
 
 		// Initial score (without overlap/causal/session)
-		c.Score = c.Relevance * c.Density * c.Recency * c.ExtractionConfidence * c.ValidationFreshness * c.LifecycleFactor
+		c.Score = clampRecallScore(c.Relevance * c.Density * c.Recency * c.ExtractionConfidence * c.ValidationFreshness * c.LifecycleFactor * c.BeliefCalibration)
 	}
 
 	return candidates
@@ -732,6 +739,16 @@ func causalRelationFactor(relation valueobjects.RelationType, alpha float64) flo
 
 func clampRecallScore(value float64) float64 {
 	return math.Max(0, math.Min(1, value))
+}
+
+func clampBeliefCalibration(value float64) float64 {
+	if value < 0.75 {
+		return 0.75
+	}
+	if value > 1.2 {
+		return 1.2
+	}
+	return value
 }
 
 func percentile(sorted []float64, p float64) float64 {
