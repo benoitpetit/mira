@@ -18,7 +18,7 @@ func NewRevokeConsolidation(repository ports.Repository) *RevokeConsolidation {
 }
 
 func (uc *RevokeConsolidation) Execute(ctx context.Context, synthesizedID uuid.UUID) error {
-	writer, ok := uc.repository.(lifecycleWriter)
+	writer, ok := uc.repository.(transactionalLifecycleWriter)
 	if !ok {
 		return fmt.Errorf("repository does not support reversible consolidation")
 	}
@@ -26,12 +26,23 @@ func (uc *RevokeConsolidation) Execute(ctx context.Context, synthesizedID uuid.U
 	if err != nil {
 		return err
 	}
+	tx, err := uc.repository.Begin()
+	if err != nil {
+		return fmt.Errorf("begin consolidation revocation: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // intentional: no-op after commit
 	for _, raw := range sourceIDs(synthesis.Metadata["consolidated_from"]) {
-		if err := writer.SetVerbatimLifecycle(ctx, raw, entities.LifecycleActive, nil); err != nil {
+		if err := writer.SetVerbatimLifecycleTx(ctx, tx, raw, entities.LifecycleActive, nil); err != nil {
 			return err
 		}
 	}
-	return writer.SetVerbatimLifecycle(ctx, synthesizedID, entities.LifecycleContested, nil)
+	if err := writer.SetVerbatimLifecycleTx(ctx, tx, synthesizedID, entities.LifecycleContested, nil); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit consolidation revocation: %w", err)
+	}
+	return nil
 }
 
 func sourceIDs(value any) []uuid.UUID {
