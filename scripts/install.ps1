@@ -11,7 +11,7 @@ switch ($architecture) {
   default { throw "MIRA does not support Windows architecture $architecture (supported: X64, Arm64)" }
 }
 
-$asset = "mira-windows-$arch.zip"
+$asset = "mira-windows-$arch.exe.zip"
 $downloadRoot = if ($version -eq "latest") {
   "https://github.com/$repository/releases/latest/download"
 } else {

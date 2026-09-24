@@ -18,7 +18,7 @@ test("shell installer maps supported Unix platforms to release assets", () => {
 });
 
 test("PowerShell installer maps supported Windows architectures", () => {
-  assert.match(powershell, /mira-windows-\$arch\.zip/);
+  assert.match(powershell, /mira-windows-\$arch\.exe\.zip/);
   assert.match(powershell, /X64/);
   assert.match(powershell, /Arm64/);
   assert.match(powershell, /MIRA_INSTALL_DIR/);
