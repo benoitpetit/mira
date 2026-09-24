@@ -15,7 +15,7 @@ Rendre les invariants de la spécification `docs/superpowers/specs/2026-09-24-me
 - Après chaque tâche : `gofmt` sur les fichiers Go concernés, test ciblé, `git diff --check`.
 - Ne jamais supprimer les artefacts préexistants `.codex-gocache/` et `.codex-tmp/`.
 
-## Tâche 1 — Source de vérité lifecycle, lecteurs et archivage réversible
+## Task 1 — Source de vérité lifecycle, lecteurs et archivage réversible
 
 Fichiers probables :
 
@@ -38,7 +38,7 @@ Fichiers probables :
 6. Ajouter la synchronisation vectorielle : suppression logique lorsque possible, reconstruction depuis SQL lorsque le backend ne sait pas garantir la suppression.
 7. Vérifier les tests storage/vector/archive, puis commit `fix: make lifecycle authoritative across memory indexes`.
 
-## Tâche 2 — Consolidation transactionnelle et révocation complète
+## Task 2 — Consolidation transactionnelle et révocation complète
 
 Fichiers probables :
 
@@ -58,7 +58,7 @@ Fichiers probables :
 5. Rejouer/reconstruire tags, causalité et vecteurs après la mutation SQL ; rendre l’erreur de projection visible sans mentir sur l’état de la base.
 6. Vérifier les tests ciblés, `go test ./internal/usecases/interactors ./internal/adapters/storage ./internal/adapters/vector`, puis commit `fix: make consolidation lifecycle atomic and reversible`.
 
-## Tâche 3 — Causalité et CBA qualité/relation
+## Task 3 — Causalité et CBA qualité/relation
 
 Fichiers probables :
 
@@ -79,7 +79,7 @@ Fichiers probables :
 6. Appliquer des règles bornées pour `UPDATES`, `CONTRADICTS`, `BECAUSE` et `RESOLVES`, sans dépasser `[0,1]` ni casser la sélection atomique des paquets.
 7. Vérifier les tests ciblés, les tests de recall complets et commit `fix: enforce causal bounds and quality-aware recall`.
 
-## Tâche 4 — Atomicité, rétention et budget de l’âme
+## Task 4 — Atomicité, rétention et budget de l’âme
 
 Fichiers probables :
 
@@ -98,7 +98,7 @@ Fichiers probables :
 6. Corriger `estimateTokens` et classifier les notifications d’identité avec `kind=identity`.
 7. Vérifier les tests agentmemory/config/MCP et commit `fix: make soul history and budget bounded`.
 
-## Tâche 5 — Persistance et calibration des croyances
+## Task 5 — Persistance et calibration des croyances
 
 Fichiers probables :
 
@@ -119,7 +119,7 @@ Fichiers probables :
 6. Exposer uniquement les opérations nécessaires à travers les frontières existantes, avec erreurs et statuts documentés.
 7. Vérifier les tests ciblés et commit `feat: persist beliefs and calibrate recall locally`.
 
-## Tâche 6 — Documentation, README et landing page
+## Task 6 — Documentation, README et landing page
 
 Fichiers du dépôt MIRA :
 
