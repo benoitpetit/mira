@@ -200,6 +200,7 @@ agent_memory:
   evolution:
     enabled: true                  # Track identity evolution over time
     max_history_versions: 100      # Max snapshots to retain per agent
+    max_milestone_versions: 8       # Keep at most this many explicit milestones
 
   # MIRA memory enrichment
   memory:

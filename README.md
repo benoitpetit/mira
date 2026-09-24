@@ -1279,6 +1279,6 @@ MIRA keeps three explicit channels: normative identity (`soul_*`), user preferen
 
 Snapshots are immutable and compacted by retention policy: current versions and explicit milestones remain visible, while intermediate rows are marked `compacted` instead of deleted. Memory consolidation is reversible: source T0/T1/T2 records become `superseded`, retain `consolidated_from` provenance, and can be reactivated by revoking the synthesis.
 
-Recall combines dense/lexical retrieval with quality-aware CBA. Extraction confidence, validation freshness, lifecycle state, causal evidence and relation semantics influence ranking; causal neighbors are not blindly penalized. The local versioned belief registry resolves active assertions and accepts bounded `useful`, `stale`, `contradictory` or `irrelevant` feedback without any cloud dependency.
+Recall combines dense/lexical retrieval with quality-aware CBA. Extraction confidence, validation freshness, lifecycle state, causal evidence, relation semantics and bounded source calibration influence ranking; causal neighbors are not blindly penalized. Explicit decisions and preferences can become temporal, source-linked local beliefs. The versioned belief registry accepts bounded `useful`, `stale`, `contradictory` or `irrelevant` feedback without any cloud dependency, while soul recall reserves 60% of its budget for identity and 40% for MIRA evidence.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/FEATURES.md](docs/FEATURES.md), and [docs/API_REFERENCES.md](docs/API_REFERENCES.md) for the exact contracts.

@@ -56,6 +56,20 @@ the same database and bounded recall budget as the normal MIRA memory pipeline.
 | `soul_update` | Apply a supported natural-language identity directive | `agent_id`, `directive` (required); `reason` (optional) |
 | `soul_patch` | Apply explicit identity fields bounded to the range 0–1 where applicable | `agent_id` (required); identity fields and `reason` (optional) |
 
+### Runtime coherence contracts
+
+Clients continue to call the existing `mira_*` and `soul_*` tools. Lifecycle,
+belief and calibration are maintained automatically inside MIRA: storing an
+explicit decision or preference may create a versioned local belief; recall
+filters inactive or temporally invalid records; and source feedback is kept in
+bounded SQL counters. There is no cloud belief service and clients do not own
+supersession, retraction, vector repair or calibration rules.
+
+The authoritative lifecycle values are `active`, `superseded`, `archived` and
+`contested` for memories; beliefs additionally support `revoked`. Consolidated
+sources remain addressable for audit and can be restored by revoking their
+synthesis.
+
 #### Identity continuity example
 
 ```json

@@ -15,6 +15,14 @@ Complete inventory of MIRA capabilities.
 - Quality-aware CBA using extraction confidence, validation freshness and lifecycle state.
 - Versioned local belief registry with bounded feedback calibration.
 
+The SQL repository remains authoritative for lifecycle and belief projections.
+Active recall excludes `superseded`, `archived`, `contested` and `revoked`
+projections; derived vector, tag, causal and belief indexes can therefore be
+rebuilt without changing the T0/T1/T2 records. Explicit decisions and
+preferences may create deterministic beliefs with temporal validity and source
+provenance. Feedback counters are idempotent and calibrate source reliability
+inside the bounded `[0.75, 1.20]` interval.
+
 | Feature | Description |
 |---------|-------------|
 | T0 Verbatim Storage | Full UTF-8 text up to 64KB |
@@ -39,6 +47,7 @@ Complete inventory of MIRA capabilities.
 | Auto-Archive | Session notes (>30d) and debug logs (>7d) automatically archived |
 | Archive Tool (`mira_archive`) | Manual archive trigger with token-freed stats |
 | Clear Memory Tool (`mira_clear_memory`) | Global or wing/room-scoped permanent deletion |
+| Lifecycle Authority | `active`, `superseded`, `archived` and `contested` are persisted on T0 and mirrored in metadata |
 | Default Room Mapping | Auto-assigns rooms based on detected memory type |
 
 ---
@@ -69,6 +78,7 @@ Complete inventory of MIRA capabilities.
 | Persistent Session Cache | Selected memory IDs survive restarts and expire by TTL |
 | Consolidation Index Coherence | Rebuilds the derived vector index when a consolidation update cannot be applied incrementally |
 | Exact Vector Search | `SearchExact` content-hash matching for deduplication and precise lookups |
+| Quality-Aware Recall | Extraction confidence, validation freshness, lifecycle and bounded belief calibration are included before greedy re-normalization |
 
 ---
 
