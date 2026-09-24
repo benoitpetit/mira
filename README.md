@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="./assets/mira-core-banner.png" alt="MIRA persistent memory core" width="1200">
+  <img src="./assets/mira-logo-readme.svg" alt="MIRA memory core logo" width="360">
 
 # MIRA
 
