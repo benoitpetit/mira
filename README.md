@@ -12,7 +12,7 @@
 
   [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.8.0-blue?style=flat-square)]()
+  [![Version](https://img.shields.io/badge/Version-0.8.1-blue?style=flat-square)]()
 
   [Documentation](docs/INDEX.md) • [API Reference](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [Français](README_FR.md)
 
@@ -706,7 +706,7 @@ We decided to migrate to PostgreSQL for v2...
 
 ```yaml
 system:
-  version: "0.8.0"
+  version: "0.8.1"
 
 storage:
   path: ".mira"
@@ -787,7 +787,7 @@ agent_memory:
 
 mcp:
   name: "mira"
-  version: "0.8.0"
+  version: "0.8.1"
   transport: "stdio"   # "stdio", "sse", or stateless "http" at /mcp
   address: "localhost:3001"
   auth_token: ""         # required for HTTP when address is not loopback
@@ -1259,6 +1259,10 @@ retroactively changing rights already granted. Read [docs/LICENSING.md](docs/LIC
 for the project policy and [LICENSE](LICENSE) for the binding terms.
 
 ## Changelog
+
+### v0.8.1 (2026-09-24)
+
+- 🚀 New version 0.8.1
 
 ### v0.8.0 (2026-09-23)
 
