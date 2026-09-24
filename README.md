@@ -25,10 +25,6 @@
 > license from Benoît Petit. The project name, logo, and branding are separate;
 > see [NOTICE.md](NOTICE.md) and [BRAND_POLICY.md](BRAND_POLICY.md).
 
-> **Funding:** Donations are currently the sole source of MIRA maintenance.
-> The project evolves according to donations and maintainer priorities.
-> Donations do not grant commercial rights, support, or an SLA.
-
 ---
 
 ## Table of Contents
