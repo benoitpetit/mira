@@ -459,9 +459,10 @@ Les consolidations ne suppriment plus leurs sources dans les adaptateurs SQL off
 
 Les décisions et préférences explicites peuvent aussi produire une croyance
 locale déterministe, liée à sa source et à ses bornes temporelles. Les
-feedbacks `useful`, `stale`, `contradictory` et `irrelevant` restent bornés à
-une calibration de `0.75..1.20`, puis influencent le score de rappel sans
-service distant. La calibration, les index vectoriels et les tags sont des
+feedbacks `useful`, `stale`, `contradictory` et `irrelevant` sont agrégés
+dans des compteurs atomiques par croyance et par type, puis restent bornés à
+une calibration de `0.75..1.20` dans le score de rappel sans service distant.
+La calibration, les index vectoriels et les tags sont des
 projections réparables de SQL : ils ne remplacent jamais les enregistrements
 T0/T1/T2.
 

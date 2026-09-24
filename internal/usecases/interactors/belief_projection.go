@@ -65,6 +65,8 @@ func beliefStatusForLifecycle(lifecycle string) entities.BeliefStatus {
 		return entities.BeliefSuperseded
 	case entities.LifecycleContested:
 		return entities.BeliefContested
+	case entities.LifecycleArchived:
+		return entities.BeliefRevoked
 	default:
 		return entities.BeliefActive
 	}

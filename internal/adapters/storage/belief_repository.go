@@ -13,7 +13,12 @@ import (
 
 func beliefSourcesJSON(sources []uuid.UUID) ([]byte, error) {
 	values := make([]string, 0, len(sources))
+	seen := make(map[uuid.UUID]struct{}, len(sources))
 	for _, source := range sources {
+		if _, ok := seen[source]; ok {
+			continue
+		}
+		seen[source] = struct{}{}
 		values = append(values, source.String())
 	}
 	return json.Marshal(values)
