@@ -20,8 +20,8 @@ Active recall excludes `superseded`, `archived`, `contested` and `revoked`
 projections; derived vector, tag, causal and belief indexes can therefore be
 rebuilt without changing the T0/T1/T2 records. Explicit decisions and
 preferences may create deterministic beliefs with temporal validity and source
-provenance. Feedback counters are idempotent and calibrate source reliability
-inside the bounded `[0.75, 1.20]` interval.
+provenance. Feedback is recorded through atomic per-belief/type counters and
+calibrates source reliability inside the bounded `[0.75, 1.20]` interval.
 
 | Feature | Description |
 |---------|-------------|
