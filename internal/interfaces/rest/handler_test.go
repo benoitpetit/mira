@@ -127,6 +127,15 @@ func (f *fakeStatus) Execute(_ context.Context) (*interactors.GetStatusOutput, e
 	return f.out, f.err
 }
 
+type fakeAgentMemoryStatus struct {
+	out *interactors.AgentMemoryStatusSummary
+	err error
+}
+
+func (f *fakeAgentMemoryStatus) QueryStatus(_ context.Context) (*interactors.AgentMemoryStatusSummary, error) {
+	return f.out, f.err
+}
+
 type fakeAudit struct {
 	logs []*entities.AuditLog
 }
@@ -515,6 +524,44 @@ func TestHandleStatus_Success(t *testing.T) {
 	resp := s.get("/api/v1/status")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestHandleStatus_IncludesAgentMemory(t *testing.T) {
+	s := newSuite(t)
+	s.status.out = &interactors.GetStatusOutput{Stats: valueobjects.NewStats()}
+	h := rest.NewHandler(
+		s.store, s.recall, s.load, s.update, s.del,
+		s.search, s.consolidate, s.clear, s.timeline,
+		s.archive, s.causal, s.status, s.audit, nil,
+	)
+	h.SetAgentMemoryQuerier(&fakeAgentMemoryStatus{out: &interactors.AgentMemoryStatusSummary{
+		Enabled:    true,
+		AgentCount: 1,
+		Agents: []interactors.AgentMemoryAgentSummary{{
+			AgentID:         "agent-test",
+			Version:         2,
+			ConfidenceScore: 0.91,
+			TraitCount:      4,
+		}},
+	}})
+	srv := rest.NewServer(h, ":0", "", nil, 5*time.Second, 5*time.Second)
+	server := httptest.NewServer(srv.Handler)
+	t.Cleanup(server.Close)
+
+	resp, err := http.Get(server.URL + "/api/v1/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+
+	var body interactors.GetStatusOutput
+	decodeJSON(t, resp, &body)
+	if body.AgentMemory == nil || !body.AgentMemory.Enabled || body.AgentMemory.AgentCount != 1 {
+		t.Fatalf("agent memory status missing or inconsistent: %#v", body.AgentMemory)
 	}
 }
 

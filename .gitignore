@@ -27,6 +27,11 @@ go.work.sum
 # Local CodeGraph index
 .codegraph/
 
+# Local Codex caches and worktrees (never part of the project)
+.codex-gocache/
+.codex-tmp/
+.worktrees/
+
 # IDE
 .idea/
 .vscode/

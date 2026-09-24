@@ -64,14 +64,14 @@ calibrates source reliability inside the bounded `[0.75, 1.20]` interval.
 
 | Feature | Description |
 |---------|-------------|
-| Context Budget Allocation (CBA) | Greedy token-budget optimization with diversity boost |
-| 6-Dimensional Scoring | Relevance × Density × Recency × (1-Overlap) × Session × Causal |
-| Diversity Boost | +10% per new subject covered during greedy selection |
+| Context Budget Allocation (CBA) | Greedy token-budget optimization with quality, belief, causal and diversity modifiers |
+| Eight-Signal Scoring | Relevance × Density × Recency × Quality × Belief × (1-Overlap) × Session × Causal |
+| Diversity Modifier | Optional bounded boost for newly covered subjects during greedy selection |
 | Session Boost | +20% boost for memories within 2-hour window |
 | Session Memory Injection | `session_id` parameter boosts memories selected in previous turns (+30%) |
 | Dynamic Budget Adjustment | Semantic budget scales ±20% based on query token count |
-| Causal Penalty | Penalizes over-selection from long causal chains |
-| Dynamic Renormalization | Overlap and causal penalty recalculated during greedy selection |
+| Causal Relation Modifier | Reliable causal neighbours adjust selection without hiding contradictions |
+| Dynamic Renormalization | Overlap, causal relation, session and diversity modifiers recalculated during greedy selection |
 | Adaptive Threshold (Small Corpora) | Lowers relevance floor for databases with <10 memories |
 | Cross-Language Recall | Cross-lingual embeddings + broad fallback for sparse queries |
 | Fallback Wings | Comma-separated alternate wings searched if primary is empty |

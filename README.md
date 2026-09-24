@@ -13,17 +13,17 @@
   [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue?style=flat-square)](LICENSE)
   [![Version](https://img.shields.io/badge/Version-0.8.0-blue?style=flat-square)]()
-  [![Tests](https://img.shields.io/badge/Tests-~70%25-yellow?style=flat-square)]()
 
   [Documentation](docs/INDEX.md) • [API Reference](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [Français](README_FR.md)
 
 </div>
 
-> **Licensing:** MIRA source code is source-available under the [PolyForm
+> **Licensing:** MIRA source code is source-available, noncommercial under the [PolyForm
 > Noncommercial 1.0.0 license](LICENSE). Commercial use, commercial hosting,
 > paid integration, and commercial redistribution require a separate written
 > license from Benoît Petit. The project name, logo, and branding are separate;
-> see [NOTICE.md](NOTICE.md) and [BRAND_POLICY.md](BRAND_POLICY.md).
+> see [NOTICE.md](NOTICE.md), [docs/LICENSING.md](docs/LICENSING.md) and
+> [BRAND_POLICY.md](BRAND_POLICY.md). This is not an OSI Open Source license.
 
 ---
 
@@ -45,6 +45,7 @@
 - [Performance](#performance)
 - [Technical Architecture](#technical-architecture)
 - [Development](#development)
+- [Licensing](#licensing)
 - [Changelog](#changelog)
 
 ---
@@ -100,7 +101,7 @@ Each memory is stored in three forms — full text (T0), structured facts (T1), 
 
 **MIRA provides:**
 
-- **Context Budget Allocation (CBA)** — maximizes information across 6 scoring dimensions
+- **Context Budget Allocation (CBA)** — combines eight core scoring signals and a bounded diversity modifier
 - **Triple representation (T0/T1/T2)** — adaptive rendering from full text down to a 5-token header
 - **Hybrid search** — HNSW O(log n) + backend-native lexical search, fused with Reciprocal Rank Fusion
 - **Causal graph** — automatic detection of cause-effect relationships between memories
@@ -133,17 +134,26 @@ The CBA algorithm selects memories greedily against a token budget, adjusting ea
 
 ### CBA Composite Score
 
-**S(m) = ρ × δ × η × (1−σ) × τ × χ × 𝟙[ρ>θ]**
+**S(m) = ρ × δ × η × q × β × (1−σ) × τ × χ × υ × 𝟙[ρ>θ]**
 
 | Symbol | Dimension | Formula |
 |--------|-----------|---------|
 | ρ | Semantic relevance | cos(embedding_m, query) |
 | δ | Information density | sigmoid(facts / √tokens) |
 | η | Temporal weight | exp(−λ × age) |
+| q | Quality envelope | extraction confidence × validation freshness × active lifecycle |
+| β | Belief calibration | bounded local calibration in [0.75, 1.2] |
 | σ | Max overlap | max similarity with already-selected memories |
 | τ | Session boost | +20% if within the same 2-hour window |
-| χ | Causal penalty | exp(−0.15 × causal links to current selection) |
+| χ | Causal relation factor | preserves and weights reliable causal neighbours |
+| υ | Diversity modifier | optional boost for newly covered subjects |
 | 𝟙[ρ>θ] | Threshold gate | discard if ρ < 0.6 |
+
+The eight core signals are ρ, δ, η, q, β, σ, τ and χ. `υ` is an optional
+diversity modifier applied during greedy selection; the adaptive threshold is
+a gate, not a ninth signal. The implementation keeps non-active lifecycle rows
+out of the selected context and applies the quality/belief factors before
+greedy re-normalisation.
 
 ---
 
@@ -217,7 +227,7 @@ OUTPUT: List of memories with render mode
 
 4. INITIAL SCORING
    For each c ∈ C':
-      c.score ← ρ(c) × δ_sigmoid(c) × η_recency(c)
+      c.score ← ρ(c) × δ_sigmoid(c) × η_recency(c) × q(c) × β(c)
 
 5. GREEDY SELECTION with dynamic renormalization
    S ← ∅, used ← 0
@@ -226,7 +236,7 @@ OUTPUT: List of memories with render mode
    While PQ ≠ ∅ and used < B:
       c ← Pop(PQ)
       c.σ ← max_{s∈S} sim(c, s)
-      c.χ ← exp(−0.15 × |causal_links(c, S)|)
+      c.χ ← causalRelationFactor(c, S)  // preserve reliable causal neighbours
       c.τ ← 1.2 if |time(c) − time(S)| < 2h else 1.0
       adjusted ← c.score × (1−c.σ) × c.χ × c.τ
 
@@ -1112,7 +1122,7 @@ See [docs/API_REFERENCES.md](docs/API_REFERENCES.md) for full request/response s
 |-----------|------------|-------|
 | Store T0, T1, T2 | O(1) | Atomic insertion |
 | Vector search | O(log n) | HNSW ANN |
-| CBA scoring | O(n) | n = candidates |
+| CBA scoring | O(n²) practical greedy selection | n = candidates |
 | Greedy allocation | O(n²) | With dynamic renormalization |
 | Causal graph BFS | O(V+E) | V = nodes, E = edges |
 
@@ -1239,6 +1249,14 @@ make fmt          # Format code
 make install      # Install to GOPATH/bin
 make prepublish VERSION=x.y.z  # Prepare a release
 ```
+
+## Licensing
+
+MIRA is source-available under PolyForm Noncommercial 1.0.0 from v0.8.0.
+Commercial use requires a separate written license. Historical releases remain
+MIT-licensed, and future releases may use a different license without
+retroactively changing rights already granted. Read [docs/LICENSING.md](docs/LICENSING.md)
+for the project policy and [LICENSE](LICENSE) for the binding terms.
 
 ## Changelog
 

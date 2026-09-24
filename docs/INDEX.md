@@ -26,6 +26,7 @@ MIRA is a **long-term memory system for Large Language Models (LLMs)** designed 
 | [API_REFERENCES.md](API_REFERENCES.md) | MCP tool examples, REST HTTP API (13 endpoints), integration patterns |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Clean Architecture, T0/T1/T2 memory model, CBA algorithm, causal graph |
 | [FEATURES.md](FEATURES.md) | Complete feature catalog |
+| [LICENSING.md](LICENSING.md) | Source-available license policy and commercial boundary |
 | [agent-integration.md](agent-integration.md) | Autonomous agent installation, policies and lifecycle |
 | [MARKET_REFERENCES.md](MARKET_REFERENCES.md) | Published market context and fair-comparison protocol |
 | [CHANGELOG.md](../CHANGELOG.md) | Full release history and version notes |
@@ -45,7 +46,7 @@ MIRA is a **long-term memory system for Large Language Models (LLMs)** designed 
 - **Exact Deduplication**: Content-hash exact-match prevents storing identical verbatims twice
 
 ### Memory Retrieval
-- **Context Budget Allocation (CBA)**: Greedy token-budget optimizer with 6-dimensional scoring + diversity boost
+- **Context Budget Allocation (CBA)**: Greedy token-budget optimizer with eight core signals, quality/belief calibration and an optional diversity modifier
 - **HNSW Vector Search**: O(log n) approximate nearest neighbor over millions of memories
 - **Hybrid Search**: Dense + FTS5 lexical fusion via Reciprocal Rank Fusion (RRF)
 - **Query Expansion**: Multi-variant embedding averaging for cross-lingual robustness
@@ -75,9 +76,10 @@ MIRA is a **long-term memory system for Large Language Models (LLMs)** designed 
 - **REST HTTP API Reference**: [API_REFERENCES.md#rest-http-api](API_REFERENCES.md#rest-http-api)
 - **Architecture Deep-Dive**: [ARCHITECTURE.md](ARCHITECTURE.md)
 - **Feature Matrix**: [FEATURES.md](FEATURES.md)
+- **License policy**: [LICENSING.md](LICENSING.md)
 - **Changelog**: [CHANGELOG.md](../CHANGELOG.md)
 
 ---
 
 *Version documented: 0.8.0*
-*Last updated: 2026-09-21*
+*Last updated: 2026-09-24*

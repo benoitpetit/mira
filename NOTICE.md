@@ -5,10 +5,11 @@
 MIRA is an original project by Benoît Petit / DevByBen.
 
 Starting with version **v0.8.0**, the original MIRA source code is made
-available under the [PolyForm Noncommercial 1.0.0](./LICENSE) license.
-Noncommercial use is permitted under that license. Commercial use, including
-integration into a paid product or service, commercial hosting, or commercial
-redistribution, requires a separate written license from Benoît Petit.
+available under the [PolyForm Noncommercial 1.0.0](./LICENSE) license. MIRA is
+source-available for permitted noncommercial use; it is not an OSI Open Source
+license. Commercial use, including integration into a paid product or service,
+commercial hosting, or commercial redistribution, requires a separate written
+license from Benoît Petit. See the full [licensing policy](./docs/LICENSING.md).
 
 MIRA versions published before **v0.8.0** remain available under the MIT
 license included in [LICENSE-MIT](./LICENSE-MIT). A later change of license
