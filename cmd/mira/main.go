@@ -89,6 +89,7 @@ func main() {
 		newImportCmd(),
 		newIngestCmd(),
 		newHookCmd(),
+		newAgentCmd(),
 		newConfigCmd(),
 		newOptimizeCmd(),
 	)
