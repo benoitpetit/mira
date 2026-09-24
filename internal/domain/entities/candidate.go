@@ -19,6 +19,7 @@ type Candidate struct {
 	ExtractionConfidence float64
 	ValidationFreshness  float64
 	LifecycleFactor      float64
+	BeliefCalibration    float64
 }
 
 // NewCandidate creates a candidate from memory, verbatim and embedding

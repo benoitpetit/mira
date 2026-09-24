@@ -1308,3 +1308,19 @@ func TestFilterCandidatesByKind(t *testing.T) {
 		t.Fatalf("filtered candidates = %v, want only %s", got, user.ID())
 	}
 }
+
+func TestScoreCandidatesAppliesBoundedBeliefCalibration(t *testing.T) {
+	config := DefaultRecallMemoryConfig()
+	config.BeliefCalibration = func(uuid.UUID) float64 { return 9 }
+	uc := NewRecallMemory(nil, nil, nil, nil, nil, config, nil, nil)
+	candidate := createTestCandidateWithRelevance("calibrated", time.Now(), 1)
+	candidate.Embedding = []float32{1}
+
+	uc.scoreCandidates([]*entities.Candidate{candidate}, []float32{1}, nil)
+	if candidate.BeliefCalibration != 1.2 {
+		t.Fatalf("belief calibration = %.3f, want upper bound 1.2", candidate.BeliefCalibration)
+	}
+	if candidate.Score < 0 || candidate.Score > 1 {
+		t.Fatalf("score = %.3f, want normalized range [0,1]", candidate.Score)
+	}
+}
