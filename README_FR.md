@@ -445,7 +445,7 @@ sudo mv mira /usr/local/bin/
 mira --version
 
 # Windows
-unzip mira-windows-amd64.zip
+unzip mira-windows-amd64.exe.zip
 .\mira.exe --version
 ```
 
