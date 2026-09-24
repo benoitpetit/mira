@@ -42,9 +42,49 @@ func TestCaptureLearnsOnlyFromAssistantMessagesAndStoresBoundedEvidence(t *testi
 	}
 }
 
+func TestCaptureIsAtomicWhenEvidencePersistenceFails(t *testing.T) {
+	runtime, err := NewRuntime(testDB(t), DefaultConfig(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.db.Exec(`CREATE TRIGGER reject_trait_evidence BEFORE INSERT ON agent_memory_trait_evidence BEGIN SELECT RAISE(ABORT, 'evidence rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	_, err = runtime.Capture(context.Background(), CaptureRequest{AgentID: "atomic", AgentResponses: []string{"I analyze carefully and explain clearly."}})
+	if err == nil {
+		t.Fatal("expected evidence persistence failure")
+	}
+	var count int
+	if err := runtime.db.QueryRow(`SELECT COUNT(*) FROM agent_memory_identities WHERE agent_id=?`, "atomic").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("snapshot survived failed evidence transaction: %d rows", count)
+	}
+}
+
+func TestCapturePreservesPreviousModelWhenOmitted(t *testing.T) {
+	runtime, err := NewRuntime(testDB(t), DefaultConfig(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := runtime.Capture(context.Background(), CaptureRequest{AgentID: "model", ModelID: "model-a", AgentResponses: []string{"I answer precisely."}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := runtime.Capture(context.Background(), CaptureRequest{AgentID: "model", AgentResponses: []string{"I answer carefully."}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ModelIdentifier != first.ModelIdentifier {
+		t.Fatalf("omitted model identifier became %q, want %q", second.ModelIdentifier, first.ModelIdentifier)
+	}
+}
+
 func TestCompactHistoryRetainsMilestonesAndMarksIntermediates(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.MaxHistoryVersions = 2
+	cfg.MaxMilestoneVersions = 1
 	runtime, err := NewRuntime(testDB(t), cfg, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -78,6 +118,34 @@ func TestCompactHistoryRetainsMilestonesAndMarksIntermediates(t *testing.T) {
 		if snap.ChangeReason == "explicit milestone" && snap.RetentionClass == "compacted" {
 			t.Fatal("explicit milestone was compacted")
 		}
+	}
+}
+
+func TestCompactHistoryBoundsMilestones(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxHistoryVersions = 2
+	cfg.MaxMilestoneVersions = 1
+	runtime, err := NewRuntime(testDB(t), cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Capture(context.Background(), CaptureRequest{AgentID: "milestones", ModelID: "model-a", AgentResponses: []string{"I answer clearly."}}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		if _, _, err := runtime.Update(context.Background(), "milestones", "be more technical", fmt.Sprintf("milestone-%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := runtime.CompactHistory(context.Background(), "milestones"); err != nil {
+		t.Fatal(err)
+	}
+	var retained int
+	if err := runtime.db.QueryRow(`SELECT COUNT(*) FROM agent_memory_identities WHERE agent_id=? AND COALESCE(retention_class, 'current') <> 'compacted'`, "milestones").Scan(&retained); err != nil {
+		t.Fatal(err)
+	}
+	if retained > cfg.MaxHistoryVersions+cfg.MaxMilestoneVersions {
+		t.Fatalf("retained snapshots = %d, want <= %d", retained, cfg.MaxHistoryVersions+cfg.MaxMilestoneVersions)
 	}
 }
 
@@ -189,6 +257,9 @@ func TestRecallAllocatesRemainingBudgetToDelimitedMemoryEvidence(t *testing.T) {
 	}
 	if provider.requestedBudget <= 0 || !strings.Contains(prompt.Content, "non-normative") || !strings.Contains(prompt.Content, "A memory evidence sentence.") {
 		t.Fatalf("memory evidence was not allocated/delimited: budget=%d prompt=%q", provider.requestedBudget, prompt.Content)
+	}
+	if provider.requestedBudget > 120 {
+		t.Fatalf("evidence budget=%d exceeds the 40%% partition of a 300-token budget", provider.requestedBudget)
 	}
 }
 

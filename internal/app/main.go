@@ -190,6 +190,7 @@ func (a *Application) initAgentMemory() error {
 		AutoReinforce:           cfg.AgentMemory.ModelSwap.AutoReinforce,
 		EvolutionEnabled:        cfg.AgentMemory.Evolution.Enabled,
 		MaxHistoryVersions:      cfg.AgentMemory.Evolution.MaxHistoryVersions,
+		MaxMilestoneVersions:    cfg.AgentMemory.Evolution.MaxMilestoneVersions,
 		EnrichWithMiraMemories:  cfg.AgentMemory.Memory.EnrichWithMiraMemories,
 		MaxMiraMemories:         cfg.AgentMemory.Memory.MaxMiraMemories,
 	}
