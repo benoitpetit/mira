@@ -175,24 +175,32 @@ MIRA's retrieval is not "top-k by similarity". It is a **constrained optimizatio
 ### Composite Score Formula
 
 ```
-S(m) = ρ × δ × η × (1-σ) × τ × χ × υ × 𝟙[ρ>θ]
+S(m) = ρ × δ × η × q × β × (1-σ) × τ × χ × υ × 𝟙[ρ>θ]
 
 where:
   ρ = Semantic Relevance     cos(embedding_m, embedding_q)
   δ = Information Density    sigmoid(facts / √tokens)
   η = Temporal Weight        exp(-λ × age_days)
+  q = Quality Envelope        extraction confidence × validation freshness × active lifecycle
+  β = Belief Calibration      bounded local calibration in [0.75, 1.2]
   σ = Max Overlap            sim(m, already_selected)
   τ = Session Boost          1.2 if within 2h window
-  υ = Diversity Boost        1 + α × (new_subjects / total_subjects)
-  χ = Causal Penalty         exp(-0.15 × |causal_links|)
+  χ = Causal Relation Factor preserves and weights reliable causal neighbors
+  υ = Diversity Modifier     1 + α × (new_subjects / total_subjects), optional
   θ = Adaptive Threshold     dynamic relevance floor
 ```
 
+The eight core signals are ρ, δ, η, q, β, σ, τ and χ. `υ` is a separate
+selection modifier, while the threshold is a gate. The implementation applies
+quality and belief calibration before greedy re-normalisation, and skips
+non-active lifecycle rows.
+
 ### Algorithm — O(n²) greedy selection
 
-> **Note on complexity**: The current implementation uses a greedy loop with full score
-> recalculation for all remaining candidates at each step. This yields O(n²) practical
-> complexity. A heap-based implementation could achieve O(n log n) in the future.
+> **Note on complexity**: The current implementation uses a max-heap with lazy
+> re-scoring. Candidate overlap still compares against the selected set, so the
+> greedy allocator remains O(n²) in the practical worst case while heap operations
+> keep the common path efficient.
 
 ```
 1. EMBEDDING
@@ -226,7 +234,7 @@ where:
 7. GREEDY SELECTION
    S ← ∅, tokens_used ← 0
    WHILE candidates remain AND tokens_used < B:
-      Recalculate overlap, causal penalty, session boost
+      Recalculate overlap, causal relation, session and diversity modifiers
       Select best candidate
       Determine render mode from REMAINING budget
       Downgrade mode if necessary (Verbatim → Fingerprint → Header)

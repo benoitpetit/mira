@@ -13,18 +13,18 @@
   [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue?style=flat-square)](LICENSE)
   [![Version](https://img.shields.io/badge/Version-0.8.0-blue?style=flat-square)]()
-  [![Tests](https://img.shields.io/badge/Tests-~70%25-yellow?style=flat-square)]()
 
   [Documentation](docs/INDEX.md) • [Référence API](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [English](README.md)
 
 </div>
 
-> **Licence :** le code source de MIRA est disponible sous [licence PolyForm
+> **Licence :** le code source de MIRA est disponible sous licence [PolyForm
 > Noncommercial 1.0.0](LICENSE). L'usage commercial, l'hébergement commercial,
 > l'intégration payante et la redistribution commerciale nécessitent une
 > licence écrite distincte de Benoît Petit. Le nom, le logo et l'identité
 > visuelle sont séparés ; voir [NOTICE.md](NOTICE.md) et
-> [BRAND_POLICY.md](BRAND_POLICY.md).
+> [docs/LICENSING.md](docs/LICENSING.md). MIRA n'est pas un logiciel open
+> source au sens de l'OSI.
 
 > **Financement :** les donations sont actuellement la seule source de revenus
 > de la maintenance de MIRA. Le projet évolue au rythme des donations et des
@@ -51,6 +51,7 @@
 - [Performance](#performance)
 - [Architecture technique](#architecture-technique)
 - [Développement](#développement)
+- [Licence](#licence)
 - [Changelog](#changelog)
 
 ---
@@ -106,7 +107,7 @@ Chaque mémoire est stockée sous trois formes — texte complet (T0), faits str
 
 **MIRA apporte :**
 
-- **Allocation de Budget Contextuel (CBA)** — maximise l'information sur 6 dimensions de scoring
+- **Allocation de Budget Contextuel (CBA)** — combine huit signaux de scoring et un modificateur de diversité borné
 - **Triple représentation (T0/T1/T2)** — rendu adaptatif du texte complet jusqu'à un en-tête de 5 tokens
 - **Recherche hybride** — HNSW O(log n) + SQLite FTS5, fusionné avec Reciprocal Rank Fusion
 - **Graphe causal** — détection automatique des relations cause-effet entre les mémoires
@@ -139,17 +140,26 @@ L'algorithme CBA sélectionne les mémoires de façon gloutonne dans un budget d
 
 ### Score composite CBA
 
-**S(m) = ρ × δ × η × (1−σ) × τ × χ × 𝟙[ρ>θ]**
+**S(m) = ρ × δ × η × q × β × (1−σ) × τ × χ × υ × 𝟙[ρ>θ]**
 
 | Symbole | Dimension | Formule |
 |---------|-----------|---------|
 | ρ | Pertinence sémantique | cos(embedding_m, requête) |
 | δ | Densité informationnelle | sigmoïde(faits / √tokens) |
 | η | Poids temporel | exp(−λ × âge) |
+| q | Enveloppe de qualité | confiance d'extraction × fraîcheur de validation × cycle de vie actif |
+| β | Calibration de croyance | calibration locale bornée dans [0,75 ; 1,2] |
 | σ | Chevauchement max | similarité max avec mémoires déjà sélectionnées |
 | τ | Boost session | +20% si dans la même fenêtre de 2h |
-| χ | Pénalité causale | exp(−0.15 × liens causaux vers la sélection) |
+| χ | Facteur causal | conserve et pondère les voisins causaux fiables |
+| υ | Modificateur de diversité | boost optionnel pour les nouveaux sujets couverts |
 | 𝟙[ρ>θ] | Seuil | exclure si ρ < 0.6 |
+
+Les huit signaux centraux sont ρ, δ, η, q, β, σ, τ et χ. `υ` est un
+modificateur optionnel appliqué pendant la sélection gloutonne ; le seuil
+adaptatif est une porte, pas un neuvième signal. Les lignes dont le cycle de
+vie n'est pas actif sont exclues et les facteurs de qualité/croyance sont
+appliqués avant la renormalisation gloutonne.
 
 ---
 
@@ -223,7 +233,7 @@ SORTIE :  Liste de mémoires avec mode de rendu
 
 4. SCORING INITIAL
    Pour chaque c ∈ C' :
-      c.score ← ρ(c) × δ_sigmoïde(c) × η_récence(c)
+      c.score ← ρ(c) × δ_sigmoïde(c) × η_récence(c) × q(c) × β(c)
 
 5. SÉLECTION GLOUTONNE avec renormalisation dynamique
    S ← ∅, utilisé ← 0
@@ -232,7 +242,7 @@ SORTIE :  Liste de mémoires avec mode de rendu
    Tant que PQ ≠ ∅ et utilisé < B :
       c ← Pop(PQ)
       c.σ ← max_{s∈S} sim(c, s)
-      c.χ ← exp(−0.15 × |liens_causaux(c, S)|)
+      c.χ ← causalRelationFactor(c, S)  // conserver les voisins causaux fiables
       c.τ ← 1.2 si |temps(c) − temps(S)| < 2h sinon 1.0
       ajusté ← c.score × (1−c.σ) × c.χ × c.τ
 
@@ -1120,7 +1130,7 @@ Voir [docs/API_REFERENCES.md](docs/API_REFERENCES.md) pour la référence compl�
 |-----------|------------|-------|
 | Stockage T0, T1, T2 | O(1) | Insertion atomique |
 | Recherche vectorielle | O(log n) | HNSW ANN |
-| Scoring CBA | O(n) | n = candidats |
+| Scoring CBA | O(n²) en pratique pour la sélection gloutonne | n = candidats |
 | Allocation gloutonne | O(n²) | Avec renormalisation dynamique |
 | BFS graphe causal | O(V+E) | V = nœuds, E = arêtes |
 
@@ -1245,6 +1255,14 @@ make fmt          # Formater le code
 make install      # Installer dans GOPATH/bin
 make prepublish VERSION=x.y.z  # Préparer une release
 ```
+
+## Licence
+
+Depuis v0.8.0, MIRA est disponible sous licence PolyForm Noncommercial 1.0.0.
+L'usage commercial nécessite une licence écrite distincte. Les versions
+historiques restent sous MIT et une licence future peut changer sans retirer
+les droits déjà accordés. Consultez [docs/LICENSING.md](docs/LICENSING.md)
+pour la politique du projet et [LICENSE](LICENSE) pour le texte contractuel.
 
 ## Changelog
 
