@@ -11,6 +11,7 @@ var secretRedactors = []struct {
 	{regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+`), "Bearer [REDACTED_BEARER_TOKEN]"},
 	{regexp.MustCompile(`(?i)(?:api[_-]?key|secret[_-]?key)\s*[:=]\s*[^\s,;]+`), "api_key=[REDACTED_API_KEY]"},
 	{regexp.MustCompile(`(?i)(?:password|passwd|pwd)\s*[:=]\s*[^\s,;]+`), "password=[REDACTED_PASSWORD]"},
+	{regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{16,}`), "[REDACTED_API_KEY]"},
 }
 
 // RedactSecrets removes common credential-shaped values before content is

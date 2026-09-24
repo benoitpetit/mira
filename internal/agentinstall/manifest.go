@@ -32,6 +32,9 @@ type Manifest struct {
 	Wing   string `yaml:"-"`
 	Policy Policy `yaml:"-"`
 
+	ClientConfigPath string `yaml:"-"`
+	HookConfigPath   string `yaml:"-"`
+
 	Capture CaptureConfig `yaml:"capture"`
 	Recall  RecallConfig  `yaml:"recall"`
 	Soul    SoulConfig    `yaml:"soul"`
@@ -66,18 +69,22 @@ type manifestFile struct {
 }
 
 type manifestAgent struct {
-	Client string `yaml:"client"`
-	Scope  string `yaml:"scope"`
-	Wing   string `yaml:"wing"`
-	Policy Policy `yaml:"policy"`
+	Client           string `yaml:"client"`
+	Scope            string `yaml:"scope"`
+	Wing             string `yaml:"wing"`
+	Policy           Policy `yaml:"policy"`
+	ClientConfigPath string `yaml:"client_config_path,omitempty"`
+	HookConfigPath   string `yaml:"hook_config_path,omitempty"`
 }
 
 type rawManifestFile struct {
 	Agent struct {
-		Client string `yaml:"client"`
-		Scope  string `yaml:"scope"`
-		Wing   string `yaml:"wing"`
-		Policy string `yaml:"policy"`
+		Client           string `yaml:"client"`
+		Scope            string `yaml:"scope"`
+		Wing             string `yaml:"wing"`
+		Policy           string `yaml:"policy"`
+		ClientConfigPath string `yaml:"client_config_path"`
+		HookConfigPath   string `yaml:"hook_config_path"`
 	} `yaml:"agent"`
 	Capture struct {
 		UserPrompts         *bool `yaml:"user_prompts"`
@@ -141,6 +148,8 @@ func LoadManifest(path string) (Manifest, error) {
 	if raw.Agent.Policy != "" {
 		manifest.Policy = Policy(raw.Agent.Policy)
 	}
+	manifest.ClientConfigPath = raw.Agent.ClientConfigPath
+	manifest.HookConfigPath = raw.Agent.HookConfigPath
 	if raw.Capture.UserPrompts != nil {
 		manifest.Capture.UserPrompts = *raw.Capture.UserPrompts
 	}
@@ -188,7 +197,7 @@ func SaveManifest(path string, manifest Manifest) error {
 		return err
 	}
 	data, err := yaml.Marshal(manifestFile{
-		Agent:   manifestAgent{Client: manifest.Client, Scope: manifest.Scope, Wing: manifest.Wing, Policy: manifest.Policy},
+		Agent:   manifestAgent{Client: manifest.Client, Scope: manifest.Scope, Wing: manifest.Wing, Policy: manifest.Policy, ClientConfigPath: manifest.ClientConfigPath, HookConfigPath: manifest.HookConfigPath},
 		Capture: manifest.Capture,
 		Recall:  manifest.Recall,
 		Soul:    manifest.Soul,

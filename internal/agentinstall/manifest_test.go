@@ -27,6 +27,8 @@ func TestManifestRoundTripsYAMLAndPreservesDefaults(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".mira", "agent.yaml")
 	manifest := DefaultManifest("claude-code", "/project")
 	manifest.Wing = "my-project"
+	manifest.ClientConfigPath = "/project/.cursor/mcp.json"
+	manifest.HookConfigPath = "/home/user/.codex/hooks.json"
 	manifest.Capture.MinChars = 32
 	manifest.Recall.BudgetTokens = 720
 
@@ -37,7 +39,7 @@ func TestManifestRoundTripsYAMLAndPreservesDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadManifest failed: %v", err)
 	}
-	if got.Client != manifest.Client || got.Wing != manifest.Wing || got.Capture.MinChars != 32 || got.Recall.BudgetTokens != 720 {
+	if got.Client != manifest.Client || got.Wing != manifest.Wing || got.ClientConfigPath != manifest.ClientConfigPath || got.HookConfigPath != manifest.HookConfigPath || got.Capture.MinChars != 32 || got.Recall.BudgetTokens != 720 {
 		t.Fatalf("round trip changed manifest: got %+v want %+v", got, manifest)
 	}
 	if got.Capture.AssistantResponses || !got.Capture.RedactSecrets {

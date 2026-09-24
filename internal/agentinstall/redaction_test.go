@@ -28,3 +28,11 @@ func TestRedactSecretsLeavesOrdinaryTextStable(t *testing.T) {
 		t.Fatalf("ordinary text changed: %q -> %q", input, output)
 	}
 }
+
+func TestRedactSecretsCoversRawOpenAIStyleKeys(t *testing.T) {
+	input := "Do not persist sk-proj-1234567890abcdef1234567890abcdef in memory."
+	output, changed := RedactSecrets(input)
+	if !changed || containsManagedBody(output, "sk-proj-1234567890abcdef1234567890abcdef") || !containsManagedBody(output, "[REDACTED_API_KEY]") {
+		t.Fatalf("raw key was not redacted: %q", output)
+	}
+}
