@@ -99,8 +99,9 @@ type AgentMemoryModelSwapConfig struct {
 }
 
 type AgentMemoryEvolutionConfig struct {
-	Enabled            bool `yaml:"enabled"`
-	MaxHistoryVersions int  `yaml:"max_history_versions"`
+	Enabled              bool `yaml:"enabled"`
+	MaxHistoryVersions   int  `yaml:"max_history_versions"`
+	MaxMilestoneVersions int  `yaml:"max_milestone_versions"`
 }
 
 // AgentMemoryEnrichmentConfig controls enrichment from MIRA memories.
@@ -432,8 +433,9 @@ func Default() *Config {
 				AutoReinforce: true,
 			},
 			Evolution: AgentMemoryEvolutionConfig{
-				Enabled:            true,
-				MaxHistoryVersions: 100,
+				Enabled:              true,
+				MaxHistoryVersions:   100,
+				MaxMilestoneVersions: 8,
 			},
 		},
 	}
@@ -813,6 +815,9 @@ func (c *Config) Validate() error {
 	}
 	if c.AgentMemory.Evolution.MaxHistoryVersions <= 0 {
 		c.AgentMemory.Evolution.MaxHistoryVersions = 100
+	}
+	if c.AgentMemory.Evolution.MaxMilestoneVersions <= 0 {
+		c.AgentMemory.Evolution.MaxMilestoneVersions = 8
 	}
 	if c.AgentMemory.Memory.MaxMiraMemories <= 0 {
 		c.AgentMemory.Memory.MaxMiraMemories = 5

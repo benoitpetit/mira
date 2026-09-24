@@ -34,6 +34,7 @@ type Config struct {
 	AutoReinforce           bool
 	EvolutionEnabled        bool
 	MaxHistoryVersions      int
+	MaxMilestoneVersions    int
 	EnrichWithMiraMemories  bool
 	MaxMiraMemories         int
 }
@@ -51,6 +52,7 @@ func DefaultConfig() Config {
 		AutoReinforce:           true,
 		EvolutionEnabled:        true,
 		MaxHistoryVersions:      100,
+		MaxMilestoneVersions:    8,
 		MaxMiraMemories:         5,
 	}
 }
@@ -326,6 +328,9 @@ func NewRuntimeWithDialect(db *sql.DB, cfg Config, provider MemoryProvider, dial
 	if cfg.MaxHistoryVersions <= 0 {
 		cfg.MaxHistoryVersions = defaults.MaxHistoryVersions
 	}
+	if cfg.MaxMilestoneVersions <= 0 {
+		cfg.MaxMilestoneVersions = defaults.MaxMilestoneVersions
+	}
 	if cfg.MaxMiraMemories <= 0 {
 		cfg.MaxMiraMemories = defaults.MaxMiraMemories
 	}
@@ -532,12 +537,18 @@ func (r *Runtime) CompactHistory(ctx context.Context, agentID string) (int, erro
 		return 0, err
 	}
 	changed := 0
+	milestonesKept := 0
 	for index, row := range all {
 		snap, err := decodeSnapshot(row.payload)
 		if err != nil {
 			return changed, err
 		}
-		keep := index < r.cfg.MaxHistoryVersions || row.version == 1 || strings.TrimSpace(snap.ChangeReason) != ""
+		isMilestone := strings.TrimSpace(snap.ChangeReason) != ""
+		keepMilestone := isMilestone && milestonesKept < r.cfg.MaxMilestoneVersions
+		keep := index < r.cfg.MaxHistoryVersions || row.version == 1 || keepMilestone
+		if keepMilestone {
+			milestonesKept++
+		}
 		if keep || snap.RetentionClass == "compacted" {
 			continue
 		}
@@ -562,10 +573,6 @@ func (r *Runtime) Capture(ctx context.Context, req CaptureRequest) (*Snapshot, e
 	if text == "" && strings.TrimSpace(req.Conversation) == "" {
 		return nil, errors.New("conversation or agent response is required")
 	}
-	if req.ModelID == "" {
-		req.ModelID = "unknown"
-	}
-
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	previous, err := r.Latest(ctx, req.AgentID)
@@ -574,6 +581,13 @@ func (r *Runtime) Capture(ctx context.Context, req CaptureRequest) (*Snapshot, e
 	}
 	if previous != nil && !r.cfg.EvolutionEnabled {
 		return nil, errors.New("identity evolution is disabled")
+	}
+	if req.ModelID == "" {
+		if previous != nil && previous.ModelIdentifier != "" {
+			req.ModelID = previous.ModelIdentifier
+		} else {
+			req.ModelID = "unknown"
+		}
 	}
 	snapshot := extractSnapshot(req, previous, r.cfg)
 	if r.provider != nil && r.cfg.EnrichWithMiraMemories {
@@ -585,11 +599,22 @@ func (r *Runtime) Capture(ctx context.Context, req CaptureRequest) (*Snapshot, e
 		}
 		snapshot.SourceMemoriesCount = len(snapshot.LinkedMiraMemories)
 	}
-	if err := r.storeSnapshot(ctx, snapshot); err != nil {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
 		return nil, err
 	}
-	_, _ = r.CompactHistory(ctx, req.AgentID)
-	if err := r.storeTraitEvidence(ctx, snapshot); err != nil {
+	if err := r.storeSnapshotWith(ctx, tx, snapshot); err != nil {
+		_ = tx.Rollback()
+		return nil, err
+	}
+	if err := r.storeTraitEvidenceWith(ctx, tx, snapshot); err != nil {
+		_ = tx.Rollback()
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	if _, err := r.CompactHistory(ctx, req.AgentID); err != nil {
 		return nil, err
 	}
 	if r.provider != nil {
@@ -630,8 +655,12 @@ func (r *Runtime) storeSnapshotWith(ctx context.Context, execer sqlExecer, snap 
 }
 
 func (r *Runtime) storeTraitEvidence(ctx context.Context, snap *Snapshot) error {
+	return r.storeTraitEvidenceWith(ctx, r.db, snap)
+}
+
+func (r *Runtime) storeTraitEvidenceWith(ctx context.Context, execer sqlExecer, snap *Snapshot) error {
 	for _, evidence := range snap.Evidence {
-		_, err := r.db.ExecContext(ctx, bindPlaceholders(`INSERT INTO agent_memory_trait_evidence
+		_, err := execer.ExecContext(ctx, bindPlaceholders(`INSERT INTO agent_memory_trait_evidence
  (snapshot_id, trait_name, role, excerpt, session_id, observed_at, confidence)
  VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`, r.dialect),
 			evidence.SnapshotID.String(), evidence.TraitName, evidence.Role, evidence.Excerpt,
@@ -949,10 +978,14 @@ func (r *Runtime) Recall(ctx context.Context, agentID, query string, budget int)
 	budget = r.normalizeBudget(budget)
 	content := composePrompt(snap, r.cfg.MinObservationsForTrait)
 	if r.provider != nil && r.cfg.EnrichWithMiraMemories && strings.TrimSpace(query) != "" {
-		identityBudget := estimateTokens(content)
+		identityBudget := int(float64(budget) * 0.6)
+		if identityBudget < 32 {
+			identityBudget = 32
+		}
 		if identityBudget > budget {
 			identityBudget = budget
 		}
+		content = truncateToBudget(content, identityBudget)
 		memoryBudget := budget - identityBudget
 		memories, _ := r.provider.GetMiraMemories(ctx, agentID, query, memoryBudget, r.cfg.MaxMiraMemories)
 		if len(memories) > 0 {
