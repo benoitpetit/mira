@@ -41,14 +41,14 @@ jobs:
             suffix: windows-amd64.exe
             runner: windows-2022
             msystem: UCRT64
-            msys2_root: C:\msys64\ucrt64
+            msys2_subdir: ucrt64
             msys2_packages: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-openssl
           - goos: windows
             goarch: arm64
             suffix: windows-arm64.exe
             runner: windows-11-arm
             msystem: CLANGARM64
-            msys2_root: C:\msys64\clangarm64
+            msys2_subdir: clangarm64
             msys2_packages: mingw-w64-clang-aarch64-gcc-compat mingw-w64-clang-aarch64-openssl
 
     steps:
@@ -74,6 +74,7 @@ jobs:
 
       - name: Set up MSYS2 toolchain (Windows)
         if: matrix.goos == 'windows'
+        id: msys2
         uses: msys2/setup-msys2@v2
         with:
           msystem: ${{ matrix.msystem }}
@@ -85,7 +86,7 @@ jobs:
         if: matrix.goos == 'windows'
         shell: pwsh
         run: |
-          $root = '${{ matrix.msys2_root }}'
+          $root = Join-Path '${{ steps.msys2.outputs.msys2-location }}' '${{ matrix.msys2_subdir }}'
           "$root\bin" >> $env:GITHUB_PATH
           "CC=$root\bin\gcc.exe" >> $env:GITHUB_ENV
           "CGO_CFLAGS=-I$root\include" >> $env:GITHUB_ENV
