@@ -30,13 +30,36 @@ jobs:
 
   build:
     name: Build
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     env:
       ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
     strategy:
       matrix:
-        goos: [linux, darwin, windows]
-        goarch: [amd64, arm64]
+        include:
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-22.04
+            suffix: linux-amd64
+          - goos: linux
+            goarch: arm64
+            runner: ubuntu-24.04-arm
+            suffix: linux-arm64
+          - goos: darwin
+            goarch: amd64
+            runner: macos-13
+            suffix: darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            runner: macos-14
+            suffix: darwin-arm64
+          - goos: windows
+            goarch: amd64
+            runner: windows-2022
+            suffix: windows-amd64.exe
+          - goos: windows
+            goarch: arm64
+            runner: windows-11-arm
+            suffix: windows-arm64.exe
     steps:
       - uses: actions/checkout@v4
 
@@ -49,13 +72,16 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '1'
         run: |
-          EXT=""
-          if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
-          go build -tags fts5 -ldflags="-s -w" -o mira-${GOOS}-${GOARCH}${EXT} ./cmd/mira
+          go build -tags fts5 -ldflags="-s -w" -o mira-${{ matrix.suffix }} ./cmd/mira
+
+      - name: Smoke test binary
+        shell: bash
+        run: ./mira-${{ matrix.suffix }} --version
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: mira-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: mira-${{ matrix.goos }}-${{ matrix.goarch }}*
+          path: mira-${{ matrix.suffix }}
