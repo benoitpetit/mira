@@ -78,10 +78,11 @@ func NewApplication(cfg *config.Config) (app *Application, err error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("configuration must not be nil")
 	}
-	app = &Application{config: cfg, startTime: time.Now()}
+	application := &Application{config: cfg, startTime: time.Now()}
+	app = application
 	defer func() {
 		if err != nil {
-			_ = app.Close()
+			_ = application.Close()
 		}
 	}()
 

@@ -46,6 +46,26 @@ func TestNewApplication_Minimal(t *testing.T) {
 	}
 }
 
+func TestNewApplication_ErrorCleansUpPartiallyInitializedApplication(t *testing.T) {
+	cfg := minimalCfg(t)
+	storagePath := filepath.Join(t.TempDir(), "storage-file")
+	if err := os.WriteFile(storagePath, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("create invalid storage path: %v", err)
+	}
+	cfg.Storage.Path = storagePath
+
+	app, err := NewApplication(cfg)
+	if err == nil {
+		if app != nil {
+			app.Close()
+		}
+		t.Fatal("NewApplication succeeded with a file as the storage directory")
+	}
+	if app != nil {
+		t.Fatal("NewApplication returned an application with an error")
+	}
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // initMetrics — simple collector branch
 // ──────────────────────────────────────────────────────────────────────────────

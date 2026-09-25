@@ -139,10 +139,10 @@ func TestCursorMCPConfigPath(t *testing.T) {
 }
 
 func TestProjectRootFromMiraConfig(t *testing.T) {
-	if got, want := projectRootFromMiraConfig("/work/api/.mira/config.yaml"), "/work/api"; got != want {
+	if got, want := projectRootFromMiraConfig(filepath.FromSlash("/work/api/.mira/config.yaml")), filepath.FromSlash("/work/api"); got != want {
 		t.Errorf("project root = %q, want %q", got, want)
 	}
-	if got, want := projectRootFromMiraConfig("/work/api/config.yaml"), "/work/api"; got != want {
+	if got, want := projectRootFromMiraConfig(filepath.FromSlash("/work/api/config.yaml")), filepath.FromSlash("/work/api"); got != want {
 		t.Errorf("custom project root = %q, want %q", got, want)
 	}
 }
