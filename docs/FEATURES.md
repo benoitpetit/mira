@@ -246,5 +246,5 @@ the server.
 
 ---
 
-*Version: 0.8.2*
+*Version: 0.8.3*
 *Last updated: 2026-04-30*

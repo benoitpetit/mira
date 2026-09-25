@@ -17,7 +17,7 @@ const (
 	TransportStdio = "stdio"
 	TransportSSE   = "sse"
 	TransportHTTP  = "http"
-	CurrentVersion = "0.8.2"
+	CurrentVersion = "0.8.3"
 )
 
 // Config represents complete configuration

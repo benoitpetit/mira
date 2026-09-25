@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-09-25
+
+### Fixed
+- **Release builds**: native CGO/OpenSSL toolchains now build functional SQLCipher binaries for Linux, macOS, and Windows amd64/arm64.
+- **Windows toolchain setup**: MSYS2 OpenSSL paths are resolved dynamically on GitHub-hosted runners.
+- **Cross-platform validation**: every release binary is smoke-tested with `mira --version` before packaging.
+
 ## [0.8.1] - 2026-09-24
 
 ### Changed
