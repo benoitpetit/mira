@@ -34,6 +34,7 @@ jobs:
     env:
       ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
     strategy:
+      fail-fast: false
       matrix:
         include:
           - goos: linux
@@ -67,6 +68,31 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.25'
+
+      - name: Install OpenSSL development files (Linux)
+        if: matrix.goos == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev
+
+      - name: Configure OpenSSL (macOS)
+        if: matrix.goos == 'darwin'
+        shell: bash
+        run: |
+          brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
+          echo "CGO_CFLAGS=-I$(brew --prefix openssl@3)/include" >> "$GITHUB_ENV"
+          echo "CGO_LDFLAGS=-L$(brew --prefix openssl@3)/lib" >> "$GITHUB_ENV"
+
+      - name: Configure OpenSSL (Windows)
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        run: |
+          $root = Get-ChildItem 'C:\Program Files' -Directory -Filter 'OpenSSL*' | Select-Object -First 1
+          if (-not $root) {
+            choco install openssl.light --no-progress --yes
+            $root = Get-ChildItem 'C:\Program Files' -Directory -Filter 'OpenSSL*' | Select-Object -First 1
+          }
+          if (-not $root) { throw 'OpenSSL installation directory not found' }
+          "CGO_CFLAGS=-I$($root.FullName)\include" >> $env:GITHUB_ENV
+          "CGO_LDFLAGS=-L$($root.FullName)\lib" >> $env:GITHUB_ENV
 
       - name: Build binary
         env:
