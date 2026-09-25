@@ -34,8 +34,9 @@ try {
 
   $extractedDir = Join-Path $temporaryDir "extracted"
   Expand-Archive -Path $archive -DestinationPath $extractedDir
-  $binary = Join-Path $extractedDir "mira.exe"
-  if (-not (Test-Path $binary)) { throw "Archive does not contain mira.exe" }
+  $binaryName = $asset -replace '\.zip$'
+  $binary = Join-Path $extractedDir $binaryName
+  if (-not (Test-Path $binary)) { throw "Archive does not contain $binaryName" }
   New-Item -ItemType Directory -Force -Path $installDir | Out-Null
   Copy-Item -Force $binary (Join-Path $installDir "mira.exe")
   Write-Output "MIRA installed at $(Join-Path $installDir 'mira.exe')"
