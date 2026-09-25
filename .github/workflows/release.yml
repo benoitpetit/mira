@@ -31,7 +31,7 @@ jobs:
           - goos: darwin
             goarch: amd64
             suffix: darwin-amd64
-            runner: macos-13
+            runner: macos-15-intel
           - goos: darwin
             goarch: arm64
             suffix: darwin-arm64
@@ -76,8 +76,10 @@ jobs:
             $root = Get-ChildItem 'C:\Program Files' -Directory -Filter 'OpenSSL*' | Select-Object -First 1
           }
           if (-not $root) { throw 'OpenSSL installation directory not found' }
-          "CGO_CFLAGS=-I$($root.FullName)\include" >> $env:GITHUB_ENV
-          "CGO_LDFLAGS=-L$($root.FullName)\lib" >> $env:GITHUB_ENV
+          $shortRoot = (& cmd.exe /c ('for %I in ("' + $root.FullName + '") do @echo %~sI')).Trim()
+          if (-not $shortRoot) { throw 'Unable to resolve short OpenSSL path' }
+          "CGO_CFLAGS=-I$shortRoot\include" >> $env:GITHUB_ENV
+          "CGO_LDFLAGS=-L$shortRoot\lib" >> $env:GITHUB_ENV
 
       - name: Build binary
         env:
