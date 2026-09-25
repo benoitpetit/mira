@@ -25,6 +25,11 @@ test("PowerShell installer maps supported Windows architectures", () => {
   assert.match(powershell, /SHA256SUMS/);
 });
 
+test("PowerShell installer extracts the executable name published in the archive", () => {
+  assert.match(powershell, /\$binaryName\s*=\s*\$asset\s*-replace\s+'\\\\?\.zip\$'/);
+  assert.match(powershell, /Join-Path \$extractedDir \$binaryName/);
+});
+
 test("release workflow publishes checksums beside all binary archives", () => {
   assert.match(workflow, /sha256sum .*SHA256SUMS/);
   assert.match(workflow, /dist\/SHA256SUMS/);
