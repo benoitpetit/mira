@@ -13,7 +13,7 @@ permissions:
 jobs:
   build:
     name: Build Binaries
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     env:
       ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
     strategy:
@@ -22,21 +22,27 @@ jobs:
           - goos: linux
             goarch: amd64
             suffix: linux-amd64
+            runner: ubuntu-22.04
           - goos: linux
             goarch: arm64
             suffix: linux-arm64
+            runner: ubuntu-24.04-arm
           - goos: darwin
             goarch: amd64
             suffix: darwin-amd64
+            runner: macos-13
           - goos: darwin
             goarch: arm64
             suffix: darwin-arm64
+            runner: macos-14
           - goos: windows
             goarch: amd64
             suffix: windows-amd64.exe
+            runner: windows-2022
           - goos: windows
             goarch: arm64
             suffix: windows-arm64.exe
+            runner: windows-11-arm
 
     steps:
       - name: Checkout code
@@ -51,9 +57,14 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '1'
         run: |
           mkdir -p dist
           go build -tags fts5 -ldflags="-s -w" -o dist/mira-${{ matrix.suffix }} ./cmd/mira
+
+      - name: Smoke test binary
+        shell: bash
+        run: ./dist/mira-${{ matrix.suffix }} --version
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
