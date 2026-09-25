@@ -12,7 +12,7 @@
 
   [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.8.1-blue?style=flat-square)]()
+  [![Version](https://img.shields.io/badge/Version-0.8.2-blue?style=flat-square)]()
 
   [Documentation](docs/INDEX.md) • [Référence API](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [English](README.md)
 
@@ -712,7 +712,7 @@ Nous avons décidé de migrer vers PostgreSQL pour la v2...
 
 ```yaml
 system:
-  version: "0.8.1"
+  version: "0.8.2"
 
 storage:
   path: ".mira"
@@ -793,7 +793,7 @@ agent_memory:
 
 mcp:
   name: "mira"
-  version: "0.8.1"
+  version: "0.8.2"
   transport: "stdio"   # "stdio", "sse", ou "http" stateless sur /mcp
   address: "localhost:3001"
   auth_token: ""         # requis pour HTTP si l'adresse n'est pas locale
@@ -1265,6 +1265,11 @@ les droits déjà accordés. Consultez [docs/LICENSING.md](docs/LICENSING.md)
 pour la politique du projet et [LICENSE](LICENSE) pour le texte contractuel.
 
 ## Changelog
+
+### v0.8.2 (2026-09-25)
+
+- 🛠️ Correction du nettoyage après initialisation partielle
+- 🪟 Correction de l’extraction de l’exécutable par l’installeur Windows
 
 ### v0.8.1 (2026-09-24)
 

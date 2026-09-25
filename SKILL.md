@@ -2,7 +2,7 @@
 name: mira
 description: Long-term memory guidance for MIRA MCP integration
 author: benoitpetit
-version: "0.8.1"
+version: "0.8.2"
 tags: [memory, mcp, mira]
 ---
 
