@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1275,6 +1276,84 @@ func TestGetCandidatesWithEmbeddings(t *testing.T) {
 	}
 	if len(unknown) != 0 {
 		t.Errorf("expected 0 candidates for unknown id, got %d", len(unknown))
+	}
+}
+
+func TestGetCandidatesWithEmbeddingsHydratesMoreThan999IDsOnce(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	tx, err := repo.Begin()
+	if err != nil {
+		t.Fatalf("begin bulk insert: %v", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // transaction commits on success
+
+	const matchingCount = 1001
+	room := "bulk-room"
+	ids := make([]uuid.UUID, 0, matchingCount+3)
+	for i := 0; i < matchingCount+2; i++ {
+		wing := "bulk"
+		candidateRoom := room
+		if i >= matchingCount {
+			if i == matchingCount {
+				wing = "other-wing"
+			} else {
+				candidateRoom = "other-room"
+			}
+		}
+		verbatim := entities.NewVerbatim(fmt.Sprintf("bulk candidate %d", i), wing, &candidateRoom)
+		fingerprint := entities.NewFingerprint(verbatim.ID, valueobjects.TypeFact, "test-hash")
+		embedding := entities.NewEmbedding(verbatim.ID, "test-hash", []float32{0.1, 0.2, 0.3, 0.4})
+		if err := repo.StoreVerbatimTx(ctx, tx, verbatim); err != nil {
+			t.Fatalf("store verbatim %d: %v", i, err)
+		}
+		if err := repo.StoreFingerprintTx(ctx, tx, fingerprint); err != nil {
+			t.Fatalf("store fingerprint %d: %v", i, err)
+		}
+		if err := repo.StoreEmbeddingTx(ctx, tx, embedding); err != nil {
+			t.Fatalf("store embedding %d: %v", i, err)
+		}
+		ids = append(ids, verbatim.ID)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit bulk insert: %v", err)
+	}
+	ids = append(ids, ids[0]) // IN semantics must remain deduplicated across chunks.
+
+	wing := "bulk"
+	candidates, err := repo.GetCandidatesWithEmbeddings(ctx, ids, &wing, &room)
+	if err != nil {
+		t.Fatalf("GetCandidatesWithEmbeddings(%d IDs): %v", len(ids), err)
+	}
+	counts := make(map[uuid.UUID]int, len(candidates))
+	for _, candidate := range candidates {
+		counts[candidate.Verbatim.ID]++
+		if candidate.Verbatim.Wing != wing || candidate.Verbatim.Room == nil || *candidate.Verbatim.Room != room {
+			t.Errorf("candidate %s escaped wing/room filters", candidate.Verbatim.ID)
+		}
+	}
+	if len(candidates) != matchingCount {
+		t.Fatalf("hydrated %d candidates, want all %d IDs that match filters", len(candidates), matchingCount)
+	}
+	for _, id := range ids[:matchingCount] {
+		if counts[id] != 1 {
+			t.Errorf("candidate %s returned %d times, want exactly once", id, counts[id])
+		}
+	}
+}
+
+func TestGetCandidatesWithEmbeddingsPreservesCancellation(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+	ids := make([]uuid.UUID, 1001)
+	for i := range ids {
+		ids[i] = uuid.New()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := repo.GetCandidatesWithEmbeddings(ctx, ids, nil, nil); err == nil {
+		t.Fatal("GetCandidatesWithEmbeddings succeeded with an already canceled context")
 	}
 }
 

@@ -1604,15 +1604,17 @@ func (r *SQLiteRepository) GetCandidatesWithEmbeddings(ctx context.Context, ids 
 		return nil, nil
 	}
 
-	placeholders := make([]string, len(ids))
-	args := make([]interface{}, len(ids))
-	for i, id := range ids {
-		placeholders[i] = "?"
-		args[i] = id[:]
-	}
+	var candidates []*entities.Candidate
+	for _, batch := range candidateIDBatches(ids) {
+		placeholders := make([]string, len(batch))
+		args := make([]interface{}, len(batch))
+		for i, id := range batch {
+			placeholders[i] = "?"
+			args[i] = id[:]
+		}
 
-	//nolint:gosec // the IN list contains only generated placeholders
-	query := fmt.Sprintf(`
+		//nolint:gosec // the IN list contains only generated placeholders
+		query := fmt.Sprintf(`
 		SELECT v.id, v.content, v.wing, v.room, v.token_count, v.created_at, v.valid_from, v.valid_until, v.kind,
 			   v.summary, v.summary_tokens, v.metadata, v.lifecycle_state, v.superseded_by,
 			   f.id, f.ftype, f.fact_count, f.token_estimate, f.model_hash, f.data,
@@ -1621,103 +1623,109 @@ func (r *SQLiteRepository) GetCandidatesWithEmbeddings(ctx context.Context, ids 
 		JOIN fingerprints f ON v.id = f.verbatim_id
 		JOIN embeddings e ON v.id = e.id
 		WHERE COALESCE(v.lifecycle_state, 'active') = 'active' AND v.id IN (%s)
-	`, strings.Join(placeholders, ","))
+		`, strings.Join(placeholders, ","))
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("batch query failed: %w", err)
-	}
-	defer rows.Close()
-
-	var candidates []*entities.Candidate
-	for rows.Next() {
-		var vID, fID []byte
-		var vContent, vWing, vKind, fType, fModelHash string
-		var vRoom sql.NullString
-		var vSummary sql.NullString
-		var vMetadata []byte
-		var lifecycleState sql.NullString
-		var supersededBy sql.NullString
-		var vTokenCount, vSummaryTokens, fFactCount, fTokenEstimate, eDim int
-		var vCreatedAt float64
-		var vValidFrom, vValidUntil sql.NullFloat64
-		var fData []byte
-		var eVector []byte
-
-		err := rows.Scan(
-			&vID, &vContent, &vWing, &vRoom, &vTokenCount, &vCreatedAt, &vValidFrom, &vValidUntil, &vKind,
-			&vSummary, &vSummaryTokens, &vMetadata, &lifecycleState, &supersededBy,
-			&fID, &fType, &fFactCount, &fTokenEstimate, &fModelHash, &fData,
-			&eVector, &eDim,
-		)
+		rows, err := r.db.QueryContext(ctx, query, args...)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("batch query failed: %w", err)
 		}
 
-		// Apply wing/room filters
-		if wing != nil && vWing != *wing {
-			continue
-		}
-		if room != nil && (!vRoom.Valid || vRoom.String != *room) {
-			continue
+		for rows.Next() {
+			var vID, fID []byte
+			var vContent, vWing, vKind, fType, fModelHash string
+			var vRoom sql.NullString
+			var vSummary sql.NullString
+			var vMetadata []byte
+			var lifecycleState sql.NullString
+			var supersededBy sql.NullString
+			var vTokenCount, vSummaryTokens, fFactCount, fTokenEstimate, eDim int
+			var vCreatedAt float64
+			var vValidFrom, vValidUntil sql.NullFloat64
+			var fData []byte
+			var eVector []byte
+
+			err := rows.Scan(
+				&vID, &vContent, &vWing, &vRoom, &vTokenCount, &vCreatedAt, &vValidFrom, &vValidUntil, &vKind,
+				&vSummary, &vSummaryTokens, &vMetadata, &lifecycleState, &supersededBy,
+				&fID, &fType, &fFactCount, &fTokenEstimate, &fModelHash, &fData,
+				&eVector, &eDim,
+			)
+			if err != nil {
+				continue
+			}
+
+			// Apply wing/room filters
+			if wing != nil && vWing != *wing {
+				continue
+			}
+			if room != nil && (!vRoom.Valid || vRoom.String != *room) {
+				continue
+			}
+
+			// Parse UUID
+			id, err := uuid.FromBytes(vID)
+			if err != nil {
+				continue
+			}
+
+			// Decode embedding vector
+			vec := make([]float32, eDim)
+			vecLen := len(eVector) / 4
+			if vecLen > eDim {
+				vecLen = eDim
+			}
+			for i := 0; i < vecLen; i++ {
+				u := binary.LittleEndian.Uint32(eVector[i*4 : i*4+4])
+				vec[i] = math.Float32frombits(u)
+			}
+
+			// Build entities
+			verbatim := &entities.Verbatim{
+				ID:                id,
+				Content:           vContent,
+				Wing:              vWing,
+				TokenCount:        vTokenCount,
+				SummaryTokenCount: vSummaryTokens,
+				CreatedAt:         time.Unix(int64(vCreatedAt), 0),
+				ValidFrom:         nullableUnixTime(vValidFrom),
+				ValidUntil:        nullableUnixTime(vValidUntil),
+				Kind:              valueobjects.MemoryKind(vKind),
+			}
+			if vRoom.Valid {
+				verbatim.Room = &vRoom.String
+			}
+			if vSummary.Valid && vSummary.String != "" {
+				verbatim.Summary = &vSummary.String
+			}
+			if len(vMetadata) > 0 {
+				_ = json.Unmarshal(vMetadata, &verbatim.Metadata)
+			}
+			hydrateLifecycleColumns(verbatim, lifecycleState.String, supersededBy)
+
+			fpID, _ := uuid.FromBytes(fID)
+			fp := &entities.Fingerprint{
+				ID:            fpID,
+				VerbatimID:    id,
+				Type:          valueobjects.MemoryType(fType),
+				FactCount:     fFactCount,
+				TokenEstimate: fTokenEstimate,
+				ModelHash:     fModelHash,
+			}
+			_ = json.Unmarshal(fData, &fp.Data)
+
+			candidates = append(candidates, entities.NewCandidate(fp, verbatim, vec))
 		}
 
-		// Parse UUID
-		id, err := uuid.FromBytes(vID)
-		if err != nil {
-			continue
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("error iterating rows: %w", err)
 		}
-
-		// Decode embedding vector
-		vec := make([]float32, eDim)
-		vecLen := len(eVector) / 4
-		if vecLen > eDim {
-			vecLen = eDim
+		if err := rows.Close(); err != nil {
+			return nil, fmt.Errorf("error closing rows: %w", err)
 		}
-		for i := 0; i < vecLen; i++ {
-			u := binary.LittleEndian.Uint32(eVector[i*4 : i*4+4])
-			vec[i] = math.Float32frombits(u)
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-
-		// Build entities
-		verbatim := &entities.Verbatim{
-			ID:                id,
-			Content:           vContent,
-			Wing:              vWing,
-			TokenCount:        vTokenCount,
-			SummaryTokenCount: vSummaryTokens,
-			CreatedAt:         time.Unix(int64(vCreatedAt), 0),
-			ValidFrom:         nullableUnixTime(vValidFrom),
-			ValidUntil:        nullableUnixTime(vValidUntil),
-			Kind:              valueobjects.MemoryKind(vKind),
-		}
-		if vRoom.Valid {
-			verbatim.Room = &vRoom.String
-		}
-		if vSummary.Valid && vSummary.String != "" {
-			verbatim.Summary = &vSummary.String
-		}
-		if len(vMetadata) > 0 {
-			_ = json.Unmarshal(vMetadata, &verbatim.Metadata)
-		}
-		hydrateLifecycleColumns(verbatim, lifecycleState.String, supersededBy)
-
-		fpID, _ := uuid.FromBytes(fID)
-		fp := &entities.Fingerprint{
-			ID:            fpID,
-			VerbatimID:    id,
-			Type:          valueobjects.MemoryType(fType),
-			FactCount:     fFactCount,
-			TokenEstimate: fTokenEstimate,
-			ModelHash:     fModelHash,
-		}
-		_ = json.Unmarshal(fData, &fp.Data)
-
-		candidates = append(candidates, entities.NewCandidate(fp, verbatim, vec))
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating rows: %w", err)
 	}
 
 	return candidates, nil

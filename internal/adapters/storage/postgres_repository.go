@@ -1089,88 +1089,99 @@ func (r *PostgreSQLRepository) GetCandidatesWithEmbeddings(ctx context.Context, 
 		return nil, nil
 	}
 
-	args := postgresUUIDArguments(ids)
-	query := `
+	var candidates []*entities.Candidate
+	for _, batch := range candidateIDBatches(ids) {
+		args := postgresUUIDArguments(batch)
+		query := `
 		SELECT v.id, v.content, v.wing, v.room, v.token_count, v.created_at, v.valid_from, v.valid_until, v.kind, v.metadata,
 			   v.summary, v.summary_tokens,
 			   f.id, f.ftype, f.fact_count, f.token_estimate, f.model_hash, f.data,
-			   e.vector::float4[]
+		   e.vector::float4[]
 		FROM verbatim v
 		JOIN fingerprints f ON v.id = f.verbatim_id
 		JOIN embeddings e ON v.id = e.id
 		WHERE COALESCE(v.lifecycle_state, 'active') = 'active' AND v.id IN (` + postgresPlaceholders(1, len(args)) + `)
-	` //nolint:gosec // placeholders are generated, IDs are bound
-	rows, err := r.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var candidates []*entities.Candidate
-	for rows.Next() {
-		var vID, fID uuid.UUID
-		var vContent, vWing, vKind, fType, fModelHash string
-		var vMetadata []byte
-		var vRoom sql.NullString
-		var vSummary sql.NullString
-		var vTokenCount, vSummaryTokens, fFactCount, fTokenEstimate int
-		var vCreatedAt float64
-		var vValidFrom, vValidUntil sql.NullFloat64
-		var fData []byte
-		var vector []float32
-
-		err := rows.Scan(
-			&vID, &vContent, &vWing, &vRoom, &vTokenCount, &vCreatedAt, &vValidFrom, &vValidUntil, &vKind, &vMetadata,
-			&vSummary, &vSummaryTokens,
-			&fID, &fType, &fFactCount, &fTokenEstimate, &fModelHash, &fData,
-			&vector,
-		)
+		` //nolint:gosec // placeholders are generated, IDs are bound
+		rows, err := r.db.QueryContext(ctx, query, args...)
 		if err != nil {
-			continue
+			return nil, err
 		}
 
-		if wing != nil && vWing != *wing {
-			continue
+		for rows.Next() {
+			var vID, fID uuid.UUID
+			var vContent, vWing, vKind, fType, fModelHash string
+			var vMetadata []byte
+			var vRoom sql.NullString
+			var vSummary sql.NullString
+			var vTokenCount, vSummaryTokens, fFactCount, fTokenEstimate int
+			var vCreatedAt float64
+			var vValidFrom, vValidUntil sql.NullFloat64
+			var fData []byte
+			var vector []float32
+
+			err := rows.Scan(
+				&vID, &vContent, &vWing, &vRoom, &vTokenCount, &vCreatedAt, &vValidFrom, &vValidUntil, &vKind, &vMetadata,
+				&vSummary, &vSummaryTokens,
+				&fID, &fType, &fFactCount, &fTokenEstimate, &fModelHash, &fData,
+				&vector,
+			)
+			if err != nil {
+				continue
+			}
+
+			if wing != nil && vWing != *wing {
+				continue
+			}
+			if room != nil && (!vRoom.Valid || vRoom.String != *room) {
+				continue
+			}
+
+			verbatim := &entities.Verbatim{
+				ID:                vID,
+				Content:           vContent,
+				Wing:              vWing,
+				TokenCount:        vTokenCount,
+				SummaryTokenCount: vSummaryTokens,
+				CreatedAt:         time.Unix(int64(vCreatedAt), 0),
+				ValidFrom:         nullableUnixTime(vValidFrom),
+				ValidUntil:        nullableUnixTime(vValidUntil),
+				Kind:              valueobjects.MemoryKind(vKind),
+			}
+			if len(vMetadata) > 0 {
+				_ = json.Unmarshal(vMetadata, &verbatim.Metadata)
+			}
+			hydrateLifecycle(verbatim)
+			if vRoom.Valid {
+				verbatim.Room = &vRoom.String
+			}
+			if vSummary.Valid && vSummary.String != "" {
+				verbatim.Summary = &vSummary.String
+			}
+
+			fp := &entities.Fingerprint{
+				ID:            fID,
+				VerbatimID:    vID,
+				Type:          valueobjects.MemoryType(fType),
+				FactCount:     fFactCount,
+				TokenEstimate: fTokenEstimate,
+				ModelHash:     fModelHash,
+			}
+			_ = json.Unmarshal(fData, &fp.Data)
+
+			candidates = append(candidates, entities.NewCandidate(fp, verbatim, vector))
 		}
-		if room != nil && (!vRoom.Valid || vRoom.String != *room) {
-			continue
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
 
-		verbatim := &entities.Verbatim{
-			ID:                vID,
-			Content:           vContent,
-			Wing:              vWing,
-			TokenCount:        vTokenCount,
-			SummaryTokenCount: vSummaryTokens,
-			CreatedAt:         time.Unix(int64(vCreatedAt), 0),
-			ValidFrom:         nullableUnixTime(vValidFrom),
-			ValidUntil:        nullableUnixTime(vValidUntil),
-			Kind:              valueobjects.MemoryKind(vKind),
-		}
-		if len(vMetadata) > 0 {
-			_ = json.Unmarshal(vMetadata, &verbatim.Metadata)
-		}
-		hydrateLifecycle(verbatim)
-		if vRoom.Valid {
-			verbatim.Room = &vRoom.String
-		}
-		if vSummary.Valid && vSummary.String != "" {
-			verbatim.Summary = &vSummary.String
-		}
-
-		fp := &entities.Fingerprint{
-			ID:            fID,
-			VerbatimID:    vID,
-			Type:          valueobjects.MemoryType(fType),
-			FactCount:     fFactCount,
-			TokenEstimate: fTokenEstimate,
-			ModelHash:     fModelHash,
-		}
-		_ = json.Unmarshal(fData, &fp.Data)
-
-		candidates = append(candidates, entities.NewCandidate(fp, verbatim, vector))
 	}
-
 	return candidates, nil
 }
 
