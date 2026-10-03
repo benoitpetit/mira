@@ -267,6 +267,29 @@ func TestGetTimeline_CursorIncludesFullTimestampAndID(t *testing.T) {
 	}
 }
 
+func TestGetTimeline_CursorUsesHiddenIDWhenProvided(t *testing.T) {
+	publicID := uuid.MustParse("123e4567-e89b-12d3-a456-426614174000")
+	cursorID := uuid.MustParse("123e4567-e89b-12d3-a456-426614174001")
+	timestamp := "2026-10-03T14:15:16.123456789Z"
+	repo := &mockStatsRepositoryForTimeline{
+		getTimelineFunc: func(context.Context, string, *string, *valueobjects.MemoryType, *string, *string) ([]*valueobjects.TimelineItem, error) {
+			return []*valueobjects.TimelineItem{{ID: publicID.String(), CursorID: cursorID.String(), Timestamp: timestamp}}, nil
+		},
+	}
+
+	output, err := NewGetTimeline(repo).Execute(context.Background(), GetTimelineInput{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "v1:" + timestamp + "|" + cursorID.String()
+	if output.NextCursor == nil || *output.NextCursor != want {
+		t.Fatalf("NextCursor = %v, want hidden cursor ID %s", output.NextCursor, cursorID)
+	}
+	if output.Items[0].ID != publicID.String() {
+		t.Fatalf("public item ID = %q, want verbatim ID %s", output.Items[0].ID, publicID)
+	}
+}
+
 func TestGetTimeline_InvalidDateBoundsReturnExplicitErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name string

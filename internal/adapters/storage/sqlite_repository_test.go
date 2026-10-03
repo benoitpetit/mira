@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1735,6 +1736,62 @@ func TestGetTimeline_PaginatesEqualTimestampsWithoutGaps(t *testing.T) {
 	}
 	if len(seen) != len(ids) {
 		t.Fatalf("paginated IDs = %v, want all %v", seen, ids)
+	}
+}
+
+func TestGetTimeline_PaginatesFingerprintsForSameVerbatimAndTimestamp(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	instant := time.Date(2026, 10, 3, 14, 15, 16, 0, time.UTC)
+	verbatim := entities.NewVerbatim("one verbatim", "same-fingerprint-page", nil)
+	if err := repo.StoreVerbatim(ctx, verbatim); err != nil {
+		t.Fatalf("StoreVerbatim: %v", err)
+	}
+
+	for _, summary := range []string{"first fingerprint", "second fingerprint"} {
+		fp := entities.NewFingerprint(verbatim.ID, valueobjects.TypeFact, "timeline-test")
+		fp.ExtractedAt = instant
+		fp.WithData(valueobjects.FingerprintData{Subject: []string{summary}})
+		if err := repo.StoreFingerprint(ctx, fp); err != nil {
+			t.Fatalf("StoreFingerprint: %v", err)
+		}
+		if _, err := repo.db.ExecContext(ctx, `UPDATE fingerprints SET extracted_at = ? WHERE id = ?`, float64(instant.Unix()), fp.ID[:]); err != nil {
+			t.Fatalf("set deterministic extracted_at: %v", err)
+		}
+	}
+
+	uc := interactors.NewGetTimeline(repo)
+	first, err := uc.Execute(ctx, interactors.GetTimelineInput{Wing: "same-fingerprint-page", Limit: 1})
+	if err != nil {
+		t.Fatalf("first page: %v", err)
+	}
+	if len(first.Items) != 1 || first.NextCursor == nil {
+		t.Fatalf("first page = %+v, want one item and cursor", first)
+	}
+	if first.Items[0].ID != verbatim.ID.String() {
+		t.Fatalf("public timeline ID = %q, want verbatim ID %q", first.Items[0].ID, verbatim.ID)
+	}
+	if first.Items[0].CursorID == "" || first.Items[0].CursorID == first.Items[0].ID {
+		t.Fatalf("internal cursor ID = %q, want distinct fingerprint ID", first.Items[0].CursorID)
+	}
+	encoded, err := json.Marshal(first.Items[0])
+	if err != nil {
+		t.Fatalf("marshal timeline item: %v", err)
+	}
+	if strings.Contains(string(encoded), first.Items[0].CursorID) {
+		t.Fatalf("JSON timeline item leaked cursor ID: %s", encoded)
+	}
+
+	second, err := uc.Execute(ctx, interactors.GetTimelineInput{Wing: "same-fingerprint-page", Limit: 1, Cursor: first.NextCursor})
+	if err != nil {
+		t.Fatalf("second page: %v", err)
+	}
+	if len(second.Items) != 1 {
+		t.Fatalf("second page returned %d items, want remaining fingerprint", len(second.Items))
+	}
+	if second.Items[0].ID != verbatim.ID.String() || second.Items[0].Summary == first.Items[0].Summary {
+		t.Fatalf("second page item = %+v, want other fingerprint for same public verbatim ID", second.Items[0])
 	}
 }
 

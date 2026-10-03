@@ -24,8 +24,8 @@ func TestBuildPostgreSQLTimelineQueryUsesNumericBoundsAndStableCursor(t *testing
 	for _, fragment := range []string{
 		"f.extracted_at >= $4",
 		"f.extracted_at <= $5",
-		"f.extracted_at < $6 OR (f.extracted_at = $7 AND v.id < $8)",
-		"ORDER BY f.extracted_at DESC, v.id DESC LIMIT 7",
+		"f.extracted_at < $6 OR (f.extracted_at = $7 AND f.id < $8)",
+		"ORDER BY f.extracted_at DESC, f.id DESC LIMIT 7",
 	} {
 		if !strings.Contains(query, fragment) {
 			t.Errorf("query does not contain %q: %s", fragment, query)

@@ -867,7 +867,7 @@ func (r *SQLiteRepository) GetStats(ctx context.Context) (*valueobjects.Stats, e
 // GetTimeline implements StatsRepository
 func (r *SQLiteRepository) GetTimeline(ctx context.Context, wing string, room *string, memType *valueobjects.MemoryType, since, until *string, limit int, cursor *string) ([]*valueobjects.TimelineItem, error) {
 	query := `
-		SELECT v.id, f.ftype, f.extracted_at, f.data, v.wing
+		SELECT v.id, f.id, f.ftype, f.extracted_at, f.data, v.wing
 		FROM fingerprints f
 		JOIN verbatim v ON f.verbatim_id = v.id
 		WHERE 1=1`
@@ -913,7 +913,7 @@ func (r *SQLiteRepository) GetTimeline(ctx context.Context, wing string, room *s
 			args = append(args, float64(timestamp.Unix()))
 		} else {
 			id, _ := uuid.Parse(cursorID) // ParseTimelineCursor validates the UUID.
-			query += " AND (f.extracted_at < ? OR (f.extracted_at = ? AND v.id < ?))"
+			query += " AND (f.extracted_at < ? OR (f.extracted_at = ? AND f.id < ?))"
 			args = append(args, float64(timestamp.Unix()), float64(timestamp.Unix()), id[:])
 		}
 	}
@@ -923,7 +923,7 @@ func (r *SQLiteRepository) GetTimeline(ctx context.Context, wing string, room *s
 	}
 	// No upper cap here: callers (REST handler, MCP controller) enforce their own limits.
 	// The export command legitimately needs to retrieve all records.
-	query += fmt.Sprintf(" ORDER BY f.extracted_at DESC, v.id DESC LIMIT %d", limit)
+	query += fmt.Sprintf(" ORDER BY f.extracted_at DESC, f.id DESC LIMIT %d", limit)
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -933,17 +933,21 @@ func (r *SQLiteRepository) GetTimeline(ctx context.Context, wing string, room *s
 
 	var items []*valueobjects.TimelineItem
 	for rows.Next() {
-		var id []byte
+		var id, cursorID []byte
 		var memTypeStr string
 		var extractedAt float64
 		var dataJSON []byte
 		var wingStr string
 
-		if err := rows.Scan(&id, &memTypeStr, &extractedAt, &dataJSON, &wingStr); err != nil {
+		if err := rows.Scan(&id, &cursorID, &memTypeStr, &extractedAt, &dataJSON, &wingStr); err != nil {
 			continue
 		}
 
 		uid, err := uuid.FromBytes(id)
+		if err != nil {
+			continue
+		}
+		fingerprintID, err := uuid.FromBytes(cursorID)
 		if err != nil {
 			continue
 		}
@@ -964,6 +968,7 @@ func (r *SQLiteRepository) GetTimeline(ctx context.Context, wing string, room *s
 
 		items = append(items, &valueobjects.TimelineItem{
 			ID:              uid.String(),
+			CursorID:        fingerprintID.String(),
 			Timestamp:       time.Unix(int64(extractedAt), 0).Format("2006-01-02 15:04"),
 			CursorTimestamp: time.Unix(int64(extractedAt), 0).UTC().Format(time.RFC3339Nano),
 			Type:            valueobjects.MemoryType(memTypeStr),

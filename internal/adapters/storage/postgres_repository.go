@@ -773,13 +773,13 @@ func (r *PostgreSQLRepository) GetTimeline(ctx context.Context, wing string, roo
 
 	var items []*valueobjects.TimelineItem
 	for rows.Next() {
-		var uid uuid.UUID
+		var uid, cursorID uuid.UUID
 		var memTypeStr string
 		var extractedAt float64
 		var dataJSON []byte
 		var wingStr string
 
-		if err := rows.Scan(&uid, &memTypeStr, &extractedAt, &dataJSON, &wingStr); err != nil {
+		if err := rows.Scan(&uid, &cursorID, &memTypeStr, &extractedAt, &dataJSON, &wingStr); err != nil {
 			continue
 		}
 
@@ -799,6 +799,7 @@ func (r *PostgreSQLRepository) GetTimeline(ctx context.Context, wing string, roo
 
 		items = append(items, &valueobjects.TimelineItem{
 			ID:              uid.String(),
+			CursorID:        cursorID.String(),
 			Timestamp:       time.Unix(int64(extractedAt), 0).Format("2006-01-02 15:04"),
 			CursorTimestamp: time.Unix(int64(extractedAt), 0).UTC().Format(time.RFC3339Nano),
 			Type:            valueobjects.MemoryType(memTypeStr),
@@ -812,7 +813,7 @@ func (r *PostgreSQLRepository) GetTimeline(ctx context.Context, wing string, roo
 
 func buildPostgreSQLTimelineQuery(wing string, room *string, memType *valueobjects.MemoryType, since, until *string, limit int, cursor *string) (string, []interface{}, error) {
 	query := `
-		SELECT v.id, f.ftype, f.extracted_at, f.data, v.wing
+		SELECT v.id, f.id, f.ftype, f.extracted_at, f.data, v.wing
 		FROM fingerprints f
 		JOIN verbatim v ON f.verbatim_id = v.id
 		WHERE 1=1`
@@ -864,7 +865,7 @@ func buildPostgreSQLTimelineQuery(wing string, room *string, memType *valueobjec
 			argIdx++
 		} else {
 			id, _ := uuid.Parse(cursorID) // ParseTimelineCursor validates the UUID.
-			query += fmt.Sprintf(" AND (f.extracted_at < $%d OR (f.extracted_at = $%d AND v.id < $%d))", argIdx, argIdx+1, argIdx+2)
+			query += fmt.Sprintf(" AND (f.extracted_at < $%d OR (f.extracted_at = $%d AND f.id < $%d))", argIdx, argIdx+1, argIdx+2)
 			args = append(args, float64(timestamp.Unix()), float64(timestamp.Unix()), id)
 			argIdx += 3
 		}
@@ -873,7 +874,7 @@ func buildPostgreSQLTimelineQuery(wing string, room *string, memType *valueobjec
 	if limit <= 0 {
 		limit = 100
 	}
-	query += fmt.Sprintf(" ORDER BY f.extracted_at DESC, v.id DESC LIMIT %d", limit)
+	query += fmt.Sprintf(" ORDER BY f.extracted_at DESC, f.id DESC LIMIT %d", limit)
 	return query, args, nil
 }
 

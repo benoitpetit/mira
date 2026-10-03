@@ -68,6 +68,10 @@ func (uc *GetTimeline) Execute(ctx context.Context, input GetTimelineInput) (*Ge
 	output := &GetTimelineOutput{Items: items}
 	if len(items) > 0 {
 		lastItem := items[len(items)-1]
+		cursorID := lastItem.CursorID
+		if cursorID == "" {
+			cursorID = lastItem.ID
+		}
 		timestamp, err := time.Parse(time.RFC3339Nano, lastItem.CursorTimestamp)
 		if err != nil {
 			timestamp, err = time.Parse(time.RFC3339Nano, lastItem.Timestamp)
@@ -76,7 +80,7 @@ func (uc *GetTimeline) Execute(ctx context.Context, input GetTimelineInput) (*Ge
 			timestamp, err = time.Parse("2006-01-02 15:04", lastItem.Timestamp)
 		}
 		if err == nil {
-			cursor := valueobjects.FormatTimelineCursor(timestamp, lastItem.ID)
+			cursor := valueobjects.FormatTimelineCursor(timestamp, cursorID)
 			output.NextCursor = &cursor
 		}
 	}

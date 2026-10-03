@@ -31,6 +31,7 @@ type ArchiveResult struct {
 // TimelineItem represents an item in the timeline
 type TimelineItem struct {
 	ID              string     `json:"id"`
+	CursorID        string     `json:"-"`
 	Timestamp       string     `json:"timestamp"`
 	CursorTimestamp string     `json:"-"`
 	Type            MemoryType `json:"type"`
