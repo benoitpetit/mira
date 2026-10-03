@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -91,6 +92,32 @@ func TestNewApplication_StoreAndRecall(t *testing.T) {
 		t.Fatalf("Recall: %v", err)
 	}
 	_ = rOut
+}
+
+func TestApplicationStoreHonorsConfiguredContentLimit(t *testing.T) {
+	dir := t.TempDir()
+	cfg := mira.DefaultConfig()
+	cfg.Storage.Path = filepath.Join(dir, ".mira")
+	cfg.Embeddings.UseSimpleEmbedder = true
+	cfg.Embeddings.Dimension = 16
+	cfg.Extraction.LLM.Enabled = false
+	cfg.Metrics.Enabled = false
+	cfg.Webhooks.Enabled = false
+	cfg.API.Enabled = false
+	cfg.MCP.MaxContentLength = 70000
+
+	app, err := mira.NewApplication(cfg)
+	if err != nil {
+		t.Fatalf("mira.NewApplication: %v", err)
+	}
+	defer app.Close()
+
+	if _, err := app.Store(context.Background(), strings.Repeat("x", 70000), "test-wing", nil, nil); err != nil {
+		t.Fatalf("Store at configured limit: %v", err)
+	}
+	if _, err := app.Store(context.Background(), strings.Repeat("x", 70001), "test-wing", nil, nil); err == nil || !strings.Contains(err.Error(), "maximum length of 70000 characters") {
+		t.Fatalf("Store above configured limit error = %v, want 70000-character limit", err)
+	}
 }
 
 func TestApplication_Load(t *testing.T) {

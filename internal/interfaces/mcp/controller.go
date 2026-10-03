@@ -30,7 +30,7 @@ type ValidationLimits struct {
 // DefaultValidationLimits returns the default validation limits.
 func DefaultValidationLimits() ValidationLimits {
 	return ValidationLimits{
-		MaxContentLength: 100000,
+		MaxContentLength: valueobjects.DefaultMaxContentLength,
 		MaxWingLength:    100,
 		MaxRoomLength:    100,
 		MaxQueryLength:   10000,
@@ -40,7 +40,7 @@ func DefaultValidationLimits() ValidationLimits {
 // Backward-compatible constants for tests and external code.
 // Deprecated: Use ValidationLimits instead.
 const (
-	MaxContentLength = 100000
+	MaxContentLength = valueobjects.DefaultMaxContentLength
 	MaxWingLength    = 100
 	MaxRoomLength    = 100
 	MaxQueryLength   = 10000
@@ -709,8 +709,8 @@ func (c *Controller) handleStore(ctx context.Context, args map[string]interface{
 		return nil, fmt.Errorf("content is required")
 	}
 
-	if utf8.RuneCountInString(content) > c.limits.MaxContentLength {
-		return nil, fmt.Errorf("content exceeds maximum length of %d characters", c.limits.MaxContentLength)
+	if err := interactors.ValidateContentLength(content, c.limits.MaxContentLength); err != nil {
+		return nil, err
 	}
 
 	wing, ok := args["wing"].(string)
@@ -1015,8 +1015,8 @@ func (c *Controller) handleUpdate(ctx context.Context, args map[string]interface
 		return nil, fmt.Errorf("content is required and cannot be empty")
 	}
 
-	if utf8.RuneCountInString(content) > c.limits.MaxContentLength {
-		return nil, fmt.Errorf("content exceeds maximum length of %d characters", c.limits.MaxContentLength)
+	if err := interactors.ValidateContentLength(content, c.limits.MaxContentLength); err != nil {
+		return nil, err
 	}
 
 	output, err := c.updateMemory.Execute(ctx, interactors.UpdateMemoryInput{

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -1024,5 +1025,58 @@ func TestHandleStore_InternalError(t *testing.T) {
 	resp := s.post("/api/v1/memories", map[string]any{"content": "hello", "wing": "test"})
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("want 500, got %d", resp.StatusCode)
+	}
+}
+
+func TestHandleStoreAcceptsContentAboveLegacyLimit(t *testing.T) {
+	store := &fakeStore{}
+	h := rest.NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	body, err := json.Marshal(map[string]any{
+		"content": strings.Repeat("x", 70000),
+		"wing":    "test",
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/memories", bytes.NewReader(body))
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("want 201 for content below the configured default limit, got %d: %s", recorder.Code, recorder.Body)
+	}
+	if len(store.inputs) != 1 || len([]rune(store.inputs[0].Content)) != 70000 {
+		t.Fatalf("store received %d inputs, want one containing 70000 runes", len(store.inputs))
+	}
+}
+
+func TestHandleStoreUsesConfiguredContentLimit(t *testing.T) {
+	store := &fakeStore{}
+	h := rest.NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h.SetMaxContentLength(70000)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	for _, tc := range []struct {
+		name   string
+		runes  int
+		status int
+	}{
+		{name: "at configured limit", runes: 70000, status: http.StatusCreated},
+		{name: "above configured limit", runes: 70001, status: http.StatusUnprocessableEntity},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body, err := json.Marshal(map[string]any{"content": strings.Repeat("é", tc.runes), "wing": "test"})
+			if err != nil {
+				t.Fatalf("marshal request: %v", err)
+			}
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/memories", bytes.NewReader(body))
+			recorder := httptest.NewRecorder()
+			mux.ServeHTTP(recorder, request)
+			if recorder.Code != tc.status {
+				t.Fatalf("status = %d, want %d: %s", recorder.Code, tc.status, recorder.Body)
+			}
+		})
 	}
 }

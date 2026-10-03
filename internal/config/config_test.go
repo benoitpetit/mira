@@ -24,6 +24,20 @@ func TestDefaultConfig(t *testing.T) {
 	if !cfg.AgentMemory.Enabled {
 		t.Error("built-in agent memory should be enabled by default")
 	}
+	if cfg.MCP.MaxContentLength != 100000 {
+		t.Errorf("MCP.MaxContentLength = %d, want 100000", cfg.MCP.MaxContentLength)
+	}
+}
+
+func TestValidatePreservesConfiguredContentLength(t *testing.T) {
+	cfg := Default()
+	cfg.MCP.MaxContentLength = 70000
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if cfg.MCP.MaxContentLength != 70000 {
+		t.Fatalf("MCP.MaxContentLength = %d, want configured 70000", cfg.MCP.MaxContentLength)
+	}
 }
 
 func TestValidate(t *testing.T) {

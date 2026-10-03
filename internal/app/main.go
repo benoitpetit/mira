@@ -450,7 +450,7 @@ func (a *Application) initUseCases() {
 	logger := logging.NewSimpleLoggerWithPrefix("[StoreMemory]", false)
 	a.storeMemory = interactors.NewStoreMemory(
 		repo, a.extractor, a.extractor, a.vectorStore, a.metricsCollector, logger,
-	)
+	).WithMaxContentLength(cfg.MCP.MaxContentLength)
 	a.storeMemory.WithCompression(cfg.Compression.AutoCompress, cfg.Compression.MinTokens)
 
 	recallLogger := logging.NewSimpleLoggerWithPrefix("[RecallMemory]", false)
@@ -509,7 +509,9 @@ func (a *Application) initUseCases() {
 	a.clearMemory = interactors.NewClearMemory(repo, a.vectorStore)
 	a.deleteMemory = interactors.NewDeleteMemory(repo, a.vectorStore)
 	a.searchSemantic = interactors.NewSearchSemantic(a.vectorStore, a.embedder)
-	a.updateMemory = interactors.NewUpdateMemory(repo, a.extractor, a.vectorStore).WithCausalDetector(a.extractor)
+	a.updateMemory = interactors.NewUpdateMemory(repo, a.extractor, a.vectorStore).
+		WithCausalDetector(a.extractor).
+		WithMaxContentLength(cfg.MCP.MaxContentLength)
 	a.consolidateMemories = interactors.NewConsolidateMemories(repo, a.vectorStore, a.embedder, a.extractor)
 	a.compressMemories = interactors.NewCompressMemories(repo, repo)
 
@@ -566,6 +568,7 @@ func (a *Application) initRestAPI() {
 		a.repository,
 		policyRepo,
 	)
+	h.SetMaxContentLength(a.config.MCP.MaxContentLength)
 	readTimeout := time.Duration(a.config.API.ReadTimeout) * time.Second
 	writeTimeout := time.Duration(a.config.API.WriteTimeout) * time.Second
 	a.restServer = restserver.NewServer(h, a.config.API.Address, a.config.API.AuthToken, a.config.API.WingTokens, readTimeout, writeTimeout)

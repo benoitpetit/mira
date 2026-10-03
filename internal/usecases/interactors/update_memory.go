@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/benoitpetit/mira/internal/domain/entities"
+	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
 	"github.com/google/uuid"
 )
@@ -23,16 +24,26 @@ type UpdateMemoryOutput struct {
 
 // UpdateMemory implements the update memory use case
 type UpdateMemory struct {
-	repo           ports.Repository
-	extractor      ports.FingerprintExtractor
-	vectorStore    ports.VectorStore
-	causalDetector ports.CausalRelationDetector
+	repo             ports.Repository
+	extractor        ports.FingerprintExtractor
+	vectorStore      ports.VectorStore
+	causalDetector   ports.CausalRelationDetector
+	maxContentLength int
 }
 
 // WithCausalDetector enables causal relation rebuilding after updates while
 // keeping the constructor compatible with lightweight embedders and tests.
 func (uc *UpdateMemory) WithCausalDetector(detector ports.CausalRelationDetector) *UpdateMemory {
 	uc.causalDetector = detector
+	return uc
+}
+
+// WithMaxContentLength configures the maximum updated content length in Unicode code points.
+func (uc *UpdateMemory) WithMaxContentLength(maxContentLength int) *UpdateMemory {
+	if maxContentLength <= 0 {
+		maxContentLength = valueobjects.DefaultMaxContentLength
+	}
+	uc.maxContentLength = maxContentLength
 	return uc
 }
 
@@ -57,7 +68,7 @@ func (uc *UpdateMemory) Execute(ctx context.Context, input UpdateMemoryInput) (*
 	if err := (StoreMemoryInput{
 		Content: input.Content, Wing: verbatim.Wing, Room: verbatim.Room,
 		ValidFrom: verbatim.ValidFrom, ValidUntil: verbatim.ValidUntil,
-	}).Validate(); err != nil {
+	}).ValidateWithMaxContentLength(uc.maxContentLength); err != nil {
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 

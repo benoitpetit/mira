@@ -36,11 +36,16 @@ const defaultDecisionRoom = "decisions"
 
 // Validate checks that the input meets business constraints.
 func (in StoreMemoryInput) Validate() error {
+	return in.ValidateWithMaxContentLength(valueobjects.DefaultMaxContentLength)
+}
+
+// ValidateWithMaxContentLength applies the configured maximum in Unicode code points.
+func (in StoreMemoryInput) ValidateWithMaxContentLength(maxContentLength int) error {
 	if utf8.RuneCountInString(in.Content) == 0 {
 		return fmt.Errorf("content is required")
 	}
-	if utf8.RuneCountInString(in.Content) > 65536 {
-		return fmt.Errorf("content exceeds maximum length of 65536 characters")
+	if err := ValidateContentLength(in.Content, maxContentLength); err != nil {
+		return err
 	}
 	if !WingRoomRe.MatchString(in.Wing) {
 		return fmt.Errorf("wing must be 1-100 alphanumeric characters, hyphens or underscores")
@@ -75,6 +80,18 @@ func (in StoreMemoryInput) Validate() error {
 	return nil
 }
 
+// ValidateContentLength enforces a configured maximum measured in Unicode code points.
+// Non-positive limits use the shared default.
+func ValidateContentLength(content string, maxContentLength int) error {
+	if maxContentLength <= 0 {
+		maxContentLength = valueobjects.DefaultMaxContentLength
+	}
+	if utf8.RuneCountInString(content) > maxContentLength {
+		return fmt.Errorf("content exceeds maximum length of %d characters", maxContentLength)
+	}
+	return nil
+}
+
 // StoreMemoryOutput contains the output of storing a memory
 type StoreMemoryOutput struct {
 	FingerprintID string `json:"fingerprint_id"`
@@ -93,6 +110,7 @@ type StoreMemory struct {
 	vectorStore         ports.VectorStore
 	metricsCollector    ports.MetricsCollector
 	logger              ports.Logger
+	maxContentLength    int
 	autoCompressEnabled bool
 	autoCompressMinTok  int
 }
@@ -113,7 +131,17 @@ func NewStoreMemory(
 		vectorStore:      vectorStore,
 		metricsCollector: metricsCollector,
 		logger:           logger,
+		maxContentLength: valueobjects.DefaultMaxContentLength,
 	}
+}
+
+// WithMaxContentLength configures the maximum content length in Unicode code points.
+func (uc *StoreMemory) WithMaxContentLength(maxContentLength int) *StoreMemory {
+	if maxContentLength <= 0 {
+		maxContentLength = valueobjects.DefaultMaxContentLength
+	}
+	uc.maxContentLength = maxContentLength
+	return uc
 }
 
 // WithCompression enables rule-based auto-compression for session_notes
@@ -152,7 +180,7 @@ func defaultRoomForType(memType valueobjects.MemoryType) *string {
 func (uc *StoreMemory) Execute(ctx context.Context, input StoreMemoryInput) (*StoreMemoryOutput, error) {
 	start := time.Now()
 
-	if err := input.Validate(); err != nil {
+	if err := input.ValidateWithMaxContentLength(uc.maxContentLength); err != nil {
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 

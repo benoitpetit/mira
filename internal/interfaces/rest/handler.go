@@ -105,10 +105,12 @@ type Handler struct {
 	audit             ports.AuditRepository
 	policy            ports.PolicyRepository
 	agentMemoryStatus AgentMemoryStatusQuerier
+	maxContentLength  int
+	maxRequestBody    int64
 }
 
 const (
-	maxRESTRequestBody   = 4 << 20 // 4 MiB; individual memory content is capped at 64 KiB
+	maxRESTRequestBody   = 4 << 20 // 4 MiB default request body limit
 	maxConversationItems = 1000
 	maxRESTQueryLength   = 10000
 )
@@ -131,21 +133,43 @@ func NewHandler(
 	policy ports.PolicyRepository,
 ) *Handler {
 	return &Handler{
-		store:       store,
-		recall:      recall,
-		load:        load,
-		update:      update,
-		del:         del,
-		search:      search,
-		consolidate: consolidate,
-		clear:       clear,
-		timeline:    timeline,
-		archive:     archive,
-		causal:      causal,
-		status:      status,
-		audit:       audit,
-		policy:      policy,
+		store:            store,
+		recall:           recall,
+		load:             load,
+		update:           update,
+		del:              del,
+		search:           search,
+		consolidate:      consolidate,
+		clear:            clear,
+		timeline:         timeline,
+		archive:          archive,
+		causal:           causal,
+		status:           status,
+		audit:            audit,
+		policy:           policy,
+		maxContentLength: valueobjects.DefaultMaxContentLength,
+		maxRequestBody:   maxRESTRequestBody,
 	}
+}
+
+// SetMaxContentLength sets the REST memory content limit in Unicode code points.
+// The request body allowance grows as needed for JSON-escaped UTF-8 content.
+func (h *Handler) SetMaxContentLength(maxContentLength int) {
+	if maxContentLength <= 0 {
+		maxContentLength = valueobjects.DefaultMaxContentLength
+	}
+	h.maxContentLength = maxContentLength
+
+	const jsonEscapedRuneBytes = int64(12)
+	const jsonOverheadBytes = int64(64 << 10)
+	maxInt64 := int64(^uint64(0) >> 1)
+	maxBody := int64(maxRESTRequestBody)
+	if int64(maxContentLength) > (maxInt64-jsonOverheadBytes)/jsonEscapedRuneBytes {
+		maxBody = maxInt64
+	} else if configuredBody := int64(maxContentLength)*jsonEscapedRuneBytes + jsonOverheadBytes; configuredBody > maxBody {
+		maxBody = configuredBody
+	}
+	h.maxRequestBody = maxBody
 }
 
 // SetAgentMemoryQuerier injects the built-in agent-memory status provider.
@@ -242,7 +266,7 @@ func (h *Handler) handleStore(w http.ResponseWriter, r *http.Request) {
 		input.Kind = &kind
 	}
 
-	if err := input.Validate(); err != nil {
+	if err := input.ValidateWithMaxContentLength(h.maxContentLength); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
@@ -346,6 +370,10 @@ func (h *Handler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Content == "" {
 		writeError(w, http.StatusUnprocessableEntity, "content is required")
+		return
+	}
+	if err := interactors.ValidateContentLength(body.Content, h.maxContentLength); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 
@@ -675,7 +703,11 @@ func NewServer(h *Handler, addr, masterToken string, wingTokens map[string][]str
 	rootHandler = recoveryMiddleware(rootHandler)
 	next := rootHandler
 	rootHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, maxRESTRequestBody)
+		maxBody := h.maxRequestBody
+		if maxBody <= 0 {
+			maxBody = maxRESTRequestBody
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 		next.ServeHTTP(w, r)
 	})
 

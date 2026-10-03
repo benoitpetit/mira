@@ -246,6 +246,28 @@ func TestHandleStoreSuccess(t *testing.T) {
 	}
 }
 
+func TestHandleStoreUsesConfiguredContentLimit(t *testing.T) {
+	store := &mockStoreMemory{executeFunc: func(context.Context, interactors.StoreMemoryInput) (*interactors.StoreMemoryOutput, error) {
+		return &interactors.StoreMemoryOutput{FingerprintID: "stored"}, nil
+	}}
+	controller := newTestController(func(c *Controller) {
+		c.storeMemory = store
+		c.limits.MaxContentLength = 70000
+	})
+	if _, err := controller.handleStore(context.Background(), map[string]interface{}{
+		"content": strings.Repeat("é", 70000),
+		"wing":    "test",
+	}); err != nil {
+		t.Fatalf("configured boundary rejected: %v", err)
+	}
+	if _, err := controller.handleStore(context.Background(), map[string]interface{}{
+		"content": strings.Repeat("é", 70001),
+		"wing":    "test",
+	}); err == nil || !strings.Contains(err.Error(), "maximum length of 70000 characters") {
+		t.Fatalf("configured over-limit error = %v, want 70000-character limit", err)
+	}
+}
+
 // TestHandleRecallSuccess tests mira_recall with a mock
 func TestHandleRecallSuccess(t *testing.T) {
 	mock := &mockRecallMemory{}

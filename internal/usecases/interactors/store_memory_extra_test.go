@@ -51,10 +51,45 @@ func TestDefaultRoomForType_AllCases(t *testing.T) {
 
 // ── Validate extra cases ──────────────────────────────────────────────────────
 
-func TestStoreMemoryValidate_ContentTooLong(t *testing.T) {
-	in := StoreMemoryInput{Content: strings.Repeat("x", 65537), Wing: "w"}
-	if err := in.Validate(); err == nil {
-		t.Error("expected error for content > 65536 chars")
+func TestStoreMemoryValidate_DefaultContentLimitAndRuneSemantics(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		content string
+		wantErr bool
+	}{
+		{name: "above legacy limit", content: strings.Repeat("x", 70000)},
+		{name: "default boundary", content: strings.Repeat("é", 100000)},
+		{name: "above default boundary", content: strings.Repeat("é", 100001), wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := (StoreMemoryInput{Content: tc.content, Wing: "w"}).Validate()
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("Validate() error = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestStoreMemoryValidateConfiguredContentLimit(t *testing.T) {
+	input := StoreMemoryInput{Content: strings.Repeat("é", 70000), Wing: "w"}
+	if err := input.ValidateWithMaxContentLength(70000); err != nil {
+		t.Fatalf("configured boundary rejected: %v", err)
+	}
+	input.Content += "é"
+	err := input.ValidateWithMaxContentLength(70000)
+	if err == nil || !strings.Contains(err.Error(), "maximum length of 70000 characters") {
+		t.Fatalf("configured over-limit error = %v, want 70000-character limit", err)
+	}
+}
+
+func TestStoreMemoryExecuteUsesConfiguredContentLimit(t *testing.T) {
+	uc := NewStoreMemory(nil, nil, nil, nil, nil, nil).WithMaxContentLength(70000)
+	_, err := uc.Execute(context.Background(), StoreMemoryInput{
+		Content: strings.Repeat("x", 70001),
+		Wing:    "w",
+	})
+	if err == nil || !strings.Contains(err.Error(), "maximum length of 70000 characters") {
+		t.Fatalf("Execute error = %v, want configured 70000-character limit", err)
 	}
 }
 

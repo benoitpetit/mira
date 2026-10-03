@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 
 	_ "github.com/benoitpetit/go-sqlcipher/v4"
@@ -361,6 +362,21 @@ func TestUpdateMemory_RejectsInvalidContentBeforeExtraction(t *testing.T) {
 	uc := NewUpdateMemory(repo, &mockUpdateExtractor{}, &mockUpdateVectorStore{})
 	if _, err := uc.Execute(context.Background(), UpdateMemoryInput{ID: id, Content: ""}); err == nil {
 		t.Fatal("expected empty content to be rejected")
+	}
+	if repo.verbatims[id].Content != "original" {
+		t.Fatalf("invalid update mutated existing content: %q", repo.verbatims[id].Content)
+	}
+}
+
+func TestUpdateMemoryUsesConfiguredContentLimit(t *testing.T) {
+	repo := newUpdateMockRepo()
+	id := uuid.New()
+	repo.verbatims[id] = &entities.Verbatim{ID: id, Content: "original", Wing: "w"}
+
+	uc := NewUpdateMemory(repo, &mockUpdateExtractor{}, &mockUpdateVectorStore{}).WithMaxContentLength(70000)
+	_, err := uc.Execute(context.Background(), UpdateMemoryInput{ID: id, Content: strings.Repeat("é", 70001)})
+	if err == nil || !strings.Contains(err.Error(), "maximum length of 70000 characters") {
+		t.Fatalf("expected configured content limit error, got %v", err)
 	}
 	if repo.verbatims[id].Content != "original" {
 		t.Fatalf("invalid update mutated existing content: %q", repo.verbatims[id].Content)

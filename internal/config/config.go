@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/benoitpetit/mira/internal/util"
 
 	"gopkg.in/yaml.v3"
@@ -243,7 +244,7 @@ type MCPConfig struct {
 	Address        string `yaml:"address"`
 	AuthToken      string `yaml:"auth_token,omitempty"`
 
-	// Validation limits (configurable)
+	// Validation limits (configurable; MaxContentLength is shared across store and update transports).
 	MaxContentLength int `yaml:"max_content_length,omitempty"`
 	MaxWingLength    int `yaml:"max_wing_length,omitempty"`
 	MaxRoomLength    int `yaml:"max_room_length,omitempty"`
@@ -360,7 +361,7 @@ func Default() *Config {
 			TimeoutSeconds:   30,
 			Address:          "localhost:3001",
 			AuthToken:        "",
-			MaxContentLength: 100000,
+			MaxContentLength: valueobjects.DefaultMaxContentLength,
 			MaxWingLength:    100,
 			MaxRoomLength:    100,
 			MaxQueryLength:   10000,
@@ -772,7 +773,7 @@ func (c *Config) Validate() error {
 	}
 	// Validation limits defaults
 	if c.MCP.MaxContentLength <= 0 {
-		c.MCP.MaxContentLength = 100000
+		c.MCP.MaxContentLength = valueobjects.DefaultMaxContentLength
 	}
 	if c.MCP.MaxWingLength <= 0 {
 		c.MCP.MaxWingLength = 100
