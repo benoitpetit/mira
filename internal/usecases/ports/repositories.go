@@ -112,13 +112,13 @@ type CausalGraphRepository interface {
 	// HasEdge checks if an edge exists between two nodes (in either direction).
 	HasEdge(ctx context.Context, fromID, toID uuid.UUID) bool
 
-	// GetChain retrieves the causal chain (ancestors) of a node up to maxDepth levels.
-	// Performs a BFS traversal from the node to its parents.
-	GetChain(ctx context.Context, id uuid.UUID, maxDepth int) ([]*entities.CausalNode, error)
+	// GetChain retrieves confirmed ancestors breadth-first, up to maxDepth levels
+	// and maxNodes results. The bool reports whether additional nodes were omitted.
+	GetChain(ctx context.Context, id uuid.UUID, maxDepth, maxNodes int) ([]*entities.CausalNode, bool, error)
 
-	// GetConsequences retrieves the consequences (descendants) of a node up to maxDepth levels.
-	// Performs a BFS traversal from the node to its children.
-	GetConsequences(ctx context.Context, id uuid.UUID, maxDepth int) ([]*entities.CausalNode, error)
+	// GetConsequences retrieves confirmed descendants breadth-first, up to maxDepth
+	// levels and maxNodes results. The bool reports whether additional nodes were omitted.
+	GetConsequences(ctx context.Context, id uuid.UUID, maxDepth, maxNodes int) ([]*entities.CausalNode, bool, error)
 
 	// GetParents retrieves the direct parents of a node, optionally filtered by relation type.
 	GetParents(ctx context.Context, nodeID uuid.UUID, relations ...valueobjects.RelationType) ([]*entities.CausalNode, error)

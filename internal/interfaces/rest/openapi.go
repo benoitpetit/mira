@@ -3,6 +3,8 @@ package rest
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 )
 
 // spec is the OpenAPI 3.1 document, built once at init time.
@@ -87,6 +89,9 @@ type oaSchema struct {
 	Ref        string              `json:"$ref,omitempty"`
 	Type       string              `json:"type,omitempty"`
 	Format     string              `json:"format,omitempty"`
+	Minimum    *int                `json:"minimum,omitempty"`
+	Maximum    *int                `json:"maximum,omitempty"`
+	Default    *int                `json:"default,omitempty"`
 	Properties map[string]oaSchema `json:"properties,omitempty"`
 	Items      *oaSchema           `json:"items,omitempty"`
 	Required   []string            `json:"required,omitempty"`
@@ -127,6 +132,7 @@ func errResp(desc string) oaResponse {
 
 func buildSpec() oaDocument {
 	tags := func(t ...string) []string { return t }
+	minCausalDepth, maxCausalDepth, defaultCausalDepth := 0, valueobjects.MaxCausalDepth, valueobjects.DefaultCausalMaxDepth
 
 	return oaDocument{
 		OpenAPI: "3.1.0",
@@ -303,7 +309,7 @@ func buildSpec() oaDocument {
 					Tags:        tags("causal"),
 					Parameters: []oaParameter{
 						{Name: "id", In: "path", Required: true, Description: "Memory UUID", Schema: oaSchema{Type: "string", Format: "uuid"}},
-						{Name: "max_depth", In: "query", Schema: oaSchema{Type: "integer"}},
+						{Name: "max_depth", In: "query", Description: "Optional; omitted or 0 defaults to 5. Values 1–10 are accepted; values outside 0–10 are rejected.", Schema: oaSchema{Type: "integer", Minimum: &minCausalDepth, Maximum: &maxCausalDepth, Default: &defaultCausalDepth}},
 						{Name: "include_consequences", In: "query", Schema: oaSchema{Type: "boolean"}},
 					},
 					Responses: map[string]oaResponse{
@@ -543,14 +549,18 @@ func buildSchemas() map[string]oaSchema {
 			Properties: map[string]oaSchema{
 				"chain":        arr(ref("CausalNode")),
 				"consequences": arr(ref("CausalNode")),
+				"truncated":    {Type: "boolean"},
 			},
 		},
 		"CausalNode": {
 			Type: "object",
 			Properties: map[string]oaSchema{
-				"id":      uuid(),
-				"content": str(),
-				"type":    str(),
+				"id":        uuid(),
+				"type":      str(),
+				"summary":   str(),
+				"timestamp": str(),
+				"wing":      str(),
+				"room":      str(),
 			},
 		},
 		"StatusResponse": {

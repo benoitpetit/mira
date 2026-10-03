@@ -111,11 +111,13 @@ func (f *fakeArchive) Execute(_ context.Context) (*interactors.ArchiveMemoriesOu
 }
 
 type fakeCausal struct {
-	out *interactors.GetCausalChainOutput
-	err error
+	out    *interactors.GetCausalChainOutput
+	err    error
+	inputs []interactors.GetCausalChainInput
 }
 
-func (f *fakeCausal) Execute(_ context.Context, _ interactors.GetCausalChainInput) (*interactors.GetCausalChainOutput, error) {
+func (f *fakeCausal) Execute(_ context.Context, input interactors.GetCausalChainInput) (*interactors.GetCausalChainOutput, error) {
+	f.inputs = append(f.inputs, input)
 	return f.out, f.err
 }
 
@@ -502,6 +504,73 @@ func TestHandleCausal_Success(t *testing.T) {
 	resp := s.get("/api/v1/causal/" + id.String())
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestHandleCausalDefaultsDepthAndSerializesTruncationWithoutListener(t *testing.T) {
+	causal := &fakeCausal{out: &interactors.GetCausalChainOutput{Truncated: true}}
+	h := rest.NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, causal, nil, nil, nil)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/causal/550e8400-e29b-41d4-a716-446655440000", nil)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, req)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", response.Code, response.Body.String())
+	}
+	if len(causal.inputs) != 1 || causal.inputs[0].MaxDepth != valueobjects.DefaultCausalMaxDepth {
+		t.Fatalf("causal inputs = %+v, want default depth %d", causal.inputs, valueobjects.DefaultCausalMaxDepth)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body["truncated"] != true {
+		t.Fatalf("truncated = %v, want true", body["truncated"])
+	}
+}
+
+func TestHandleCausalRejectsInvalidDepthWithoutListener(t *testing.T) {
+	h := rest.NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, &fakeCausal{}, nil, nil, nil)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	for _, depth := range []string{"-1", "11", "not-a-number"} {
+		t.Run(depth, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/causal/550e8400-e29b-41d4-a716-446655440000?max_depth="+depth, nil)
+			response := httptest.NewRecorder()
+			mux.ServeHTTP(response, req)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", response.Code)
+			}
+		})
+	}
+}
+
+func TestOpenAPICausalContractMatchesRuntimeBounds(t *testing.T) {
+	response := httptest.NewRecorder()
+	rest.ServeSpec(response, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
+	var doc map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("decode OpenAPI document: %v", err)
+	}
+	paths := doc["paths"].(map[string]any)
+	operation := paths["/api/v1/causal/{id}"].(map[string]any)["get"].(map[string]any)
+	parameters := operation["parameters"].([]any)
+	var depthSchema map[string]any
+	for _, parameter := range parameters {
+		p := parameter.(map[string]any)
+		if p["name"] == "max_depth" {
+			depthSchema = p["schema"].(map[string]any)
+			break
+		}
+	}
+	if depthSchema == nil || depthSchema["minimum"] != float64(0) || depthSchema["maximum"] != float64(valueobjects.MaxCausalDepth) || depthSchema["default"] != float64(valueobjects.DefaultCausalMaxDepth) {
+		t.Fatalf("max_depth schema = %#v", depthSchema)
+	}
+	schemas := doc["components"].(map[string]any)["schemas"].(map[string]any)
+	causalProperties := schemas["CausalChainResponse"].(map[string]any)["properties"].(map[string]any)
+	if causalProperties["truncated"].(map[string]any)["type"] != "boolean" {
+		t.Fatalf("causal response truncated schema = %#v", causalProperties["truncated"])
 	}
 }
 

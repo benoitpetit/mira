@@ -545,68 +545,64 @@ func (r *PostgreSQLRepository) RelationBetween(ctx context.Context, fromID, toID
 }
 
 // GetChain implements CausalGraphRepository
-func (r *PostgreSQLRepository) GetChain(ctx context.Context, id uuid.UUID, maxDepth int) ([]*entities.CausalNode, error) {
-	if maxDepth <= 0 {
-		maxDepth = 5
-	}
-
-	query := `
-		WITH RECURSIVE ancestors(id, node_type, summary, timestamp, wing, room, depth) AS (
-			SELECT id, node_type, summary, timestamp, wing, room, 0
-			FROM causal_nodes
-			WHERE id = $1
-			UNION ALL
-			SELECT n.id, n.node_type, n.summary, n.timestamp, n.wing, n.room, a.depth + 1
-			FROM causal_nodes n
-			JOIN causal_edges e ON n.id = e.from_id AND COALESCE(e.status, 'confirmed') = 'confirmed'
-			JOIN ancestors a ON e.to_id = a.id
-			WHERE a.depth < $2
-		)
-		SELECT id, node_type, summary, timestamp, wing, room
-		FROM ancestors
-		WHERE depth > 0
-		ORDER BY depth DESC
-	`
-
-	rows, err := r.db.QueryContext(ctx, query, id, maxDepth)
+func (r *PostgreSQLRepository) GetChain(ctx context.Context, id uuid.UUID, maxDepth, maxNodes int) ([]*entities.CausalNode, bool, error) {
+	nodes, truncated, err := traverseCausalNodes(ctx, id, maxDepth, maxNodes, true, func(ctx context.Context, frontier, visited []uuid.UUID, limit int) ([]*entities.CausalNode, error) {
+		return r.getCausalNeighbors(ctx, frontier, visited, limit, true)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("recursive chain query failed: %w", err)
+		return nil, false, fmt.Errorf("get causal chain: %w", err)
 	}
-	defer rows.Close()
-
-	return r.scanCausalNodes(rows)
+	return nodes, truncated, nil
 }
 
 // GetConsequences implements CausalGraphRepository
-func (r *PostgreSQLRepository) GetConsequences(ctx context.Context, id uuid.UUID, maxDepth int) ([]*entities.CausalNode, error) {
-	if maxDepth <= 0 {
-		maxDepth = 5
-	}
-
-	query := `
-		WITH RECURSIVE descendants(id, node_type, summary, timestamp, wing, room, depth) AS (
-			SELECT id, node_type, summary, timestamp, wing, room, 0
-			FROM causal_nodes
-			WHERE id = $1
-			UNION ALL
-			SELECT n.id, n.node_type, n.summary, n.timestamp, n.wing, n.room, d.depth + 1
-			FROM causal_nodes n
-			JOIN causal_edges e ON n.id = e.to_id AND COALESCE(e.status, 'confirmed') = 'confirmed'
-			JOIN descendants d ON e.from_id = d.id
-			WHERE d.depth < $2
-		)
-		SELECT id, node_type, summary, timestamp, wing, room
-		FROM descendants
-		WHERE depth > 0
-		ORDER BY depth ASC
-	`
-
-	rows, err := r.db.QueryContext(ctx, query, id, maxDepth)
+func (r *PostgreSQLRepository) GetConsequences(ctx context.Context, id uuid.UUID, maxDepth, maxNodes int) ([]*entities.CausalNode, bool, error) {
+	nodes, truncated, err := traverseCausalNodes(ctx, id, maxDepth, maxNodes, false, func(ctx context.Context, frontier, visited []uuid.UUID, limit int) ([]*entities.CausalNode, error) {
+		return r.getCausalNeighbors(ctx, frontier, visited, limit, false)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("recursive consequences query failed: %w", err)
+		return nil, false, fmt.Errorf("get causal consequences: %w", err)
+	}
+	return nodes, truncated, nil
+}
+
+func (r *PostgreSQLRepository) getCausalNeighbors(ctx context.Context, frontier, visited []uuid.UUID, limit int, ancestors bool) ([]*entities.CausalNode, error) {
+	if len(frontier) == 0 {
+		return nil, nil
+	}
+	args := make([]any, 0, len(frontier)+len(visited)+1)
+	frontierValues := make([]string, len(frontier))
+	for i, id := range frontier {
+		args = append(args, id)
+		frontierValues[i] = fmt.Sprintf("($%d::uuid)", len(args))
+	}
+	visitedValues := make([]string, len(visited))
+	for i, id := range visited {
+		args = append(args, id)
+		visitedValues[i] = fmt.Sprintf("($%d::uuid)", len(args))
+	}
+	args = append(args, limit)
+	limitPlaceholder := fmt.Sprintf("$%d", len(args))
+
+	neighborJoin, frontierColumn := "e.from_id", "e.to_id"
+	if !ancestors {
+		neighborJoin, frontierColumn = "e.to_id", "e.from_id"
+	}
+	query := fmt.Sprintf(`
+		WITH frontier(id) AS (VALUES %s), visited(id) AS (VALUES %s)
+		SELECT DISTINCT n.id, n.node_type, n.summary, n.timestamp, n.wing, n.room
+		FROM causal_edges e
+		JOIN causal_nodes n ON n.id = %s
+		WHERE %s IN (SELECT id FROM frontier)
+		  AND n.id NOT IN (SELECT id FROM visited)
+		  AND COALESCE(e.status, 'confirmed') = 'confirmed'
+		ORDER BY n.id
+		LIMIT %s`, strings.Join(frontierValues, ","), strings.Join(visitedValues, ","), neighborJoin, frontierColumn, limitPlaceholder)
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query causal neighbors: %w", err)
 	}
 	defer rows.Close()
-
 	return r.scanCausalNodes(rows)
 }
 
@@ -617,9 +613,8 @@ func (r *PostgreSQLRepository) scanCausalNodes(rows *sql.Rows) ([]*entities.Caus
 		var timestamp float64
 		var room sql.NullString
 
-		err := rows.Scan(&node.ID, &node.Type, &node.Summary, &timestamp, &node.Wing, &room)
-		if err != nil {
-			continue
+		if err := rows.Scan(&node.ID, &node.Type, &node.Summary, &timestamp, &node.Wing, &room); err != nil {
+			return nil, err
 		}
 		node.Timestamp = time.Unix(int64(timestamp), 0)
 		if room.Valid {

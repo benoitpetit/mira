@@ -291,7 +291,7 @@ func TestAddAndGetCausalNode(t *testing.T) {
 	}
 
 	// Nodes don't have a direct Get method, test via GetChain
-	chain, err := repo.GetChain(ctx, fpID, 5)
+	chain, _, err := repo.GetChain(ctx, fpID, 5, valueobjects.MaxCausalNodes)
 	if err != nil {
 		t.Fatalf("GetChain failed: %v", err)
 	}
@@ -1056,7 +1056,7 @@ func TestGetConsequencesAndParents(t *testing.T) {
 	}
 
 	// GetConsequences of A should return B and C
-	consequences, err := repo.GetConsequences(ctx, nodeA.ID, 5)
+	consequences, _, err := repo.GetConsequences(ctx, nodeA.ID, 5, valueobjects.MaxCausalNodes)
 	if err != nil {
 		t.Fatalf("GetConsequences: %v", err)
 	}
@@ -1065,7 +1065,7 @@ func TestGetConsequencesAndParents(t *testing.T) {
 	}
 
 	// GetConsequences with depth 1 should return only B
-	shallow, err := repo.GetConsequences(ctx, nodeA.ID, 1)
+	shallow, _, err := repo.GetConsequences(ctx, nodeA.ID, 1, valueobjects.MaxCausalNodes)
 	if err != nil {
 		t.Fatalf("GetConsequences(depth=1): %v", err)
 	}
@@ -1074,7 +1074,7 @@ func TestGetConsequencesAndParents(t *testing.T) {
 	}
 
 	// GetConsequences of a leaf returns nothing
-	empty, err := repo.GetConsequences(ctx, nodeC.ID, 5)
+	empty, _, err := repo.GetConsequences(ctx, nodeC.ID, 5, valueobjects.MaxCausalNodes)
 	if err != nil {
 		t.Fatalf("GetConsequences(leaf): %v", err)
 	}
@@ -1107,6 +1107,33 @@ func TestGetConsequencesAndParents(t *testing.T) {
 	}
 	if len(rootParents) != 0 {
 		t.Errorf("expected 0 parents for root, got %d", len(rootParents))
+	}
+}
+
+func TestGetConsequencesEnforcesNodeCapAndReportsTruncation(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	root := &entities.CausalNode{ID: uuid.New(), Type: "decision", Summary: "root", Timestamp: time.Now(), Wing: "w"}
+	if err := repo.AddNode(ctx, root); err != nil {
+		t.Fatalf("AddNode(root): %v", err)
+	}
+	for i := 0; i < 4; i++ {
+		child := &entities.CausalNode{ID: uuid.New(), Type: "fact", Summary: fmt.Sprintf("child %d", i), Timestamp: time.Now(), Wing: "w"}
+		if err := repo.AddNode(ctx, child); err != nil {
+			t.Fatalf("AddNode(child): %v", err)
+		}
+		if err := repo.AddEdge(ctx, entities.NewCausalEdge(root.ID, child.ID, valueobjects.RelBecause)); err != nil {
+			t.Fatalf("AddEdge(): %v", err)
+		}
+	}
+
+	nodes, truncated, err := repo.GetConsequences(ctx, root.ID, 1, 2)
+	if err != nil {
+		t.Fatalf("GetConsequences(): %v", err)
+	}
+	if len(nodes) != 2 || !truncated {
+		t.Fatalf("got %d nodes, truncated=%v; want 2 nodes and truncation", len(nodes), truncated)
 	}
 }
 

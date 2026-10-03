@@ -444,6 +444,37 @@ func TestHandleCausalChainSuccess(t *testing.T) {
 	}
 }
 
+func TestHandleCausalChainUsesApprovedDefaultsAndMarksTruncation(t *testing.T) {
+	var gotInput interactors.GetCausalChainInput
+	mock := &mockGetCausalChain{executeFunc: func(_ context.Context, input interactors.GetCausalChainInput) (*interactors.GetCausalChainOutput, error) {
+		gotInput = input
+		return &interactors.GetCausalChainOutput{Truncated: true}, nil
+	}}
+	controller := newTestController(func(c *Controller) { c.getCausalChain = mock })
+	result, err := controller.handleCausalChain(context.Background(), map[string]interface{}{"id": "550e8400-e29b-41d4-a716-446655440000"})
+	if err != nil {
+		t.Fatalf("handleCausalChain() error = %v", err)
+	}
+	if gotInput.MaxDepth != valueobjects.DefaultCausalMaxDepth {
+		t.Fatalf("max depth = %d, want %d", gotInput.MaxDepth, valueobjects.DefaultCausalMaxDepth)
+	}
+	content, ok := result.Content[0].(mcptypes.TextContent)
+	if !ok || !strings.Contains(content.Text, "TRUNCATED") {
+		t.Fatalf("result does not include truncation marker: %#v", result.Content)
+	}
+}
+
+func TestHandleCausalChainRejectsDepthOverMaximum(t *testing.T) {
+	controller := newTestController(func(c *Controller) { c.getCausalChain = &mockGetCausalChain{} })
+	_, err := controller.handleCausalChain(context.Background(), map[string]interface{}{
+		"id":        "550e8400-e29b-41d4-a716-446655440000",
+		"max_depth": float64(valueobjects.MaxCausalDepth + 1),
+	})
+	if err == nil || !strings.Contains(err.Error(), "max_depth") {
+		t.Fatalf("error = %v, want max_depth validation error", err)
+	}
+}
+
 // TestHandleTimelineSuccess tests mira_timeline with a mock
 func TestHandleTimelineSuccess(t *testing.T) {
 	mock := &mockGetTimeline{}

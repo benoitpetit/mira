@@ -159,11 +159,11 @@ func (r *updateMockRepo) AddEdgeTx(_ context.Context, _ *sql.Tx, _ *entities.Cau
 	return nil
 }
 func (r *updateMockRepo) HasEdge(_ context.Context, _, _ uuid.UUID) bool { return false }
-func (r *updateMockRepo) GetChain(_ context.Context, _ uuid.UUID, _ int) ([]*entities.CausalNode, error) {
-	return nil, nil
+func (r *updateMockRepo) GetChain(_ context.Context, _ uuid.UUID, _, _ int) ([]*entities.CausalNode, bool, error) {
+	return nil, false, nil
 }
-func (r *updateMockRepo) GetConsequences(_ context.Context, _ uuid.UUID, _ int) ([]*entities.CausalNode, error) {
-	return nil, nil
+func (r *updateMockRepo) GetConsequences(_ context.Context, _ uuid.UUID, _, _ int) ([]*entities.CausalNode, bool, error) {
+	return nil, false, nil
 }
 func (r *updateMockRepo) GetParents(_ context.Context, _ uuid.UUID, _ ...valueobjects.RelationType) ([]*entities.CausalNode, error) {
 	return nil, nil

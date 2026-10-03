@@ -153,12 +153,12 @@ func (m *mockStoreRepository) HasEdge(ctx context.Context, fromID, toID uuid.UUI
 	return false
 }
 
-func (m *mockStoreRepository) GetChain(ctx context.Context, id uuid.UUID, maxDepth int) ([]*entities.CausalNode, error) {
-	return nil, nil
+func (m *mockStoreRepository) GetChain(ctx context.Context, id uuid.UUID, maxDepth, maxNodes int) ([]*entities.CausalNode, bool, error) {
+	return nil, false, nil
 }
 
-func (m *mockStoreRepository) GetConsequences(ctx context.Context, id uuid.UUID, maxDepth int) ([]*entities.CausalNode, error) {
-	return nil, nil
+func (m *mockStoreRepository) GetConsequences(ctx context.Context, id uuid.UUID, maxDepth, maxNodes int) ([]*entities.CausalNode, bool, error) {
+	return nil, false, nil
 }
 
 func (m *mockStoreRepository) GetParents(ctx context.Context, nodeID uuid.UUID, relations ...valueobjects.RelationType) ([]*entities.CausalNode, error) {

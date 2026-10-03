@@ -613,71 +613,65 @@ func (r *SQLiteRepository) RelationBetween(ctx context.Context, fromID, toID uui
 }
 
 // GetChain implements CausalGraphRepository
-// Performs a recursive traversal up the causal chain (ancestors) using a SQLite CTE.
-// This replaces the previous N+1 BFS with a single query, drastically reducing latency.
-func (r *SQLiteRepository) GetChain(ctx context.Context, id uuid.UUID, maxDepth int) ([]*entities.CausalNode, error) {
-	if maxDepth <= 0 {
-		maxDepth = 5 // Default depth
-	}
-
-	query := `
-		WITH RECURSIVE ancestors(id, node_type, summary, timestamp, wing, room, depth) AS (
-			SELECT id, node_type, summary, timestamp, wing, room, 0
-			FROM causal_nodes
-			WHERE id = ?
-			UNION ALL
-			SELECT n.id, n.node_type, n.summary, n.timestamp, n.wing, n.room, a.depth + 1
-			FROM causal_nodes n
-			JOIN causal_edges e ON n.id = e.from_id AND COALESCE(e.status, 'confirmed') = 'confirmed'
-			JOIN ancestors a ON e.to_id = a.id
-			WHERE a.depth < ?
-		)
-		SELECT id, node_type, summary, timestamp, wing, room
-		FROM ancestors
-		WHERE depth > 0
-		ORDER BY depth DESC
-	`
-
-	rows, err := r.db.QueryContext(ctx, query, id[:], maxDepth)
+// Traverses confirmed causal ancestors in bounded breadth-first queries.
+func (r *SQLiteRepository) GetChain(ctx context.Context, id uuid.UUID, maxDepth, maxNodes int) ([]*entities.CausalNode, bool, error) {
+	nodes, truncated, err := traverseCausalNodes(ctx, id, maxDepth, maxNodes, true, func(ctx context.Context, frontier, visited []uuid.UUID, limit int) ([]*entities.CausalNode, error) {
+		return r.getCausalNeighbors(ctx, frontier, visited, limit, true)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("recursive chain query failed: %w", err)
+		return nil, false, fmt.Errorf("get causal chain: %w", err)
 	}
-	defer rows.Close()
-
-	return r.scanCausalNodes(rows)
+	return nodes, truncated, nil
 }
 
 // GetConsequences implements CausalGraphRepository
-// Performs a recursive traversal down the causal chain (descendants) using a SQLite CTE.
-func (r *SQLiteRepository) GetConsequences(ctx context.Context, id uuid.UUID, maxDepth int) ([]*entities.CausalNode, error) {
-	if maxDepth <= 0 {
-		maxDepth = 5 // Default depth
-	}
-
-	query := `
-		WITH RECURSIVE descendants(id, node_type, summary, timestamp, wing, room, depth) AS (
-			SELECT id, node_type, summary, timestamp, wing, room, 0
-			FROM causal_nodes
-			WHERE id = ?
-			UNION ALL
-			SELECT n.id, n.node_type, n.summary, n.timestamp, n.wing, n.room, d.depth + 1
-			FROM causal_nodes n
-			JOIN causal_edges e ON n.id = e.to_id AND COALESCE(e.status, 'confirmed') = 'confirmed'
-			JOIN descendants d ON e.from_id = d.id
-			WHERE d.depth < ?
-		)
-		SELECT id, node_type, summary, timestamp, wing, room
-		FROM descendants
-		WHERE depth > 0
-		ORDER BY depth ASC
-	`
-
-	rows, err := r.db.QueryContext(ctx, query, id[:], maxDepth)
+// Traverses confirmed causal descendants in bounded breadth-first queries.
+func (r *SQLiteRepository) GetConsequences(ctx context.Context, id uuid.UUID, maxDepth, maxNodes int) ([]*entities.CausalNode, bool, error) {
+	nodes, truncated, err := traverseCausalNodes(ctx, id, maxDepth, maxNodes, false, func(ctx context.Context, frontier, visited []uuid.UUID, limit int) ([]*entities.CausalNode, error) {
+		return r.getCausalNeighbors(ctx, frontier, visited, limit, false)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("recursive consequences query failed: %w", err)
+		return nil, false, fmt.Errorf("get causal consequences: %w", err)
+	}
+	return nodes, truncated, nil
+}
+
+func (r *SQLiteRepository) getCausalNeighbors(ctx context.Context, frontier, visited []uuid.UUID, limit int, ancestors bool) ([]*entities.CausalNode, error) {
+	if len(frontier) == 0 {
+		return nil, nil
+	}
+	args := make([]any, 0, len(frontier)+len(visited)+1)
+	frontierValues := make([]string, len(frontier))
+	for i, id := range frontier {
+		frontierValues[i] = "(?)"
+		args = append(args, id[:])
+	}
+	visitedValues := make([]string, len(visited))
+	for i, id := range visited {
+		visitedValues[i] = "(?)"
+		args = append(args, id[:])
+	}
+	args = append(args, limit)
+
+	neighborJoin, frontierColumn := "e.from_id", "e.to_id"
+	if !ancestors {
+		neighborJoin, frontierColumn = "e.to_id", "e.from_id"
+	}
+	query := fmt.Sprintf(`
+		WITH frontier(id) AS (VALUES %s), visited(id) AS (VALUES %s)
+		SELECT DISTINCT n.id, n.node_type, n.summary, n.timestamp, n.wing, n.room
+		FROM causal_edges e
+		JOIN causal_nodes n ON n.id = %s
+		WHERE %s IN (SELECT id FROM frontier)
+		  AND n.id NOT IN (SELECT id FROM visited)
+		  AND COALESCE(e.status, 'confirmed') = 'confirmed'
+		ORDER BY n.id
+		LIMIT ?`, strings.Join(frontierValues, ","), strings.Join(visitedValues, ","), neighborJoin, frontierColumn)
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query causal neighbors: %w", err)
 	}
 	defer rows.Close()
-
 	return r.scanCausalNodes(rows)
 }
 
@@ -691,11 +685,14 @@ func (r *SQLiteRepository) scanCausalNodes(rows *sql.Rows) ([]*entities.CausalNo
 		var timestamp float64
 		var room sql.NullString
 
-		err := rows.Scan(&idBytes, &node.Type, &node.Summary, &timestamp, &node.Wing, &room)
-		if err != nil {
-			continue
+		if err := rows.Scan(&idBytes, &node.Type, &node.Summary, &timestamp, &node.Wing, &room); err != nil {
+			return nil, err
 		}
-		node.ID, _ = uuid.FromBytes(idBytes)
+		var err error
+		node.ID, err = uuid.FromBytes(idBytes)
+		if err != nil {
+			return nil, fmt.Errorf("decode causal node ID: %w", err)
+		}
 		node.Timestamp = time.Unix(int64(timestamp), 0)
 		if room.Valid {
 			node.Room = &room.String

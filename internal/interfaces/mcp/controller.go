@@ -387,8 +387,10 @@ Do not invent or guess IDs. If you only have a T0: reference, it must be a valid
 
 Parameters:
   - id: Exact Fingerprint ID from a previous mira_recall / mira_timeline result
-  - max_depth: How far back to trace (default: 5)
+  - max_depth: Causal levels to traverse in each requested direction (default: 5, maximum: 10)
   - include_consequences: Also show downstream effects (children)
+
+The response is limited to 500 nodes total. If that limit omits nodes, the text response includes a TRUNCATED marker.
 
 Examples:
   Trace decision:    {"id": "550e8400-e29b-41d4-a716-446655440000", "max_depth": 3}
@@ -397,7 +399,7 @@ Examples:
 				Type: "object",
 				Properties: map[string]interface{}{
 					"id":                   map[string]string{"type": "string", "description": "Exact Fingerprint ID from mira_recall or mira_timeline"},
-					"max_depth":            map[string]string{"type": "number", "description": "Max depth (default: 5)"},
+					"max_depth":            map[string]interface{}{"type": "integer", "description": "Max depth: 0 or omitted uses 5; maximum 10", "minimum": 0, "maximum": valueobjects.MaxCausalDepth, "default": valueobjects.DefaultCausalMaxDepth},
 					"include_consequences": map[string]string{"type": "boolean", "description": "Include consequences/children"},
 				},
 			},
@@ -1174,14 +1176,28 @@ func (c *Controller) handleCausalChain(ctx context.Context, args map[string]inte
 		id = fp.ID
 	}
 
-	maxDepth := 5
+	maxDepth := valueobjects.DefaultCausalMaxDepth
 	if d, ok := args["max_depth"]; ok {
 		switch v := d.(type) {
 		case float64:
+			if v < 0 || v > valueobjects.MaxCausalDepth || float64(int(v)) != v {
+				return nil, fmt.Errorf("max_depth must be an integer between 0 and %d", valueobjects.MaxCausalDepth)
+			}
 			maxDepth = int(v)
 		case int:
 			maxDepth = v
+		case json.Number:
+			parsed, err := v.Int64()
+			if err != nil || parsed < 0 || parsed > valueobjects.MaxCausalDepth {
+				return nil, fmt.Errorf("max_depth must be an integer between 0 and %d", valueobjects.MaxCausalDepth)
+			}
+			maxDepth = int(parsed)
+		default:
+			return nil, fmt.Errorf("max_depth must be an integer")
 		}
+	}
+	if maxDepth < 0 || maxDepth > valueobjects.MaxCausalDepth {
+		return nil, fmt.Errorf("max_depth must be between 1 and %d, or 0 for the default", valueobjects.MaxCausalDepth)
 	}
 
 	includeConsequences := false
@@ -1216,6 +1232,9 @@ func (c *Controller) handleCausalChain(ctx context.Context, args map[string]inte
 			parts = append(parts, fmt.Sprintf("%s→ [%s] %s",
 				indent, node.Type, node.Summary))
 		}
+	}
+	if output.Truncated {
+		parts = append(parts, "", fmt.Sprintf("TRUNCATED: output capped at %d causal nodes; additional nodes were omitted.", valueobjects.MaxCausalNodes))
 	}
 
 	return &mcptypes.CallToolResult{

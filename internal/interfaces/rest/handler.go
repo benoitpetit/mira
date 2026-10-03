@@ -630,12 +630,19 @@ func (h *Handler) handleCausal(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	input := interactors.GetCausalChainInput{
 		ID:       id,
-		MaxDepth: 10,
+		MaxDepth: valueobjects.DefaultCausalMaxDepth,
 	}
 	if v := q.Get("max_depth"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			input.MaxDepth = n
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "max_depth must be an integer")
+			return
 		}
+		if n < 0 || n > valueobjects.MaxCausalDepth {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("max_depth must be between 1 and %d, or 0 for the default", valueobjects.MaxCausalDepth))
+			return
+		}
+		input.MaxDepth = n
 	}
 	if v := q.Get("include_consequences"); v == "true" || v == "1" {
 		input.IncludeConsequences = true

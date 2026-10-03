@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/benoitpetit/mira/internal/domain/entities"
+	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
 	"github.com/google/uuid"
 )
@@ -21,6 +22,7 @@ type GetCausalChainInput struct {
 type GetCausalChainOutput struct {
 	Chain        []*entities.CausalNode `json:"chain"`
 	Consequences []*entities.CausalNode `json:"consequences,omitempty"`
+	Truncated    bool                   `json:"truncated"`
 }
 
 // GetCausalChain implements the get causal chain use case
@@ -37,20 +39,40 @@ func NewGetCausalChain(causalRepo ports.CausalGraphRepository) *GetCausalChain {
 
 // Execute retrieves the causal chain
 func (uc *GetCausalChain) Execute(ctx context.Context, input GetCausalChainInput) (*GetCausalChainOutput, error) {
-	chain, err := uc.causalRepo.GetChain(ctx, input.ID, input.MaxDepth)
+	maxDepth := input.MaxDepth
+	if maxDepth == 0 {
+		maxDepth = valueobjects.DefaultCausalMaxDepth
+	}
+	if maxDepth < 1 || maxDepth > valueobjects.MaxCausalDepth {
+		return nil, fmt.Errorf("max_depth must be between 1 and %d", valueobjects.MaxCausalDepth)
+	}
+
+	chain, truncated, err := uc.causalRepo.GetChain(ctx, input.ID, maxDepth, valueobjects.MaxCausalNodes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get causal chain: %w", err)
 	}
-
-	output := &GetCausalChainOutput{
-		Chain: chain,
+	if len(chain) > valueobjects.MaxCausalNodes {
+		chain = chain[:valueobjects.MaxCausalNodes]
+		truncated = true
 	}
 
-	if input.IncludeConsequences {
-		consequences, err := uc.causalRepo.GetConsequences(ctx, input.ID, input.MaxDepth)
-		if err == nil {
-			output.Consequences = consequences
+	output := &GetCausalChainOutput{
+		Chain:     chain,
+		Truncated: truncated,
+	}
+
+	if input.IncludeConsequences && !output.Truncated {
+		remaining := valueobjects.MaxCausalNodes - len(chain)
+		consequences, consequencesTruncated, err := uc.causalRepo.GetConsequences(ctx, input.ID, maxDepth, remaining)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get causal consequences: %w", err)
 		}
+		if len(consequences) > remaining {
+			consequences = consequences[:remaining]
+			consequencesTruncated = true
+		}
+		output.Consequences = consequences
+		output.Truncated = consequencesTruncated
 	}
 
 	return output, nil

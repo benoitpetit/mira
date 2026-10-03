@@ -135,7 +135,9 @@ func (a *Application) GetStatus(ctx context.Context) (*interactors.GetStatusOutp
 	return a.inner.GetStatusUC().Execute(ctx)
 }
 
-// GetCausalChain traces causal relations.
+// GetCausalChain traces confirmed causal relations. maxDepth defaults to 5 when
+// zero and accepts values through 10. The returned chain and optional
+// consequences share a 500-node cap; Truncated reports when more nodes exist.
 func (a *Application) GetCausalChain(ctx context.Context, id uuid.UUID, maxDepth int, includeConsequences bool) (*interactors.GetCausalChainOutput, error) {
 	return a.inner.GetCausalChainUC().Execute(ctx, interactors.GetCausalChainInput{
 		ID:                  id,

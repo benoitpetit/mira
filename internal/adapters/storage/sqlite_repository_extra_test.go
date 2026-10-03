@@ -120,7 +120,7 @@ func TestStoreTags_EmptyTags(t *testing.T) {
 
 func TestGetChain_ClosedDB(t *testing.T) {
 	r := closedRepo(t)
-	_, err := r.GetChain(context.Background(), uuid.New(), 3)
+	_, _, err := r.GetChain(context.Background(), uuid.New(), 3, valueobjects.MaxCausalNodes)
 	if err == nil {
 		t.Error("expected error from closed db")
 	}
@@ -130,7 +130,7 @@ func TestGetChain_ZeroMaxDepth(t *testing.T) {
 	repo, cleanup := setupTestDB(t)
 	defer cleanup()
 	// maxDepth <= 0 → default to 5; returns empty list (no nodes).
-	nodes, err := repo.GetChain(context.Background(), uuid.New(), 0)
+	nodes, _, err := repo.GetChain(context.Background(), uuid.New(), 0, valueobjects.MaxCausalNodes)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestGetChain_ZeroMaxDepth(t *testing.T) {
 
 func TestGetConsequences_ClosedDB(t *testing.T) {
 	r := closedRepo(t)
-	_, err := r.GetConsequences(context.Background(), uuid.New(), 3)
+	_, _, err := r.GetConsequences(context.Background(), uuid.New(), 3, valueobjects.MaxCausalNodes)
 	if err == nil {
 		t.Error("expected error from closed db")
 	}
@@ -150,7 +150,7 @@ func TestGetConsequences_ClosedDB(t *testing.T) {
 func TestGetConsequences_ZeroMaxDepth(t *testing.T) {
 	repo, cleanup := setupTestDB(t)
 	defer cleanup()
-	nodes, err := repo.GetConsequences(context.Background(), uuid.New(), 0)
+	nodes, _, err := repo.GetConsequences(context.Background(), uuid.New(), 0, valueobjects.MaxCausalNodes)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

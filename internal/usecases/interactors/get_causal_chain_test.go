@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -15,8 +16,8 @@ import (
 
 // MockCausalGraphRepository for tests
 type mockCausalGraphRepository struct {
-	getChainFunc        func(ctx context.Context, id uuid.UUID, maxDepth int) ([]*entities.CausalNode, error)
-	getConsequencesFunc func(ctx context.Context, id uuid.UUID, maxDepth int) ([]*entities.CausalNode, error)
+	getChainFunc        func(ctx context.Context, id uuid.UUID, maxDepth, maxNodes int) ([]*entities.CausalNode, bool, error)
+	getConsequencesFunc func(ctx context.Context, id uuid.UUID, maxDepth, maxNodes int) ([]*entities.CausalNode, bool, error)
 }
 
 func (m *mockCausalGraphRepository) AddNode(ctx context.Context, node *entities.CausalNode) error {
@@ -39,18 +40,18 @@ func (m *mockCausalGraphRepository) HasEdge(ctx context.Context, fromID, toID uu
 	return false
 }
 
-func (m *mockCausalGraphRepository) GetChain(ctx context.Context, id uuid.UUID, maxDepth int) ([]*entities.CausalNode, error) {
+func (m *mockCausalGraphRepository) GetChain(ctx context.Context, id uuid.UUID, maxDepth, maxNodes int) ([]*entities.CausalNode, bool, error) {
 	if m.getChainFunc != nil {
-		return m.getChainFunc(ctx, id, maxDepth)
+		return m.getChainFunc(ctx, id, maxDepth, maxNodes)
 	}
-	return nil, nil
+	return nil, false, nil
 }
 
-func (m *mockCausalGraphRepository) GetConsequences(ctx context.Context, id uuid.UUID, maxDepth int) ([]*entities.CausalNode, error) {
+func (m *mockCausalGraphRepository) GetConsequences(ctx context.Context, id uuid.UUID, maxDepth, maxNodes int) ([]*entities.CausalNode, bool, error) {
 	if m.getConsequencesFunc != nil {
-		return m.getConsequencesFunc(ctx, id, maxDepth)
+		return m.getConsequencesFunc(ctx, id, maxDepth, maxNodes)
 	}
-	return nil, nil
+	return nil, false, nil
 }
 
 func (m *mockCausalGraphRepository) GetParents(ctx context.Context, nodeID uuid.UUID, relations ...valueobjects.RelationType) ([]*entities.CausalNode, error) {
@@ -74,11 +75,11 @@ func TestGetCausalChain_Execute(t *testing.T) {
 	}
 
 	mockRepo := &mockCausalGraphRepository{
-		getChainFunc: func(ctx context.Context, id uuid.UUID, maxDepth int) ([]*entities.CausalNode, error) {
+		getChainFunc: func(ctx context.Context, id uuid.UUID, maxDepth, maxNodes int) ([]*entities.CausalNode, bool, error) {
 			if id == testID {
-				return expectedChain, nil
+				return expectedChain, false, nil
 			}
-			return nil, nil
+			return nil, false, nil
 		},
 	}
 
@@ -132,11 +133,11 @@ func TestGetCausalChain_WithConsequences(t *testing.T) {
 	}
 
 	mockRepo := &mockCausalGraphRepository{
-		getChainFunc: func(ctx context.Context, id uuid.UUID, maxDepth int) ([]*entities.CausalNode, error) {
-			return expectedChain, nil
+		getChainFunc: func(ctx context.Context, id uuid.UUID, maxDepth, maxNodes int) ([]*entities.CausalNode, bool, error) {
+			return expectedChain, false, nil
 		},
-		getConsequencesFunc: func(ctx context.Context, id uuid.UUID, maxDepth int) ([]*entities.CausalNode, error) {
-			return expectedConsequences, nil
+		getConsequencesFunc: func(ctx context.Context, id uuid.UUID, maxDepth, maxNodes int) ([]*entities.CausalNode, bool, error) {
+			return expectedConsequences, false, nil
 		},
 	}
 
@@ -183,12 +184,12 @@ func TestGetCausalChain_MaxDepth(t *testing.T) {
 	capturedMaxDepth := 0
 
 	mockRepo := &mockCausalGraphRepository{
-		getChainFunc: func(ctx context.Context, id uuid.UUID, maxDepth int) ([]*entities.CausalNode, error) {
+		getChainFunc: func(ctx context.Context, id uuid.UUID, maxDepth, maxNodes int) ([]*entities.CausalNode, bool, error) {
 			callCount++
 			capturedMaxDepth = maxDepth
 			return []*entities.CausalNode{
 				{ID: uuid.New(), Type: "fact", Summary: "Node", Timestamp: now, Wing: "test-wing"},
-			}, nil
+			}, false, nil
 		},
 	}
 
@@ -218,9 +219,9 @@ func TestGetCausalChain_NotFound(t *testing.T) {
 	testID := uuid.New()
 
 	mockRepo := &mockCausalGraphRepository{
-		getChainFunc: func(ctx context.Context, id uuid.UUID, maxDepth int) ([]*entities.CausalNode, error) {
+		getChainFunc: func(ctx context.Context, id uuid.UUID, maxDepth, maxNodes int) ([]*entities.CausalNode, bool, error) {
 			// Return empty chain for unknown ID
-			return []*entities.CausalNode{}, nil
+			return []*entities.CausalNode{}, false, nil
 		},
 	}
 
@@ -250,8 +251,8 @@ func TestGetCausalChain_RepositoryError(t *testing.T) {
 	testID := uuid.New()
 
 	mockRepo := &mockCausalGraphRepository{
-		getChainFunc: func(ctx context.Context, id uuid.UUID, maxDepth int) ([]*entities.CausalNode, error) {
-			return nil, errors.New("database connection failed")
+		getChainFunc: func(ctx context.Context, id uuid.UUID, maxDepth, maxNodes int) ([]*entities.CausalNode, bool, error) {
+			return nil, false, errors.New("database connection failed")
 		},
 	}
 
@@ -268,6 +269,94 @@ func TestGetCausalChain_RepositoryError(t *testing.T) {
 
 	if output != nil {
 		t.Error("Expected nil output on error")
+	}
+}
+
+func TestGetCausalChain_DefaultDepthAndNodeBudget(t *testing.T) {
+	var gotDepth, gotNodes int
+	chainNode := &entities.CausalNode{ID: uuid.New()}
+	repo := &mockCausalGraphRepository{
+		getChainFunc: func(_ context.Context, _ uuid.UUID, depth, nodes int) ([]*entities.CausalNode, bool, error) {
+			gotDepth, gotNodes = depth, nodes
+			return []*entities.CausalNode{chainNode}, false, nil
+		},
+	}
+	out, err := NewGetCausalChain(repo).Execute(context.Background(), GetCausalChainInput{ID: uuid.New()})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if gotDepth != valueobjects.DefaultCausalMaxDepth || gotNodes != valueobjects.MaxCausalNodes {
+		t.Fatalf("repository limits = depth %d, nodes %d; want %d and %d", gotDepth, gotNodes, valueobjects.DefaultCausalMaxDepth, valueobjects.MaxCausalNodes)
+	}
+	if out.Truncated {
+		t.Fatal("Truncated = true for a response below the cap")
+	}
+}
+
+func TestGetCausalChainRejectsDepthOutsideApprovedRange(t *testing.T) {
+	for _, depth := range []int{-1, valueobjects.MaxCausalDepth + 1} {
+		t.Run(fmt.Sprintf("depth_%d", depth), func(t *testing.T) {
+			called := false
+			repo := &mockCausalGraphRepository{getChainFunc: func(context.Context, uuid.UUID, int, int) ([]*entities.CausalNode, bool, error) {
+				called = true
+				return nil, false, nil
+			}}
+			_, err := NewGetCausalChain(repo).Execute(context.Background(), GetCausalChainInput{ID: uuid.New(), MaxDepth: depth})
+			if err == nil {
+				t.Fatalf("Execute() accepted depth %d", depth)
+			}
+			if called {
+				t.Fatal("repository called for invalid depth")
+			}
+		})
+	}
+}
+
+func TestGetCausalChainAcceptsMaximumDepth(t *testing.T) {
+	var gotDepth int
+	repo := &mockCausalGraphRepository{getChainFunc: func(_ context.Context, _ uuid.UUID, depth, _ int) ([]*entities.CausalNode, bool, error) {
+		gotDepth = depth
+		return nil, false, nil
+	}}
+	if _, err := NewGetCausalChain(repo).Execute(context.Background(), GetCausalChainInput{ID: uuid.New(), MaxDepth: valueobjects.MaxCausalDepth}); err != nil {
+		t.Fatalf("Execute() rejected max depth %d: %v", valueobjects.MaxCausalDepth, err)
+	}
+	if gotDepth != valueobjects.MaxCausalDepth {
+		t.Fatalf("repository max depth = %d, want %d", gotDepth, valueobjects.MaxCausalDepth)
+	}
+}
+
+func TestGetCausalChainSharesNodeBudgetAndPropagatesConsequenceErrors(t *testing.T) {
+	var consequenceBudget int
+	chain := make([]*entities.CausalNode, 200)
+	for i := range chain {
+		chain[i] = &entities.CausalNode{ID: uuid.New()}
+	}
+	repo := &mockCausalGraphRepository{
+		getChainFunc: func(context.Context, uuid.UUID, int, int) ([]*entities.CausalNode, bool, error) {
+			return chain, false, nil
+		},
+		getConsequencesFunc: func(_ context.Context, _ uuid.UUID, _ int, nodes int) ([]*entities.CausalNode, bool, error) {
+			consequenceBudget = nodes
+			return []*entities.CausalNode{{ID: uuid.New()}}, true, nil
+		},
+	}
+	out, err := NewGetCausalChain(repo).Execute(context.Background(), GetCausalChainInput{ID: uuid.New(), IncludeConsequences: true})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if consequenceBudget != valueobjects.MaxCausalNodes-len(chain) {
+		t.Fatalf("consequence budget = %d, want %d", consequenceBudget, valueobjects.MaxCausalNodes-len(chain))
+	}
+	if !out.Truncated {
+		t.Fatal("Truncated = false, want true from consequence traversal")
+	}
+
+	repo.getConsequencesFunc = func(context.Context, uuid.UUID, int, int) ([]*entities.CausalNode, bool, error) {
+		return nil, false, errors.New("consequence query failed")
+	}
+	if _, err := NewGetCausalChain(repo).Execute(context.Background(), GetCausalChainInput{ID: uuid.New(), IncludeConsequences: true}); err == nil {
+		t.Fatal("Execute() swallowed consequence repository error")
 	}
 }
 
