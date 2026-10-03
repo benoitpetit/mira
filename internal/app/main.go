@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -618,12 +619,19 @@ func (a *Application) Close() error {
 		if a.webhookManager != nil {
 			a.webhookManager.Stop()
 		}
+		if embedder, ok := a.embedder.(ports.Closer); ok {
+			if err := embedder.Close(); err != nil {
+				closeErr = errors.Join(closeErr, fmt.Errorf("failed to close embedder: %w", err))
+			}
+		}
 
 		// Agent memory shares the repository connection and has no independent
 		// close operation. The repository remains the single owner of storage.
 
 		if a.repository != nil {
-			closeErr = a.repository.Close()
+			if err := a.repository.Close(); err != nil {
+				closeErr = errors.Join(closeErr, fmt.Errorf("failed to close repository: %w", err))
+			}
 		}
 	})
 	return closeErr

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,7 +11,33 @@ import (
 	"time"
 
 	"github.com/benoitpetit/mira/internal/config"
+	"github.com/benoitpetit/mira/internal/usecases/ports"
 )
+
+type closeTrackingEmbedder struct {
+	err   error
+	calls int
+}
+
+func (e *closeTrackingEmbedder) Encode(context.Context, string) ([]float32, error) {
+	return nil, nil
+}
+
+func (e *closeTrackingEmbedder) Close() error {
+	e.calls++
+	return e.err
+}
+
+type closeTrackingRepository struct {
+	ports.Repository
+	err   error
+	calls int
+}
+
+func (r *closeTrackingRepository) Close() error {
+	r.calls++
+	return r.err
+}
 
 // minimalCfg returns a minimal *config.Config ready for NewApplication.
 // Storage.Path is set to a fresh temp directory; UseSimpleEmbedder skips
@@ -43,6 +70,31 @@ func TestNewApplication_Minimal(t *testing.T) {
 	}
 	if err := app.Close(); err != nil {
 		t.Errorf("Close: %v", err)
+	}
+}
+
+func TestApplicationCloseClosesEmbedderAndJoinsErrors(t *testing.T) {
+	embedderErr := errors.New("embedder close failed")
+	repositoryErr := errors.New("repository close failed")
+	embedder := &closeTrackingEmbedder{err: embedderErr}
+	repository := &closeTrackingRepository{err: repositoryErr}
+	a := &Application{embedder: embedder, repository: repository}
+
+	err := a.Close()
+	if !errors.Is(err, embedderErr) || !errors.Is(err, repositoryErr) {
+		t.Fatalf("Close error = %v, want both embedder and repository errors", err)
+	}
+	if embedder.calls != 1 {
+		t.Errorf("embedder Close calls = %d, want 1", embedder.calls)
+	}
+	if repository.calls != 1 {
+		t.Errorf("repository Close calls = %d, want 1", repository.calls)
+	}
+	if err := a.Close(); err != nil {
+		t.Errorf("second Close error = %v, want nil for no-op close", err)
+	}
+	if embedder.calls != 1 || repository.calls != 1 {
+		t.Errorf("second Close repeated cleanup: embedder=%d repository=%d", embedder.calls, repository.calls)
 	}
 }
 
