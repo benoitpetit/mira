@@ -17,6 +17,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -222,10 +223,16 @@ func (h *HNSWStore) Search(ctx context.Context, queryVec []float32, limit int, w
 	for {
 		results := h.graph.Search(queryEmbedding, searchK)
 
-		// Collect UUIDs from results
-		var ids []uuid.UUID
+		// Collect unique verbatim UUIDs in ANN rank order. Hydration uses a SQL
+		// IN query, whose row order is independent of this sequence.
+		ids := make([]uuid.UUID, 0, len(results))
+		seenIDs := make(map[uuid.UUID]struct{}, len(results))
 		for _, r := range results {
 			if id, ok := h.idToUUID[r.ID()]; ok {
+				if _, duplicate := seenIDs[id]; duplicate {
+					continue
+				}
+				seenIDs[id] = struct{}{}
 				ids = append(ids, id)
 			}
 		}
@@ -236,7 +243,7 @@ func (h *HNSWStore) Search(ctx context.Context, queryVec []float32, limit int, w
 		if err != nil {
 			return nil, err
 		}
-
+		candidates = orderCandidatesByIDs(ids, candidates)
 		// Stop when we have enough results, or when no filter is active (single pass),
 		// or when we have already searched the full index.
 		if len(candidates) >= limit || !wideSearch || searchK >= totalVectors {
@@ -259,6 +266,42 @@ func (h *HNSWStore) Search(ctx context.Context, queryVec []float32, limit int, w
 	}
 
 	return candidates, nil
+}
+
+// orderCandidatesByIDs restores the ANN order after relational hydration. Rows
+// missing from the repository (or filtered out there) are skipped, and
+// repeated rows for the same fingerprint are returned only once.
+func orderCandidatesByIDs(ids []uuid.UUID, candidates []*entities.Candidate) []*entities.Candidate {
+	byVerbatimID := make(map[uuid.UUID][]*entities.Candidate, len(candidates))
+	seenCandidateIDs := make(map[uuid.UUID]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		if candidate == nil || candidate.Memory == nil || candidate.Verbatim == nil {
+			continue
+		}
+		candidateID := candidate.ID()
+		if _, duplicate := seenCandidateIDs[candidateID]; duplicate {
+			continue
+		}
+		seenCandidateIDs[candidateID] = struct{}{}
+		verbatimID := candidate.Verbatim.ID
+		byVerbatimID[verbatimID] = append(byVerbatimID[verbatimID], candidate)
+	}
+	for _, group := range byVerbatimID {
+		sort.Slice(group, func(i, j int) bool {
+			return group[i].ID().String() < group[j].ID().String()
+		})
+	}
+
+	ordered := make([]*entities.Candidate, 0, len(candidates))
+	seenIDs := make(map[uuid.UUID]struct{}, len(ids))
+	for _, id := range ids {
+		if _, duplicate := seenIDs[id]; duplicate {
+			continue
+		}
+		seenIDs[id] = struct{}{}
+		ordered = append(ordered, byVerbatimID[id]...)
+	}
+	return ordered
 }
 
 // batchGetCandidates fetches multiple candidates using the EmbeddingSource interface

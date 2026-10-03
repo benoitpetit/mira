@@ -13,6 +13,8 @@ import (
 	"github.com/benoitpetit/mira/internal/adapters/storage"
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
+	"github.com/benoitpetit/mira/internal/usecases/ports"
+	"github.com/google/uuid"
 )
 
 // setupTestStore creates a temporary HNSW store for benchmarking
@@ -109,6 +111,120 @@ func createAndPersistCandidate(t *testing.T, repo *storage.SQLiteRepository, dim
 	}
 
 	return candidate
+}
+
+type outOfOrderEmbeddingSource struct {
+	ports.EmbeddingSource
+	omitID      uuid.UUID
+	duplicateID uuid.UUID
+}
+
+func (s outOfOrderEmbeddingSource) GetCandidatesWithEmbeddings(ctx context.Context, ids []uuid.UUID, wing, room *string) ([]*entities.Candidate, error) {
+	candidates, err := s.EmbeddingSource.GetCandidatesWithEmbeddings(ctx, ids, wing, room)
+	if err != nil {
+		return nil, err
+	}
+	byVerbatimID := make(map[uuid.UUID]*entities.Candidate, len(candidates))
+	for _, candidate := range candidates {
+		if candidate != nil && candidate.Verbatim != nil {
+			byVerbatimID[candidate.Verbatim.ID] = candidate
+		}
+	}
+
+	// Return the hydrated rows in reverse ANN order, omit one indexed ID, and
+	// duplicate another row to model stale/multiplying relational hydration.
+	shuffled := make([]*entities.Candidate, 0, len(ids)+1)
+	for i := len(ids) - 1; i >= 0; i-- {
+		id := ids[i]
+		if id == s.omitID {
+			continue
+		}
+		candidate, ok := byVerbatimID[id]
+		if !ok {
+			continue
+		}
+		shuffled = append(shuffled, candidate)
+		if id == s.duplicateID {
+			shuffled = append(shuffled, candidate)
+		}
+	}
+	return shuffled, nil
+}
+
+func TestHNSWStoreSearchPreservesGraphRankAfterHydration(t *testing.T) {
+	const dim = 3
+	store, repo, cleanup := setupTestStoreT(t, dim)
+	defer cleanup()
+
+	room := "rank-test"
+	vectors := [][]float32{
+		{1, 0, 0},
+		{0.9, 0.4, 0},
+		{0.7, 0.7, 0},
+		{0, 1, 0},
+		{-1, 0, 0},
+		{0, 0, 1},
+	}
+	for i, vector := range vectors {
+		verbatim := entities.NewVerbatim(fmt.Sprintf("candidate-%d", i), "other-wing", &room)
+		fingerprint := entities.NewFingerprint(verbatim.ID, valueobjects.TypeFact, "test-model")
+		if err := repo.StoreVerbatim(context.Background(), verbatim); err != nil {
+			t.Fatalf("store verbatim: %v", err)
+		}
+		if err := repo.StoreFingerprint(context.Background(), fingerprint); err != nil {
+			t.Fatalf("store fingerprint: %v", err)
+		}
+		if err := repo.StoreEmbedding(context.Background(), entities.NewEmbedding(verbatim.ID, "test-model", vector)); err != nil {
+			t.Fatalf("store embedding: %v", err)
+		}
+	}
+	if err := store.BuildFromStore(context.Background()); err != nil {
+		t.Fatalf("build HNSW index: %v", err)
+	}
+
+	query := []float32{1, 0, 0}
+	annResults := store.graph.Search(floatsToEmbedding(query), store.graph.Len())
+	rankedIDs := make([]uuid.UUID, 0, len(annResults))
+	for _, result := range annResults {
+		if id, ok := store.idToUUID[result.ID()]; ok {
+			rankedIDs = append(rankedIDs, id)
+		}
+	}
+	if len(rankedIDs) < 6 {
+		t.Fatalf("expected six ANN results, got %d", len(rankedIDs))
+	}
+	// Make only a sparse subset eligible for hydration. The index keeps its
+	// original rank while SQL applies the wing filter during candidate lookup.
+	want := []uuid.UUID{rankedIDs[1], rankedIDs[4], rankedIDs[5]}
+	for _, id := range want {
+		if _, err := repo.DB().ExecContext(context.Background(), "UPDATE verbatim SET wing = ? WHERE id = ?", "rank-wing", id[:]); err != nil {
+			t.Fatalf("set filtered wing: %v", err)
+		}
+	}
+
+	store.store = outOfOrderEmbeddingSource{
+		EmbeddingSource: repo,
+		omitID:          rankedIDs[1],
+		duplicateID:     rankedIDs[4],
+	}
+	wing := "rank-wing"
+	results, err := store.Search(context.Background(), query, 2, &wing, &room)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+
+	want = want[1:]
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2 after skipping missing and duplicate hydrated rows", len(results))
+	}
+	for i, candidate := range results {
+		if candidate.Verbatim.ID != want[i] {
+			t.Errorf("result %d has verbatim ID %s, want ANN-ranked ID %s", i, candidate.Verbatim.ID, want[i])
+		}
+		if candidate.Verbatim.Wing != wing || candidate.Verbatim.Room == nil || *candidate.Verbatim.Room != room {
+			t.Errorf("result %d escaped the requested wing/room filters", i)
+		}
+	}
 }
 
 // BenchmarkHNSWAdd measures insertion performance
