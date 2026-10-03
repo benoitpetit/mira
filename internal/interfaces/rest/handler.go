@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
@@ -291,7 +293,7 @@ func (h *Handler) handleIngest(w http.ResponseWriter, r *http.Request) {
 		Wing             string                            `json:"wing"`
 		Room             *string                           `json:"room"`
 		IncludeAssistant bool                              `json:"include_assistant"`
-		MinChars         int                               `json:"min_chars"`
+		MinChars         *int                              `json:"min_chars"`
 		DryRun           bool                              `json:"dry_run"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -306,16 +308,17 @@ func (h *Handler) handleIngest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
-	if body.MinChars == 0 {
-		body.MinChars = 20
+	minChars := 20
+	if body.MinChars != nil {
+		minChars = *body.MinChars
 	}
-	inputs, err := interactors.ConversationMemoryInputs(body.Messages, body.Wing, body.Room, body.IncludeAssistant, body.MinChars)
+	inputs, err := interactors.ConversationMemoryInputs(body.Messages, body.Wing, body.Room, body.IncludeAssistant, minChars)
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	if len(inputs) == 0 {
-		writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("no messages matched the selected roles and min_chars=%d", body.MinChars))
+		writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("no messages matched the selected roles and min_chars=%d", minChars))
 		return
 	}
 	response := struct {
@@ -490,6 +493,9 @@ func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
 		TopK      int     `json:"top_k"`
 		Threshold float64 `json:"threshold"`
 		Kind      *string `json:"kind"`
+		Wing      string  `json:"wing"`
+		Room      *string `json:"room"`
+		Global    bool    `json:"global"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
@@ -497,6 +503,15 @@ func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Query == "" {
 		writeError(w, http.StatusUnprocessableEntity, "query is required")
+		return
+	}
+	if body.Global {
+		if strings.TrimSpace(body.Wing) != "" || body.Room != nil {
+			writeError(w, http.StatusUnprocessableEntity, "global search cannot include a wing or room")
+			return
+		}
+	} else if strings.TrimSpace(body.Wing) == "" {
+		writeError(w, http.StatusUnprocessableEntity, "wing is required unless global search is explicitly requested")
 		return
 	}
 	if len([]rune(body.Query)) > maxRESTQueryLength {
@@ -518,6 +533,9 @@ func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
 		TopK:      body.TopK,
 		Threshold: body.Threshold,
 		Kind:      memoryKind,
+		Wing:      strings.TrimSpace(body.Wing),
+		Room:      body.Room,
+		Global:    body.Global,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -555,17 +573,35 @@ func (h *Handler) handleConsolidate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// DELETE /api/v1/memories  (body: {"mode":"all|wing|room","wing":"...","room":"..."})
+// DELETE /api/v1/memories  (body: {"mode":"global|room","wing":"...","room":"..."}; "all" is a deprecated global alias)
 func (h *Handler) handleClear(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Mode string  `json:"mode"`
 		Wing string  `json:"wing"`
 		Room *string `json:"room"`
 	}
-	// Allow empty body → mode "all"
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	if body.Mode == "" {
-		body.Mode = "all"
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
+		writeError(w, http.StatusBadRequest, "invalid clear request: "+err.Error())
+		return
+	}
+	// Preserve the old explicit global spelling as a compatibility alias.
+	if body.Mode == "all" {
+		body.Mode = "global"
+	}
+	switch body.Mode {
+	case "global":
+		if strings.TrimSpace(body.Wing) != "" || body.Room != nil {
+			writeError(w, http.StatusUnprocessableEntity, "global clear cannot include a wing or room")
+			return
+		}
+	case "room":
+		if strings.TrimSpace(body.Wing) == "" {
+			writeError(w, http.StatusUnprocessableEntity, "wing is required when mode is 'room'")
+			return
+		}
+	default:
+		writeError(w, http.StatusUnprocessableEntity, "mode is required and must be 'global' or 'room'")
+		return
 	}
 
 	out, err := h.clear.Execute(r.Context(), interactors.ClearMemoryInput{

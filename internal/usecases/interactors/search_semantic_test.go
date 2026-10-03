@@ -65,7 +65,7 @@ func TestSearchSemantic_ExcludesInvalidCandidates(t *testing.T) {
 		return []*entities.Candidate{expired, future, valid}, nil
 	}}
 
-	results, err := NewSearchSemantic(vs, &mockSemanticEmbedder{}).Execute(context.Background(), SearchSemanticInput{Query: "query", TopK: 10, Threshold: .9})
+	results, err := NewSearchSemantic(vs, &mockSemanticEmbedder{}).Execute(context.Background(), SearchSemanticInput{Query: "query", TopK: 10, Threshold: .9, Wing: "test-wing"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,6 +120,7 @@ func TestSearchSemantic_ReturnsMatchesAboveThreshold(t *testing.T) {
 		Query:     "test query",
 		TopK:      10,
 		Threshold: 0.5,
+		Wing:      "test-wing",
 	})
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
@@ -148,7 +149,7 @@ func TestSearchSemantic_RanksBySimilarityAndPreservesTies(t *testing.T) {
 	embedder := &mockSemanticEmbedder{encodeFunc: func(context.Context, string) ([]float32, error) { return queryVec, nil }}
 
 	results, err := NewSearchSemantic(vs, embedder).Execute(context.Background(), SearchSemanticInput{
-		Query: "query", TopK: 2, Threshold: 0.5,
+		Query: "query", TopK: 2, Threshold: 0.5, Wing: "test-wing",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -175,7 +176,7 @@ func TestSearchSemantic_DefaultTopK(t *testing.T) {
 	}
 
 	uc := NewSearchSemantic(vs, embedder)
-	_, _ = uc.Execute(ctx, SearchSemanticInput{Query: "q", TopK: 0, Threshold: 0.0})
+	_, _ = uc.Execute(ctx, SearchSemanticInput{Query: "q", TopK: 0, Threshold: 0.0, Wing: "test-wing"})
 
 	if receivedLimit != 10 {
 		t.Errorf("expected default TopK=10, got %d", receivedLimit)
@@ -191,7 +192,7 @@ func TestSearchSemantic_EmbedError(t *testing.T) {
 		encodeFunc: func(_ context.Context, _ string) ([]float32, error) { return nil, want },
 	}
 	uc := NewSearchSemantic(&mockSemanticVectorStore{}, embedder)
-	_, err := uc.Execute(ctx, SearchSemanticInput{Query: "q", TopK: 5})
+	_, err := uc.Execute(ctx, SearchSemanticInput{Query: "q", TopK: 5, Wing: "test-wing"})
 	if err == nil {
 		t.Fatal("expected error from embedder")
 	}
@@ -213,12 +214,96 @@ func TestSearchSemantic_VectorStoreError(t *testing.T) {
 	}
 
 	uc := NewSearchSemantic(vs, embedder)
-	_, err := uc.Execute(ctx, SearchSemanticInput{Query: "q", TopK: 5})
+	_, err := uc.Execute(ctx, SearchSemanticInput{Query: "q", TopK: 5, Wing: "test-wing"})
 	if err == nil {
 		t.Fatal("expected error from vector store")
 	}
 	if !errors.Is(err, want) {
 		t.Errorf("expected error wrapping %q, got %q", want, err)
+	}
+}
+
+func TestSearchSemantic_RequiresExplicitWingOrGlobal(t *testing.T) {
+	searched := false
+	vs := &mockSemanticVectorStore{
+		searchFunc: func(context.Context, []float32, int, *string, *string) ([]*entities.Candidate, error) {
+			searched = true
+			return nil, nil
+		},
+	}
+	_, err := NewSearchSemantic(vs, &mockSemanticEmbedder{}).Execute(context.Background(), SearchSemanticInput{
+		Query: "query",
+		TopK:  1,
+	})
+	if err == nil {
+		t.Fatal("expected unscoped search to fail")
+	}
+	if searched {
+		t.Fatal("unscoped search reached the vector store")
+	}
+}
+
+func TestSearchSemantic_PassesWingAndRoomToVectorStore(t *testing.T) {
+	room := "decisions"
+	var gotWing, gotRoom *string
+	vs := &mockSemanticVectorStore{
+		searchFunc: func(_ context.Context, _ []float32, _ int, wing, room *string) ([]*entities.Candidate, error) {
+			gotWing, gotRoom = wing, room
+			return nil, nil
+		},
+	}
+	_, err := NewSearchSemantic(vs, &mockSemanticEmbedder{}).Execute(context.Background(), SearchSemanticInput{
+		Query: "query", TopK: 1, Wing: "project-a", Room: &room,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotWing == nil || *gotWing != "project-a" {
+		t.Fatalf("vector search wing = %v, want project-a", gotWing)
+	}
+	if gotRoom == nil || *gotRoom != room {
+		t.Fatalf("vector search room = %v, want %q", gotRoom, room)
+	}
+}
+
+func TestSearchSemantic_GlobalSearchIsExplicit(t *testing.T) {
+	called := false
+	vs := &mockSemanticVectorStore{
+		searchFunc: func(_ context.Context, _ []float32, _ int, wing, room *string) ([]*entities.Candidate, error) {
+			called = true
+			if wing != nil || room != nil {
+				t.Fatalf("global search received scope wing=%v room=%v", wing, room)
+			}
+			return nil, nil
+		},
+	}
+	_, err := NewSearchSemantic(vs, &mockSemanticEmbedder{}).Execute(context.Background(), SearchSemanticInput{
+		Query: "query", TopK: 1, Global: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("explicit global search did not reach vector store")
+	}
+}
+
+func TestSearchSemantic_GlobalSearchRejectsWing(t *testing.T) {
+	searched := false
+	vs := &mockSemanticVectorStore{
+		searchFunc: func(context.Context, []float32, int, *string, *string) ([]*entities.Candidate, error) {
+			searched = true
+			return nil, nil
+		},
+	}
+	_, err := NewSearchSemantic(vs, &mockSemanticEmbedder{}).Execute(context.Background(), SearchSemanticInput{
+		Query: "query", TopK: 1, Wing: "project-a", Global: true,
+	})
+	if err == nil {
+		t.Fatal("expected explicit global scope combined with wing to fail")
+	}
+	if searched {
+		t.Fatal("ambiguous scope reached the vector store")
 	}
 }
 
@@ -240,7 +325,7 @@ func TestSearchSemantic_ZeroThreshold(t *testing.T) {
 	}
 
 	uc := NewSearchSemantic(vs, embedder)
-	results, err := uc.Execute(ctx, SearchSemanticInput{Query: "q", TopK: 10, Threshold: 0.0})
+	results, err := uc.Execute(ctx, SearchSemanticInput{Query: "q", TopK: 10, Threshold: 0.0, Wing: "test-wing"})
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -279,7 +364,7 @@ func TestSearchSemantic_ResultFields(t *testing.T) {
 	}
 
 	uc := NewSearchSemantic(vs, embedder)
-	results, err := uc.Execute(ctx, SearchSemanticInput{Query: "q", TopK: 5, Threshold: 0.5})
+	results, err := uc.Execute(ctx, SearchSemanticInput{Query: "q", TopK: 5, Threshold: 0.5, Wing: "test-wing"})
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -322,7 +407,7 @@ func TestSearchSemanticFiltersByKindAndExpandsSearch(t *testing.T) {
 	}}
 	uc := NewSearchSemantic(vs, &mockSemanticEmbedder{})
 	kind := valueobjects.KindUser
-	results, err := uc.Execute(ctx, SearchSemanticInput{Query: "q", TopK: 1, Threshold: 0.5, Kind: &kind})
+	results, err := uc.Execute(ctx, SearchSemanticInput{Query: "q", TopK: 1, Threshold: 0.5, Kind: &kind, Wing: "test-wing"})
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}

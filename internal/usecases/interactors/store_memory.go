@@ -249,20 +249,16 @@ func (uc *StoreMemory) Execute(ctx context.Context, input StoreMemoryInput) (*St
 		_ = tx.Rollback()
 		return nil, fmt.Errorf("failed to store embedding: %w", err)
 	}
+	if beliefRepo, ok := uc.repository.(ports.BeliefSourceRepository); ok {
+		if err := beliefRepo.SyncBeliefSourceTx(ctx, tx, verbatim.ID, deriveBeliefFromFingerprint(fp, verbatim)); err != nil {
+			_ = tx.Rollback()
+			return nil, fmt.Errorf("failed to reconcile belief support: %w", err)
+		}
+	}
 
 	// Commit transaction
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	// Beliefs are a repairable projection of the committed T0/T1 records.
-	// Persistence is optional so existing repositories remain compatible.
-	if beliefRepo, ok := uc.repository.(ports.BeliefRepository); ok {
-		if belief := deriveBeliefFromFingerprint(fp, verbatim); belief != nil {
-			if err := beliefRepo.UpsertBelief(ctx, belief); err != nil {
-				warnDerivedIndex(uc.logger, "failed to persist belief projection", "error", err, "verbatim_id", verbatim.ID.String())
-			}
-		}
 	}
 
 	// 4. Add to vector store (non-fatal)

@@ -219,11 +219,26 @@ func TestApplication_Search(t *testing.T) {
 	_, _ = app.Store(ctx, "search test content", "wing", nil, nil)
 	time.Sleep(20 * time.Millisecond)
 
-	results, err := app.Search(ctx, "search test", 10, 0.0)
+	results, err := app.SearchInWing(ctx, "search test", 10, 0.0, "wing", nil)
 	if err != nil {
-		t.Fatalf("Search: %v", err)
+		t.Fatalf("SearchInWing: %v", err)
 	}
 	_ = results
+}
+
+func TestApplication_SearchLegacyFailsClosed(t *testing.T) {
+	app := newTestApp(t)
+	_, err := app.Search(context.Background(), "search test", 10, 0)
+	if err == nil || !strings.Contains(err.Error(), "wing is required") {
+		t.Fatalf("legacy unscoped Search error = %v, want fail-closed scope error", err)
+	}
+}
+
+func TestApplication_SearchGlobalRequiresExplicitMethod(t *testing.T) {
+	app := newTestApp(t)
+	if _, err := app.SearchGlobal(context.Background(), "search test", 10, 0); err != nil {
+		t.Fatalf("SearchGlobal: %v", err)
+	}
 }
 
 func TestApplication_Update(t *testing.T) {

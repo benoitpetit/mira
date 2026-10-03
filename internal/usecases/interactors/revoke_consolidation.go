@@ -26,6 +26,18 @@ func (uc *RevokeConsolidation) Execute(ctx context.Context, synthesizedID uuid.U
 	if err != nil {
 		return err
 	}
+	sourceBeliefs := make(map[uuid.UUID]*entities.Belief)
+	for _, sourceID := range sourceIDs(synthesis.Metadata["consolidated_from"]) {
+		verbatim, err := uc.repository.GetVerbatimByID(ctx, sourceID)
+		if err != nil {
+			return fmt.Errorf("load consolidation source %s: %w", sourceID, err)
+		}
+		fingerprint, err := uc.repository.GetFingerprintByVerbatimID(ctx, sourceID)
+		if err != nil {
+			return fmt.Errorf("load consolidation source fingerprint %s: %w", sourceID, err)
+		}
+		sourceBeliefs[sourceID] = deriveBeliefFromFingerprint(fingerprint, verbatim)
+	}
 	tx, err := uc.repository.Begin()
 	if err != nil {
 		return fmt.Errorf("begin consolidation revocation: %w", err)
@@ -34,6 +46,11 @@ func (uc *RevokeConsolidation) Execute(ctx context.Context, synthesizedID uuid.U
 	for _, raw := range sourceIDs(synthesis.Metadata["consolidated_from"]) {
 		if err := writer.SetVerbatimLifecycleTx(ctx, tx, raw, entities.LifecycleActive, nil); err != nil {
 			return err
+		}
+		if beliefRepo, ok := uc.repository.(ports.BeliefSourceRepository); ok {
+			if err := beliefRepo.SyncBeliefSourceTx(ctx, tx, raw, sourceBeliefs[raw]); err != nil {
+				return fmt.Errorf("restore belief support for source %s: %w", raw, err)
+			}
 		}
 	}
 	if err := writer.SetVerbatimLifecycleTx(ctx, tx, synthesizedID, entities.LifecycleContested, nil); err != nil {

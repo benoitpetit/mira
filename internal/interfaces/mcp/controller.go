@@ -303,7 +303,7 @@ Parameters:
   - wing: Namespace/project for the extracted memories (required)
   - room: Optional sub-category
   - include_assistant: Also capture assistant replies (default: false)
-  - min_chars: Minimum Unicode character count per captured message (default: 20)
+  - min_chars: Minimum Unicode character count per captured message (default: 20; 0 disables only the length threshold, while empty messages remain invalid)
   - dry_run: Preview the number of selected messages without persisting (default: false)`,
 			InputSchema: mcptypes.ToolInputSchema{
 				Type: "object",
@@ -312,7 +312,7 @@ Parameters:
 					"wing":              map[string]string{"type": "string", "description": "Namespace/project for extracted memories"},
 					"room":              map[string]string{"type": "string", "description": "Optional room/sub-category"},
 					"include_assistant": map[string]string{"type": "boolean", "description": "Also capture assistant replies"},
-					"min_chars":         map[string]string{"type": "number", "description": "Minimum character count (default: 20)"},
+					"min_chars":         map[string]string{"type": "number", "description": "Minimum character count (default: 20; 0 disables only the length threshold)"},
 					"dry_run":           map[string]string{"type": "boolean", "description": "Preview without storing"},
 				},
 			},
@@ -575,16 +575,23 @@ custom selection logic.
 
 Parameters:
   - query:     Search text (required)
+  - wing:      Wing to search (required unless global is true)
+  - room:      Optional room within the selected wing
+  - global:    Set true to explicitly search across all wings (default: false)
   - top_k:     Maximum results to return (default: 10)
   - threshold: Minimum similarity score (0.0–1.0, default: 0.3)
 
 Examples:
-  Quick search:    {"query": "authentication JWT"}
-  High precision:  {"query": "database migration plan", "threshold": 0.7, "top_k": 5}`,
+  Wing search:     {"query": "authentication JWT", "wing": "auth-service"}
+  Global search:   {"query": "database migration plan", "global": true}
+  High precision:  {"query": "migration plan", "wing": "infra", "threshold": 0.7, "top_k": 5}`,
 			InputSchema: mcptypes.ToolInputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{
 					"query":     map[string]string{"type": "string", "description": "Search text"},
+					"wing":      map[string]string{"type": "string", "description": "Wing to search; required unless global=true"},
+					"room":      map[string]string{"type": "string", "description": "Optional room within the selected wing"},
+					"global":    map[string]string{"type": "boolean", "description": "Explicitly search across all wings (default: false)"},
 					"top_k":     map[string]string{"type": "number", "description": "Max results (default: 10)"},
 					"threshold": map[string]string{"type": "number", "description": "Min similarity 0.0–1.0 (default: 0.3)"},
 				},
@@ -1055,6 +1062,21 @@ func (c *Controller) handleSearch(ctx context.Context, args map[string]interface
 	if utf8.RuneCountInString(query) > c.limits.MaxQueryLength {
 		return nil, fmt.Errorf("query exceeds maximum length of %d characters", c.limits.MaxQueryLength)
 	}
+	wing, _ := args["wing"].(string)
+	wing = strings.TrimSpace(wing)
+	roomText, _ := args["room"].(string)
+	var room *string
+	if strings.TrimSpace(roomText) != "" {
+		room = &roomText
+	}
+	global, _ := args["global"].(bool)
+	if global {
+		if wing != "" || room != nil {
+			return nil, fmt.Errorf("global search cannot include a wing or room")
+		}
+	} else if wing == "" {
+		return nil, fmt.Errorf("wing is required unless global search is explicitly requested")
+	}
 
 	topK := 10
 	if t, ok := args["top_k"]; ok {
@@ -1089,6 +1111,9 @@ func (c *Controller) handleSearch(ctx context.Context, args map[string]interface
 		Query:     query,
 		TopK:      topK,
 		Threshold: threshold,
+		Wing:      wing,
+		Room:      room,
+		Global:    global,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("search failed: %w", err)
@@ -1432,8 +1457,8 @@ func (c *Controller) handleArchive(ctx context.Context) (*mcptypes.CallToolResul
 		return nil, err
 	}
 
-	result := fmt.Sprintf("Archiving complete:\n- Session notes > 30d: %d\n- Debug logs > 7d: %d\nTotal freed: %d tokens",
-		output.Result.SessionNotes, output.Result.DebugLogs, output.Result.TokensFreed)
+	result := fmt.Sprintf("Archiving complete:\n- Session notes > 30d: %d\n- Debug logs > 7d: %d\nRemoved from active recall: %d tokens (archived content remains stored)",
+		output.Result.SessionNotes, output.Result.DebugLogs, output.Result.TokensArchived)
 
 	return &mcptypes.CallToolResult{
 		Content: []mcptypes.Content{mcptypes.TextContent{Type: "text", Text: result}},
@@ -1460,6 +1485,10 @@ func (c *Controller) handleClearMemory(ctx context.Context, args map[string]inte
 				input.Room = &rs
 			}
 		}
+	} else if _, hasWing := args["wing"]; hasWing {
+		return nil, fmt.Errorf("global clear cannot include a wing or room")
+	} else if _, hasRoom := args["room"]; hasRoom {
+		return nil, fmt.Errorf("global clear cannot include a wing or room")
 	}
 
 	output, err := c.clearMemory.Execute(ctx, input)

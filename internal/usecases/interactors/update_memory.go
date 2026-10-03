@@ -121,6 +121,12 @@ func (uc *UpdateMemory) Execute(ctx context.Context, input UpdateMemoryInput) (*
 			_ = tx.Rollback()
 			return nil, fmt.Errorf("failed to store embedding: %w", err)
 		}
+		if beliefRepo, ok := uc.repo.(ports.BeliefSourceRepository); ok {
+			if err := beliefRepo.SyncBeliefSourceTx(ctx, tx, input.ID, deriveBeliefFromFingerprint(fp, verbatim)); err != nil {
+				_ = tx.Rollback()
+				return nil, fmt.Errorf("failed to reconcile belief support: %w", err)
+			}
+		}
 		if err := tx.Commit(); err != nil {
 			return nil, fmt.Errorf("failed to commit transaction: %w", err)
 		}

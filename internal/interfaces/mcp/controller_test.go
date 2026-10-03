@@ -23,9 +23,11 @@ import (
 // mockStoreMemory mocks the StoreMemory interactor
 type mockStoreMemory struct {
 	executeFunc func(ctx context.Context, input interactors.StoreMemoryInput) (*interactors.StoreMemoryOutput, error)
+	inputs      []interactors.StoreMemoryInput
 }
 
 func (m *mockStoreMemory) Execute(ctx context.Context, input interactors.StoreMemoryInput) (*interactors.StoreMemoryOutput, error) {
+	m.inputs = append(m.inputs, input)
 	if m.executeFunc != nil {
 		return m.executeFunc(ctx, input)
 	}
@@ -36,6 +38,16 @@ func (m *mockStoreMemory) Execute(ctx context.Context, input interactors.StoreMe
 		TokenCount:    150,
 		ModelHash:     "model-abc123",
 	}, nil
+}
+
+type mockSearchSemantic struct {
+	input interactors.SearchSemanticInput
+	err   error
+}
+
+func (m *mockSearchSemantic) Execute(_ context.Context, input interactors.SearchSemanticInput) ([]*interactors.SearchSemanticResult, error) {
+	m.input = input
+	return nil, m.err
 }
 
 // mockRecallMemory mocks the RecallMemory interactor
@@ -167,9 +179,10 @@ func (m *mockArchiveMemories) Execute(ctx context.Context) (*interactors.Archive
 	}
 	return &interactors.ArchiveMemoriesOutput{
 		Result: &valueobjects.ArchiveResult{
-			SessionNotes: 5,
-			DebugLogs:    10,
-			TokensFreed:  1500,
+			SessionNotes:   5,
+			DebugLogs:      10,
+			TokensArchived: 1500,
+			TokensFreed:    1500,
 		},
 	}, nil
 }
@@ -586,8 +599,8 @@ func TestHandleArchiveSuccess(t *testing.T) {
 	if !strings.Contains(textContent.Text, "5") {
 		t.Errorf("Expected result to contain session notes count, got: %s", textContent.Text)
 	}
-	if !strings.Contains(textContent.Text, "1500") {
-		t.Errorf("Expected result to contain tokens freed, got: %s", textContent.Text)
+	if !strings.Contains(textContent.Text, "1500") || !strings.Contains(textContent.Text, "archived content remains stored") {
+		t.Errorf("Expected result to describe tokens removed from active recall, got: %s", textContent.Text)
 	}
 }
 
@@ -614,6 +627,14 @@ func TestHandleClearMemoryGlobalSuccess(t *testing.T) {
 
 	if !strings.Contains(textContent.Text, "All memories have been permanently deleted") {
 		t.Errorf("Expected global clear confirmation, got: %s", textContent.Text)
+	}
+}
+
+func TestHandleClearMemoryRequiresExplicitScope(t *testing.T) {
+	mock := &mockClearMemory{}
+	controller := newTestController(func(c *Controller) { c.clearMemory = mock })
+	if _, err := controller.handleClearMemory(context.Background(), map[string]interface{}{}); err == nil {
+		t.Fatal("clear without explicit mode must fail")
 	}
 }
 
@@ -648,6 +669,70 @@ func TestHandleClearMemoryRoomSuccess(t *testing.T) {
 
 	if !strings.Contains(textContent.Text, "Cleared 7 memories") {
 		t.Errorf("Expected room clear confirmation with count, got: %s", textContent.Text)
+	}
+}
+
+func TestHandleSearchRequiresWingUnlessGlobalExplicit(t *testing.T) {
+	t.Run("wing scope", func(t *testing.T) {
+		mock := &mockSearchSemantic{}
+		controller := newTestController(func(c *Controller) { c.searchSemantic = mock })
+		_, err := controller.handleSearch(context.Background(), map[string]interface{}{"query": "find"})
+		if err == nil || !strings.Contains(err.Error(), "wing") {
+			t.Fatalf("missing wing should fail, got %v", err)
+		}
+	})
+	t.Run("global opt in", func(t *testing.T) {
+		mock := &mockSearchSemantic{}
+		controller := newTestController(func(c *Controller) { c.searchSemantic = mock })
+		_, err := controller.handleSearch(context.Background(), map[string]interface{}{"query": "find", "global": true})
+		if err != nil {
+			t.Fatalf("explicit global search: %v", err)
+		}
+		if !mock.input.Global || mock.input.Wing != "" {
+			t.Fatalf("search input = %#v, want explicit global scope", mock.input)
+		}
+	})
+	t.Run("wing forwarding", func(t *testing.T) {
+		mock := &mockSearchSemantic{}
+		controller := newTestController(func(c *Controller) { c.searchSemantic = mock })
+		_, err := controller.handleSearch(context.Background(), map[string]interface{}{"query": "find", "wing": "project-a", "room": "decisions"})
+		if err != nil {
+			t.Fatalf("scoped search: %v", err)
+		}
+		if mock.input.Wing != "project-a" || mock.input.Room == nil || *mock.input.Room != "decisions" || mock.input.Global {
+			t.Fatalf("search input = %#v, want wing/room scope", mock.input)
+		}
+	})
+}
+
+func TestHandleIngestExplicitZeroDisablesMinimumButNotEmptyMessage(t *testing.T) {
+	controllerStore := &mockStoreMemory{}
+	controller := newTestController(func(c *Controller) { c.storeMemory = controllerStore })
+	args := map[string]interface{}{
+		"wing": "test", "min_chars": float64(0),
+		"messages": []interface{}{map[string]interface{}{"role": "user", "content": "short but valid"}},
+	}
+	if _, err := controller.handleIngest(context.Background(), args); err != nil {
+		t.Fatalf("explicit min_chars=0 should admit non-empty content: %v", err)
+	}
+	if len(controllerStore.inputs) != 1 || controllerStore.inputs[0].Content != "short but valid" {
+		t.Fatalf("stored inputs = %#v", controllerStore.inputs)
+	}
+	controllerStore.inputs = nil
+	args["messages"] = []interface{}{map[string]interface{}{"role": "user", "content": ""}}
+	if _, err := controller.handleIngest(context.Background(), args); err == nil {
+		t.Fatal("empty message must remain invalid when min_chars=0")
+	}
+	if len(controllerStore.inputs) != 0 {
+		t.Fatalf("empty message reached storage: %#v", controllerStore.inputs)
+	}
+	args["messages"] = []interface{}{map[string]interface{}{"role": "user", "content": "short but valid"}}
+	delete(args, "min_chars")
+	if _, err := controller.handleIngest(context.Background(), args); err == nil {
+		t.Fatal("omitted min_chars should retain the default threshold of 20")
+	}
+	if len(controllerStore.inputs) != 0 {
+		t.Fatalf("default-threshold message unexpectedly reached storage: %#v", controllerStore.inputs)
 	}
 }
 

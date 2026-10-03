@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
@@ -19,6 +20,9 @@ type SearchSemanticInput struct {
 	TopK      int
 	Threshold float64
 	Kind      *valueobjects.MemoryKind
+	Wing      string
+	Room      *string
+	Global    bool
 }
 
 // SearchSemanticResult represents a single semantic search result
@@ -49,6 +53,15 @@ func NewSearchSemantic(vectorStore ports.VectorStore, embedder ports.Embedder) *
 
 // Execute performs a vector search for the query and filters by similarity threshold.
 func (uc *SearchSemantic) Execute(ctx context.Context, input SearchSemanticInput) ([]*SearchSemanticResult, error) {
+	input.Wing = strings.TrimSpace(input.Wing)
+	if input.Global {
+		if input.Wing != "" || input.Room != nil {
+			return nil, fmt.Errorf("global search cannot include a wing or room")
+		}
+	} else if input.Wing == "" {
+		return nil, fmt.Errorf("wing is required unless global search is explicitly requested")
+	}
+
 	if input.TopK <= 0 {
 		input.TopK = 10
 	}
@@ -65,7 +78,11 @@ func (uc *SearchSemantic) Execute(ctx context.Context, input SearchSemanticInput
 	if input.Kind != nil {
 		searchLimit *= 5
 	}
-	candidates, err := uc.vectorStore.Search(ctx, vector, searchLimit, nil, nil)
+	var wing *string
+	if !input.Global {
+		wing = &input.Wing
+	}
+	candidates, err := uc.vectorStore.Search(ctx, vector, searchLimit, wing, input.Room)
 	if err != nil {
 		return nil, fmt.Errorf("vector search failed: %w", err)
 	}

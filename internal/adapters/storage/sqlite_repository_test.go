@@ -508,6 +508,73 @@ func TestGetTimeline(t *testing.T) {
 	}
 }
 
+func TestListActiveConsolidationCandidatesExcludesInactiveButTimelineKeepsHistory(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	active := entities.NewVerbatim("active note", "lifecycle-candidates", nil)
+	archived := entities.NewVerbatim("archived note", "lifecycle-candidates", nil)
+	for _, verbatim := range []*entities.Verbatim{active, archived} {
+		if err := repo.StoreVerbatim(ctx, verbatim); err != nil {
+			t.Fatal(err)
+		}
+		fp := entities.NewFingerprint(verbatim.ID, valueobjects.TypeSessionNote, "test-model")
+		if err := repo.StoreFingerprint(ctx, fp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := repo.SetVerbatimLifecycle(ctx, archived.ID, entities.LifecycleArchived, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := repo.ListActiveConsolidationCandidates(ctx, "lifecycle-candidates")
+	if err != nil {
+		t.Fatalf("ListActiveConsolidationCandidates: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != active.ID.String() {
+		t.Fatalf("active candidates = %#v, want only %s", items, active.ID)
+	}
+
+	history, err := repo.GetTimeline(ctx, "lifecycle-candidates", nil, nil, nil, nil, 100, nil)
+	if err != nil {
+		t.Fatalf("GetTimeline: %v", err)
+	}
+	if len(history) != 2 {
+		t.Fatalf("timeline length = %d, want both active and archived records", len(history))
+	}
+	lifecycleByID := map[string]string{}
+	for _, item := range history {
+		lifecycleByID[item.ID] = item.LifecycleState
+	}
+	if lifecycleByID[active.ID.String()] != entities.LifecycleActive || lifecycleByID[archived.ID.String()] != entities.LifecycleArchived {
+		t.Fatalf("timeline lifecycle states = %#v, want active and archived history", lifecycleByID)
+	}
+}
+
+func TestListActiveConsolidationCandidatesKeepsTheExistingBatchLimit(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	for i := 0; i < 1001; i++ {
+		verbatim := entities.NewVerbatim(fmt.Sprintf("note %d", i), "candidate-limit", nil)
+		if err := repo.StoreVerbatim(ctx, verbatim); err != nil {
+			t.Fatal(err)
+		}
+		fp := entities.NewFingerprint(verbatim.ID, valueobjects.TypeSessionNote, "test-model")
+		if err := repo.StoreFingerprint(ctx, fp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	items, err := repo.ListActiveConsolidationCandidates(ctx, "candidate-limit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1000 {
+		t.Fatalf("candidate count = %d, want bounded batch of 1000", len(items))
+	}
+}
+
 func TestArchiveOldMemories(t *testing.T) {
 	repo, cleanup := setupTestDB(t)
 	defer cleanup()

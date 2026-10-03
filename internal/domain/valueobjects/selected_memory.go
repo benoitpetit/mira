@@ -14,6 +14,7 @@ type SelectedMemory struct {
 	Mode        RenderMode `json:"mode"`
 	TokenCost   int        `json:"token_cost"`
 	Rendered    string     `json:"rendered"`
+	Sources     []string   `json:"sources,omitempty"`
 	Confidence  float64    `json:"confidence,omitempty"`
 	SelectedAt  time.Time  `json:"selected_at"`
 }
@@ -29,4 +30,10 @@ func NewSelectedMemory(candidateID, verbatimID uuid.UUID, mode RenderMode, token
 		Confidence:  confidence,
 		SelectedAt:  time.Now(),
 	}
+}
+
+// WithSources records which retrieval paths surfaced this memory.
+func (s *SelectedMemory) WithSources(sources []string) *SelectedMemory {
+	s.Sources = append([]string(nil), sources...)
+	return s
 }

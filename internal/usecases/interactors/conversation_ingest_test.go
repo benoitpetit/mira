@@ -79,6 +79,33 @@ func TestConversationMemoryInputsSelectsAndAnnotatesMessages(t *testing.T) {
 	}
 }
 
+func TestConversationMemoryInputsRejectsNegativeMinChars(t *testing.T) {
+	_, err := ConversationMemoryInputs([]ConversationMessage{{Role: "user", Content: "x"}}, "api", nil, false, -1)
+	if err == nil {
+		t.Fatal("expected negative min_chars to be rejected")
+	}
+}
+
+func TestConversationMemoryInputsZeroMinCharsStillRejectsEmptyMessage(t *testing.T) {
+	inputs, err := ConversationMemoryInputs([]ConversationMessage{{Role: "user", Content: "   "}}, "api", nil, false, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inputs) != 0 {
+		t.Fatalf("empty message was captured when min_chars is disabled: %+v", inputs)
+	}
+}
+
+func TestConversationMemoryInputsZeroMinCharsIncludesShortMessage(t *testing.T) {
+	inputs, err := ConversationMemoryInputs([]ConversationMessage{{Role: "user", Content: "x"}}, "api", nil, false, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inputs) != 1 || inputs[0].Content != "x" {
+		t.Fatalf("expected one character message to pass with min_chars=0, got %+v", inputs)
+	}
+}
+
 func TestValidateConversationMemoryInputsUsesStoreContentLimit(t *testing.T) {
 	inputs := []StoreMemoryInput{
 		{Content: "four", Wing: "api"},

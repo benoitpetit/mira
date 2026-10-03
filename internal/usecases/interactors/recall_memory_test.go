@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -151,6 +152,143 @@ func TestSelectGreedyDoesNotPruneCausalBoostFromLazyScoring(t *testing.T) {
 	}
 	if causal.CausalPenalty != 1.2 {
 		t.Fatalf("causal candidate factor = %v, want lazy causal boost 1.2", causal.CausalPenalty)
+	}
+}
+
+func TestSelectGreedyBudgetsRenderedMemoryText(t *testing.T) {
+	config := DefaultRecallMemoryConfig()
+	config.ThresholdFloor = 0
+	config.ThresholdCeiling = 1
+	uc := NewRecallMemory(&mockRecallVectorStore{}, &mockRecallOverlapCache{}, &mockRecallCausalGraph{},
+		&mockRecallEmbedder{}, &mockRecallRenderer{}, config, nil, nil)
+	candidate := createTestCandidateWithScore("rendered-budget", time.Now(), 0.9, 99)
+	candidate.Verbatim.Content = "Mira should count the visible rendered words."
+	candidate.RetrievalSources = []string{"dense", "lexical"}
+	candidate.Relevance = 0.9
+	candidate.Density = 1
+	candidate.Recency = 1
+	candidate.ExtractionConfidence = 1
+	candidate.ValidationFreshness = 1
+	candidate.LifecycleFactor = 1
+	candidate.BeliefCalibration = 1
+	selected := uc.selectGreedy(context.Background(), []*entities.Candidate{candidate}, 1500, nil)
+	if len(selected) != 1 {
+		t.Fatalf("selected %d memories, want one", len(selected))
+	}
+	if selected[0].Rendered != candidate.Verbatim.Content {
+		t.Fatalf("rendered = %q, want verbatim body", selected[0].Rendered)
+	}
+	if selected[0].TokenCost != 7 {
+		t.Fatalf("token cost = %d, want 7 whitespace-delimited units in rendered body", selected[0].TokenCost)
+	}
+	if len(selected[0].Sources) != 2 || selected[0].Sources[0] != "dense" || selected[0].Sources[1] != "lexical" {
+		t.Fatalf("selected sources = %v, want [dense lexical]", selected[0].Sources)
+	}
+}
+
+type oversizedFingerprintRenderer struct{}
+
+func (oversizedFingerprintRenderer) RenderHeader(*entities.Candidate) string {
+	return "short header"
+}
+
+func (oversizedFingerprintRenderer) RenderFingerprint(*entities.Candidate) string {
+	return strings.Repeat("fingerprint ", 1600)
+}
+
+func TestSelectGreedyDowngradesOversizedCompressedRendering(t *testing.T) {
+	longSummary := strings.TrimSpace(strings.Repeat("summary ", 1600))
+	tests := []struct {
+		name     string
+		renderer ports.FingerprintRenderer
+		wantMode valueobjects.RenderMode
+		wantText string
+	}{
+		{name: "fingerprint fits", renderer: &mockRecallRenderer{}, wantMode: valueobjects.ModeFingerprint, wantText: "Fingerprint:"},
+		{name: "fingerprint too large", renderer: oversizedFingerprintRenderer{}, wantMode: valueobjects.ModeHeader, wantText: "short header"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := DefaultRecallMemoryConfig()
+			config.ThresholdFloor = 0
+			config.ThresholdCeiling = 1
+			uc := NewRecallMemory(&mockRecallVectorStore{}, &mockRecallOverlapCache{}, &mockRecallCausalGraph{},
+				&mockRecallEmbedder{}, tt.renderer, config, nil, nil)
+			candidate := createTestCandidateWithScore("compressed-budget", time.Now(), 0.9, 2000)
+			candidate.Verbatim.Content = strings.TrimSpace(strings.Repeat("verbatim ", 2000))
+			candidate.Verbatim.Summary = &longSummary
+			candidate.Verbatim.SummaryTokenCount = 1 // deliberately stale; rendered text is authoritative
+			candidate.Relevance = 0.9
+			candidate.Density = 1
+			candidate.Recency = 1
+			candidate.ExtractionConfidence = 1
+			candidate.ValidationFreshness = 1
+			candidate.LifecycleFactor = 1
+			candidate.BeliefCalibration = 1
+
+			selected := uc.selectGreedy(context.Background(), []*entities.Candidate{candidate}, 1500, nil)
+			if len(selected) != 1 {
+				t.Fatalf("selected %d memories, want one", len(selected))
+			}
+			if selected[0].Mode != tt.wantMode {
+				t.Fatalf("selected mode = %v, want %v", selected[0].Mode, tt.wantMode)
+			}
+			if !strings.HasPrefix(selected[0].Rendered, tt.wantText) {
+				t.Fatalf("rendered payload starts %q, want %q", selected[0].Rendered[:min(40, len(selected[0].Rendered))], tt.wantText)
+			}
+			if selected[0].TokenCost != countRenderedTokens(selected[0].Rendered) || selected[0].TokenCost > 1500 {
+				t.Fatalf("selected cost=%d for rendered count=%d under budget 1500", selected[0].TokenCost, countRenderedTokens(selected[0].Rendered))
+			}
+		})
+	}
+}
+
+func TestFitRenderedModeCanStartAtCompressed(t *testing.T) {
+	longSummary := strings.TrimSpace(strings.Repeat("summary ", 1600))
+	candidate := createTestCandidateWithScore("compressed-start", time.Now(), 0.9, 2000)
+	candidate.Verbatim.Content = strings.TrimSpace(strings.Repeat("verbatim ", 2000))
+	candidate.Verbatim.Summary = &longSummary
+	candidate.Verbatim.SummaryTokenCount = 1
+	uc := NewRecallMemory(&mockRecallVectorStore{}, &mockRecallOverlapCache{}, &mockRecallCausalGraph{},
+		&mockRecallEmbedder{}, &mockRecallRenderer{}, DefaultRecallMemoryConfig(), nil, nil)
+
+	mode, rendered, cost, ok := uc.fitRenderedMode(candidate, valueobjects.ModeCompressed, 1500)
+	if !ok {
+		t.Fatal("failed to select a smaller rendered mode")
+	}
+	if mode != valueobjects.ModeFingerprint {
+		t.Fatalf("mode = %v, want fingerprint after compressed payload exceeds budget", mode)
+	}
+	if rendered == *candidate.Verbatim.Summary || cost != countRenderedTokens(rendered) || cost > 1500 {
+		t.Fatalf("rendered mode cost = %d, text cost = %d, budget = 1500", cost, countRenderedTokens(rendered))
+	}
+}
+
+func TestSelectGreedyDynamicRescoreKeepsBeliefCalibration(t *testing.T) {
+	config := DefaultRecallMemoryConfig()
+	config.ThresholdFloor = 0
+	config.ThresholdCeiling = 1
+	config.SessionBoostBeta = 0
+	config.SessionBoostMax = 1
+	config.DiversityBoostAlpha = 0
+	config.CausalPenaltyAlpha = 0
+	uc := NewRecallMemory(&mockRecallVectorStore{}, &mockRecallOverlapCache{}, &mockRecallCausalGraph{},
+		&mockRecallEmbedder{}, &mockRecallRenderer{}, config, nil, nil)
+	candidate := createTestCandidateWithScore("calibrated", time.Now(), 0.8, 10)
+	candidate.Relevance = 0.8
+	candidate.Density = 1
+	candidate.Recency = 1
+	candidate.ExtractionConfidence = 1
+	candidate.ValidationFreshness = 1
+	candidate.LifecycleFactor = 1
+	candidate.BeliefCalibration = 0.75
+
+	selected := uc.selectGreedy(context.Background(), []*entities.Candidate{candidate}, 1500, nil)
+	if len(selected) != 1 {
+		t.Fatalf("selected %d memories, want one", len(selected))
+	}
+	if math.Abs(candidate.Score-0.6) > 1e-9 {
+		t.Fatalf("dynamic score = %v, want calibrated score 0.6", candidate.Score)
 	}
 }
 
@@ -846,9 +984,9 @@ func TestCalculateTokenCost(t *testing.T) {
 		mode     valueobjects.RenderMode
 		expected int
 	}{
-		{valueobjects.ModeHeader, 5},
-		{valueobjects.ModeFingerprint, 50},
-		{valueobjects.ModeVerbatim, 100},
+		{valueobjects.ModeHeader, 2},
+		{valueobjects.ModeFingerprint, 2},
+		{valueobjects.ModeVerbatim, 0},
 	}
 
 	for _, tt := range tests {

@@ -1,6 +1,8 @@
 package valueobjects
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -179,6 +181,29 @@ func TestArchiveResult(t *testing.T) {
 	}
 	if result.TokensFreed != 15000 {
 		t.Error("TokensFreed not set correctly")
+	}
+}
+
+func TestArchiveResultJSONNamesActiveRecallCount(t *testing.T) {
+	payload, err := json.Marshal(&ArchiveResult{TokensArchived: 15, TokensFreed: 15})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := fields["tokens_archived"]; !ok {
+		t.Fatalf("archive response does not expose tokens_archived: %s", payload)
+	}
+	if _, ok := fields["tokens_freed"]; !ok {
+		t.Fatalf("archive response omitted compatibility field tokens_freed: %s", payload)
+	}
+	if fields["tokens_archived"] != fields["tokens_freed"] {
+		t.Fatalf("archive compatibility fields differ: %s", payload)
+	}
+	if strings.Contains(string(payload), "deleted") {
+		t.Fatalf("archive response implies physical deletion: %s", payload)
 	}
 }
 

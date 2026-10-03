@@ -43,6 +43,10 @@ type transactionalLifecycleWriter interface {
 	SetVerbatimLifecycleTx(ctx context.Context, tx *sql.Tx, id uuid.UUID, state string, supersededBy *uuid.UUID) error
 }
 
+type activeConsolidationCandidateReader interface {
+	ListActiveConsolidationCandidates(ctx context.Context, wing string) ([]*valueobjects.TimelineItem, error)
+}
+
 // NewConsolidateMemories creates a new consolidation interactor
 func NewConsolidateMemories(
 	repository ports.Repository,
@@ -66,11 +70,14 @@ func (uc *ConsolidateMemories) Execute(ctx context.Context, input ConsolidateMem
 		threshold = 0.92
 	}
 
-	// Fetch session notes for the wing
-	memType := valueobjects.TypeSessionNote
-	timelineItems, err := uc.repository.GetTimeline(ctx, input.Wing, nil, &memType, nil, nil, 1000, nil)
+	// Timeline is historical; consolidation must select only active session notes.
+	candidateReader, ok := uc.repository.(activeConsolidationCandidateReader)
+	if !ok {
+		return nil, fmt.Errorf("repository does not support active consolidation candidates")
+	}
+	timelineItems, err := candidateReader.ListActiveConsolidationCandidates(ctx, input.Wing)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch timeline: %w", err)
+		return nil, fmt.Errorf("failed to fetch active consolidation candidates: %w", err)
 	}
 
 	if len(timelineItems) < 2 {
@@ -193,6 +200,12 @@ func (uc *ConsolidateMemories) Execute(ctx context.Context, input ConsolidateMem
 		if err := uc.repository.StoreEmbeddingTx(ctx, tx, emb); err != nil {
 			_ = tx.Rollback()
 			return nil, fmt.Errorf("failed to store consolidated embedding: %w", err)
+		}
+		if beliefRepo, ok := uc.repository.(ports.BeliefSourceRepository); ok {
+			if err := beliefRepo.SyncBeliefSourceTx(ctx, tx, verbatim.ID, deriveBeliefFromFingerprint(fp, verbatim)); err != nil {
+				_ = tx.Rollback()
+				return nil, fmt.Errorf("failed to reconcile consolidated belief support: %w", err)
+			}
 		}
 
 		idsToSupersede := make([]uuid.UUID, 0, len(cluster))
