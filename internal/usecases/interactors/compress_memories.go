@@ -32,10 +32,12 @@ type CompressMemoriesInput struct {
 	DryRun bool
 }
 
-// CompressMemoriesOutput contains compression statistics.
+// CompressMemoriesOutput contains compression statistics. When Estimated is
+// true, the counts describe eligible candidates and are not persisted results.
 type CompressMemoriesOutput struct {
-	CompressedCount int `json:"compressed_count"`
-	TokensSaved     int `json:"tokens_saved"`
+	CompressedCount int  `json:"compressed_count"`
+	TokensSaved     int  `json:"tokens_saved"`
+	Estimated       bool `json:"estimated"`
 }
 
 // CompressMemories generates rule-based compressed summaries for session_note
@@ -66,7 +68,7 @@ func (uc *CompressMemories) Execute(ctx context.Context, input CompressMemoriesI
 		return nil, fmt.Errorf("failed to fetch session notes: %w", err)
 	}
 
-	out := &CompressMemoriesOutput{}
+	out := &CompressMemoriesOutput{Estimated: input.DryRun}
 
 	for _, item := range items {
 		uid, err := uuid.Parse(item.ID)
@@ -97,12 +99,13 @@ func (uc *CompressMemories) Execute(ctx context.Context, input CompressMemoriesI
 			continue
 		}
 
+		if !input.DryRun {
+			if err := uc.writer.UpdateVerbatimSummary(ctx, uid, summary, summaryTokens); err != nil {
+				return out, fmt.Errorf("failed to persist summary for verbatim %s: %w", uid, err)
+			}
+		}
 		out.CompressedCount++
 		out.TokensSaved += v.TokenCount - summaryTokens
-
-		if !input.DryRun {
-			_ = uc.writer.UpdateVerbatimSummary(ctx, uid, summary, summaryTokens)
-		}
 	}
 
 	return out, nil

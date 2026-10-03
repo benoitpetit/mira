@@ -2,6 +2,7 @@ package interactors_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/benoitpetit/mira/internal/domain/entities"
@@ -12,8 +13,11 @@ import (
 
 // mockCompressRepo is a minimal Repository mock for compress tests.
 type mockCompressRepo struct {
-	verbatims map[uuid.UUID]*entities.Verbatim
-	summaries map[uuid.UUID]string
+	verbatims    map[uuid.UUID]*entities.Verbatim
+	summaries    map[uuid.UUID]string
+	orderedIDs   []uuid.UUID
+	failUpdateID uuid.UUID
+	updateErr    error
 }
 
 func newMockCompressRepo() *mockCompressRepo {
@@ -27,12 +31,14 @@ func (m *mockCompressRepo) addSessionNote(content, wing string, tokens int) *ent
 	v := entities.NewVerbatim(content, wing, nil)
 	v.TokenCount = tokens
 	m.verbatims[v.ID] = v
+	m.orderedIDs = append(m.orderedIDs, v.ID)
 	return v
 }
 
 func (m *mockCompressRepo) GetTimeline(_ context.Context, wing string, _ *string, _ *valueobjects.MemoryType, _, _ *string, _ int, _ *string) ([]*valueobjects.TimelineItem, error) {
 	var items []*valueobjects.TimelineItem
-	for id, v := range m.verbatims {
+	for _, id := range m.orderedIDs {
+		v := m.verbatims[id]
 		if v.Wing == wing || wing == "" {
 			items = append(items, &valueobjects.TimelineItem{
 				ID:   id.String(),
@@ -52,6 +58,9 @@ func (m *mockCompressRepo) GetVerbatimByID(_ context.Context, id uuid.UUID) (*en
 }
 
 func (m *mockCompressRepo) UpdateVerbatimSummary(_ context.Context, id uuid.UUID, summary string, _ int) error {
+	if id == m.failUpdateID {
+		return m.updateErr
+	}
 	m.summaries[id] = summary
 	return nil
 }
@@ -140,7 +149,45 @@ func TestCompressMemories_Execute_DryRun(t *testing.T) {
 	if out.CompressedCount != 1 {
 		t.Errorf("CompressedCount = %d, want 1 (dry-run counted)", out.CompressedCount)
 	}
+	if !out.Estimated {
+		t.Error("Estimated = false, want true for dry-run output")
+	}
 	if len(repo.summaries) != 0 {
 		t.Errorf("expected no summaries written in dry-run, got %d", len(repo.summaries))
+	}
+}
+
+func TestCompressMemories_Execute_PersistFailureReturnsAccuratePartialOutput(t *testing.T) {
+	repo := newMockCompressRepo()
+	content := "In order to implement this feature, please note that we need JWT tokens. Due to the fact that performance was poor, we migrated the complete system."
+	first := repo.addSessionNote(content, "proj", 50)
+	second := repo.addSessionNote(content, "proj", 60)
+	cause := errors.New("disk unavailable")
+	repo.failUpdateID = second.ID
+	repo.updateErr = cause
+
+	uc := interactors.NewCompressMemories(repo, repo)
+	out, err := uc.Execute(context.Background(), interactors.CompressMemoriesInput{Wing: "proj", MinTokens: 10})
+	if !errors.Is(err, cause) {
+		t.Fatalf("Execute error = %v, want wrapped persistence error %v", err, cause)
+	}
+	if out == nil {
+		t.Fatal("Execute output = nil, want partial output for first persisted summary")
+	}
+	if out.CompressedCount != 1 {
+		t.Errorf("CompressedCount = %d, want 1 persisted summary", out.CompressedCount)
+	}
+	wantSaved := first.TokenCount - interactors.EstimateSummaryTokens(interactors.CompressText(content))
+	if out.TokensSaved != wantSaved {
+		t.Errorf("TokensSaved = %d, want %d for persisted summary only", out.TokensSaved, wantSaved)
+	}
+	if len(repo.summaries) != 1 {
+		t.Errorf("persisted summaries = %d, want 1", len(repo.summaries))
+	}
+	if _, ok := repo.summaries[first.ID]; !ok {
+		t.Error("first summary should remain persisted")
+	}
+	if _, ok := repo.summaries[second.ID]; ok {
+		t.Error("failed summary must not be reported as persisted")
 	}
 }

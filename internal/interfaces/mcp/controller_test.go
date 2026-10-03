@@ -179,6 +179,15 @@ type mockClearMemory struct {
 	executeFunc func(ctx context.Context, input interactors.ClearMemoryInput) (*interactors.ClearMemoryOutput, error)
 }
 
+type mockCompressMemories struct {
+	output *interactors.CompressMemoriesOutput
+	err    error
+}
+
+func (m *mockCompressMemories) Execute(context.Context, interactors.CompressMemoriesInput) (*interactors.CompressMemoriesOutput, error) {
+	return m.output, m.err
+}
+
 func (m *mockClearMemory) Execute(ctx context.Context, input interactors.ClearMemoryInput) (*interactors.ClearMemoryOutput, error) {
 	if m.executeFunc != nil {
 		return m.executeFunc(ctx, input)
@@ -1774,5 +1783,25 @@ func TestCall_DispatchCausalChain(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("nil result")
+	}
+}
+
+func TestHandleCompressDryRunLabelsEstimatedCounts(t *testing.T) {
+	c := &Controller{compressMemories: &mockCompressMemories{
+		output: &interactors.CompressMemoriesOutput{CompressedCount: 2, TokensSaved: 120, Estimated: true},
+	}}
+	result, err := c.handleCompress(context.Background(), map[string]interface{}{"dry_run": true})
+	if err != nil {
+		t.Fatalf("handleCompress: %v", err)
+	}
+	if result == nil || len(result.Content) == 0 {
+		t.Fatal("expected result text")
+	}
+	content, ok := result.Content[0].(mcptypes.TextContent)
+	if !ok {
+		t.Fatalf("content type = %T, want TextContent", result.Content[0])
+	}
+	if !strings.Contains(content.Text, "estimated") || !strings.Contains(content.Text, "nothing persisted") {
+		t.Errorf("dry-run output must label counts as estimates and clarify persistence: %q", content.Text)
 	}
 }

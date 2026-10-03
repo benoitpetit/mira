@@ -987,8 +987,8 @@ func (c *Controller) handleCompress(ctx context.Context, args map[string]interfa
 	}
 
 	qualifier := ""
-	if input.DryRun {
-		qualifier = " (dry-run — nothing persisted)"
+	if output.Estimated {
+		qualifier = " (estimated; dry-run — nothing persisted)"
 	}
 	result := fmt.Sprintf("Compression complete%s:\n- Compressed: %d verbatims\n- Tokens saved: %d",
 		qualifier, output.CompressedCount, output.TokensSaved)
