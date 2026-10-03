@@ -37,7 +37,7 @@ Practical examples for using MIRA's MCP tools and optional REST HTTP API.
 | `mira_clear_memory` | Permanently delete all or room-scoped memories | `mode` (`global` or `room`), `wing` (required for room), `room` (optional for room) |
 | `mira_compress` | Create rule-based summaries for eligible session notes | `wing`, `min_tokens`, `dry_run` (optional) |
 | `mira_update` | Replace a memory's content and regenerate its derived data | `id`, `content` (required) |
-| `mira_search` | Return raw semantic matches without CBA allocation | `query` (required), `top_k`, `threshold` (optional) |
+| `mira_search` | Return raw semantic matches without CBA allocation | `query` and `wing` (required unless `global: true`), `room`, `kind`, `global`, `top_k`, `threshold` (optional) |
 | `mira_consolidate` | Merge redundant session notes into a synthesized memory | `wing` (required), `similarity_threshold` (optional) |
 
 ### Built-in identity tools
@@ -187,7 +187,8 @@ Model: a1b2c3d4
 }
 ```
 
-**Note:** Session notes are automatically archived after 30 days.
+Session notes older than the configured threshold are eligible for explicit
+archival through `mira_archive`; MIRA does not run a background archive job.
 
 ---
 
@@ -415,7 +416,8 @@ MIRA will automatically create a causal edge: `PostgreSQL decision → pgAdmin d
 }
 ```
 
-**Note:** Debug logs are automatically archived after 7 days.
+Debug logs older than the configured threshold are eligible for explicit
+archival through `mira_archive`; MIRA does not run a background archive job.
 
 ### Recall Error Context
 
@@ -447,13 +449,20 @@ Archiving complete:
 Total freed: 15420 tokens
 ```
 
+`Total freed` above is legacy output wording: archived records remain stored.
+The REST response exposes `tokens_archived` and the deprecated compatibility
+alias `tokens_freed`; both estimate content removed from active recall.
+
 ---
 
 ## Advanced Queries
 
-### Multi-Wing Search
+### Recall Across Wings
 
-Search across multiple wings by omitting the wing filter:
+`mira_recall` can search without a primary wing and optionally accept
+`fallback_wings` and `include_global`. This is the budgeted recall tool; raw
+`mira_search` has a separate explicit scope contract and requires a wing unless
+`global: true` is set.
 
 ```json
 {
@@ -493,9 +502,12 @@ For complex architectural decisions requiring full context:
 }
 ```
 
-### Multilingual Queries
+### Queries in Different Languages
 
-MIRA uses cross-lingual embeddings (`all-MiniLM-L6-v2`), so you can query in any language regardless of the language used when storing the memory. If the initial search is too sparse, MIRA automatically performs a broad fallback search with relaxed thresholds.
+MIRA combines embedding similarity and lexical retrieval. Cross-language
+matches depend on the configured embedding model and are not guaranteed. A
+fallback with relaxed thresholds broadens candidate matching but does not
+translate the query.
 
 ```json
 // French query against English memories
@@ -687,13 +699,15 @@ api:
 
 ### Authentication
 
-When `auth_token` is configured, every request must include:
+When `auth_token` is configured, requests to `/api/v1` data endpoints must include:
 
 ```
 Authorization: Bearer my-secret
 ```
 
-The `GET /openapi.json` endpoint is always public — no token required.
+The `GET /openapi.json` endpoint and embedded dashboard assets are public — no
+token required. `/api/v1` endpoints use the configured shared bearer token;
+this is endpoint authentication, not per-user or per-wing authorization.
 
 ### Endpoint Reference
 
@@ -774,7 +788,10 @@ curl -s -X POST http://localhost:8080/api/v1/memories \
 Select substantive conversation messages and store them through the normal
 T0/T1/T2 pipeline as `history` memories. User messages are selected by default;
 set `include_assistant` to also store assistant replies. `dry_run` validates and
-counts the selection without writing any memory.
+counts the selection without writing any memory. `min_chars` defaults to 20
+Unicode characters when omitted; set it to `0` to disable only the length
+threshold. Empty messages remain invalid, and `min_chars` is limited to
+non-negative values.
 
 **Request body:**
 
@@ -908,12 +925,27 @@ curl -s -X POST http://localhost:8080/api/v1/memories/recall \
 ### POST /api/v1/memories/search — Semantic Search
 
 Pure vector search without CBA budget allocation. Returns raw ranked results.
+Set `wing` to scope the search. To search across every wing, explicitly set
+`global` to `true`; a missing wing without that opt-in is rejected. A global
+search cannot also specify `wing` or `room`.
 
 **Request body:**
 
 ```json
 {
   "query": "PostgreSQL ACID",
+  "wing": "backend",
+  "top_k": 10,
+  "threshold": 0.5
+}
+```
+
+Explicit global search:
+
+```json
+{
+  "query": "PostgreSQL ACID",
+  "global": true,
   "top_k": 10,
   "threshold": 0.5
 }
@@ -962,7 +994,9 @@ Identify and merge near-duplicate memories within a wing.
 
 ### DELETE /api/v1/memories — Clear
 
-Delete memories by scope.
+Delete memories by scope. `mode` is required: use `global` to delete all
+memories or `room` to delete one wing and optionally one room. The legacy
+`all` value remains accepted as a deprecated alias for `global`.
 
 **Request body:**
 
@@ -976,9 +1010,9 @@ Delete memories by scope.
 
 | `mode` | Description |
 |--------|-------------|
-| `all` (default) | Delete everything |
-| `wing` | Delete all memories in the given wing |
-| `room` | Delete memories matching wing + room |
+| `global` | Delete everything; cannot be combined with `wing` or `room` |
+| `room` | Delete memories matching required `wing` and optional `room` |
+| `all` (deprecated) | Alias for `global` |
 
 **Response: 200 OK**
 
@@ -1016,7 +1050,7 @@ curl -s "http://localhost:8080/api/v1/timeline?wing=backend&type=decision&limit=
 ```json
 {
   "items": [
-    { "id": "550e...", "type": "decision", "summary": "PostgreSQL migration", "created_at": "2026-04-09T14:30:00Z" }
+    { "id": "550e...", "type": "decision", "summary": "PostgreSQL migration", "timestamp": "2026-04-09T14:30:00Z", "lifecycle_state": "active" }
   ],
   "next_cursor": null
 }
@@ -1026,18 +1060,26 @@ curl -s "http://localhost:8080/api/v1/timeline?wing=backend&type=decision&limit=
 
 ### POST /api/v1/archive — Archive
 
-Trigger archival of expired memories according to configured thresholds
-(session notes >30d, debug logs >7d).
+Explicitly archive eligible old session notes and debug logs according to the
+configured age thresholds (defaults: session notes >30 days, debug logs >7
+days). This endpoint does not delete archived records or run on a schedule.
+Archived memories remain available in the timeline and are excluded from active
+recall. The token count is an estimate of archived content, not a reduction in
+database storage.
 
 **Response: 200 OK**
 
 ```json
 {
-  "archived_session_notes": 45,
-  "archived_debug_logs": 128,
-  "total_freed_tokens": 15420
+  "session_notes": 45,
+  "debug_logs": 128,
+  "tokens_archived": 15420,
+  "tokens_freed": 15420
 }
 ```
+
+`tokens_freed` is retained as a deprecated compatibility alias for
+`tokens_archived`; archival changes lifecycle state but preserves the records.
 
 ---
 
@@ -1204,8 +1246,8 @@ Choose appropriate types for better retrieval:
 - **decision** - Use for choices that impact architecture or process
 - **fact** - Use for objective information, documentation
 - **preference** - Use for subjective choices, style guides
-- **session_note** - Use for temporary context (auto-archived after 30 days)
-- **debug_log** - Use for troubleshooting (auto-archived after 7 days)
+- **session_note** - Use for temporary context (eligible for explicit archival after the configured threshold, 30 days by default)
+- **debug_log** - Use for troubleshooting (eligible for explicit archival after the configured threshold, 7 days by default)
 
 ### 4. Budget Guidelines
 

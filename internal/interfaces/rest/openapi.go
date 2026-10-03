@@ -545,10 +545,11 @@ func buildSchemas() map[string]oaSchema {
 		"TimelineItem": {
 			Type: "object",
 			Properties: map[string]oaSchema{
-				"id":        str(),
-				"timestamp": str(),
-				"type":      str(),
-				"summary":   str(),
+				"id":              str(),
+				"timestamp":       str(),
+				"type":            str(),
+				"summary":         str(),
+				"lifecycle_state": {Type: "string", Description: "Persisted lifecycle state, such as active, superseded, archived, or contested."},
 			},
 		},
 		"ArchiveResponse": {

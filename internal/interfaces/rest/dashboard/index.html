@@ -3,22 +3,23 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Local MIRA memory explorer">
+  <meta name="description" content="Memory explorer for a MIRA instance">
   <title>MIRA Memory Explorer</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <header class="topbar">
     <div>
-      <p class="eyebrow">LOCAL MEMORY EXPLORER</p>
+      <p class="eyebrow">MIRA MEMORY EXPLORER</p>
       <h1>MIRA</h1>
     </div>
     <div class="topbar-actions">
-      <label class="token-field" for="apiToken">API token
-        <input id="apiToken" type="password" autocomplete="off" placeholder="Optional bearer token">
+      <label class="token-field" for="apiToken">Bearer token, if configured
+        <input id="apiToken" type="password" autocomplete="off" placeholder="API bearer token">
       </label>
       <button id="saveTokenBtn" class="button button-secondary" type="button">Use token</button>
       <span id="authStatus" class="auth-status" aria-live="polite"></span>
+      <span class="session-note">Held in this browser session</span>
       <button id="refreshBtn" class="button button-secondary" type="button">Refresh data</button>
     </div>
   </header>
@@ -35,7 +36,7 @@
     <section class="panel search-panel" aria-labelledby="search-heading">
       <div class="section-heading">
         <div><p class="eyebrow">RECALL EXPLORER</p><h2 id="search-heading">Search your memory</h2></div>
-        <p>Inspect semantic matches before placing them in an agent context.</p>
+        <p>Choose a wing, or explicitly opt in to search across all wings.</p>
       </div>
       <div class="search-row">
         <label class="visually-hidden" for="searchInput">Search memories</label>
@@ -43,6 +44,9 @@
         <button id="searchBtn" class="button" type="button">Search</button>
       </div>
       <div class="controls">
+        <label for="searchWing">Wing <select id="searchWing"><option value="">Choose a wing</option></select></label>
+        <label class="scope-toggle"><input id="searchGlobal" type="checkbox"> Search all wings</label>
+        <label for="searchRoom">Room <input id="searchRoom" type="text" placeholder="Optional room"></label>
         <label>Minimum score <input id="thresholdSlider" type="range" min="0" max="1" step="0.05" value="0.15"> <output id="thresholdVal">0.15</output></label>
         <label>Results <input id="topKInput" type="number" min="1" max="100" value="20"></label>
 		<label>Kind <select id="searchKind"><option value="">All kinds</option><option value="identity">Identity</option><option value="user">User</option><option value="project">Project</option><option value="task">Task</option><option value="knowledge">Knowledge</option><option value="history">History</option></select></label>
@@ -54,7 +58,7 @@
     <section class="panel" aria-labelledby="timeline-heading">
       <div class="section-heading">
         <div><p class="eyebrow">HISTORY</p><h2 id="timeline-heading">Memory timeline</h2></div>
-        <p>Browse all stored decisions, facts, preferences and notes.</p>
+        <p>Browse stored memories, including archived and superseded history.</p>
       </div>
       <div class="filters">
         <label>Wing <select id="timelineWing"><option value="">All wings</option></select></label>
@@ -75,7 +79,7 @@
       <div id="agentMemoryAgents" class="agent-memory-agents"></div>
     </section>
   </main>
-  <footer>Private local data · served by your MIRA instance</footer>
+  <footer>Connected to this MIRA instance · requests use its configured storage and model providers</footer>
   <script src="/app.js" defer></script>
 </body>
 </html>

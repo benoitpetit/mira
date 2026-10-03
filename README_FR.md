@@ -6,9 +6,9 @@
   ### Mémoire persistante pour agents de code IA.
 
   Donnez à Claude Code, Codex, Cursor et autres agents MCP
-  une mémoire partagée, privée, locale.
+  une mémoire partagée par projet, avec stockage local par défaut.
 
-  ✓ 100% local · ✓ Pas de clé API · ✓ Pas de cloud · ✓ MCP natif · ✓ Économe en tokens · ✓ Persistant entre modèles
+  ✓ Local par défaut · ✓ Pas de clé API pour les composants locaux · ✓ MCP natif · ✓ Économe en tokens · ✓ Persistant entre modèles
 
   [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue?style=flat-square)](LICENSE)
@@ -44,8 +44,7 @@
 - [Installation](#installation)
 - [Démarrage rapide](#démarrage-rapide)
 - [Configuration](#configuration)
-- [Confidentialité et Gouvernance de la Mémoire](#confidentialité-et-gouvernance-de-la-mémoire)
-- [Politiques de Mémoire](#politiques-de-mémoire)
+- [Traitement des données](#traitement-des-données)
 - [API MCP](#api-mcp)
 - [API REST](#api-rest)
 - [Performance](#performance)
@@ -58,12 +57,12 @@
 
 ## Qu'est-ce que MIRA ?
 
-**MIRA** donne à vos agents de code IA une mémoire persistante et privée qui survit aux sessions, modèles et outils.
+**MIRA** donne à vos agents de code IA une mémoire persistante qui survit aux sessions, modèles et outils. Le stockage et les embeddings sont locaux par défaut ; les transports réseau et l’extraction Ollama sont configurés séparément.
 
 Claude Code apprend l'architecture de votre projet le lundi. Codex connaît automatiquement vos décisions le mardi. Cursor se souvient de votre session de debug le mercredi. **Même mémoire.**
 
-- ✓ 100% local — vos mémoires ne quittent jamais votre machine
-- ✓ Pas de clé API requise
+- ✓ Local par défaut — le stockage et les embeddings par défaut s’exécutent sur votre machine
+- ✓ Pas de clé API requise pour la configuration locale par défaut
 - ✓ MCP natif — fonctionne avec Claude Code, Codex, Cursor, Windsurf et plus
 - ✓ Économe en tokens — l'algorithme CBA maximise l'information par token
 - ✓ Persistant entre modèles — changez de LLM sans perdre le contexte
@@ -202,13 +201,13 @@ Un vecteur float32 de 384 dimensions utilisé exclusivement pour la recherche HN
 
 ### Types de mémoire et décroissance
 
-| Type | λ (jour⁻¹) | Demi-vie | Auto-archive | Usage |
-|------|-----------|----------|--------------|-------|
+| Type | λ (jour⁻¹) | Demi-vie | Archivage possible | Usage |
+|------|-----------|----------|--------------------|-------|
 | `decision` | 0.001 | ~693 jours | Non | Décisions architecturales |
 | `fact` | 0.005 | ~139 jours | Non | Connaissances, faits |
 | `preference` | 0.01 | ~69 jours | Non | Préférences utilisateur |
-| `session_note` | 0.1 | ~7 jours | 30 jours | Notes de session |
-| `debug_log` | 0.5 | ~1.4 jours | 7 jours | Logs de debug |
+| `session_note` | 0.1 | ~7 jours | Archivage explicite après 30 jours par défaut | Notes de session |
+| `debug_log` | 0.5 | ~1.4 jours | Archivage explicite après 7 jours par défaut | Logs de debug |
 
 ---
 
@@ -276,7 +275,7 @@ Requête → Expansion → Dense (HNSW) + Lexical (FTS5) → Fusion RRF → Clus
 
 ### 1. Expansion de requête
 
-MIRA génère des variantes sémantiquement proches de la requête (nettoyée, sans mots vides, mots-clés principaux) et **moyenne leurs embeddings**. Cela améliore la récupération cross-lingue et la robustesse aux variations de vocabulaire.
+MIRA génère des variantes de requête (texte nettoyé, texte sans mots vides et termes clés), puis moyenne leurs embeddings. Cela peut aider lorsque les formulations diffèrent ; la recherche entre langues dépend du modèle d’embedding configuré et n’est pas garantie.
 
 ### 2. Recherche hybride (Dense + Lexicale)
 
@@ -829,67 +828,26 @@ possible.
 
 ---
 
-## Confidentialité et Gouvernance de la Mémoire
+## Traitement des données
 
-MIRA est 100% local par défaut — vos mémoires ne quittent jamais votre machine. Vous pouvez renforcer les contrôles avec des politiques de gouvernance de la mémoire.
+MIRA stocke les mémoires localement par défaut et utilise un modèle d’embedding local par défaut. Les transports MCP réseau et l’extraction Ollama facultative envoient des requêtes vers les points de terminaison configurés. Vérifiez ces points de terminaison et votre déploiement avant d’y stocker des données sensibles. MIRA n’applique pas actuellement les paramètres `privacy.local_only`, `memory.allowed`/`forbidden` ni les durées de rétention par type montrés dans d’anciens exemples.
 
-### Restreindre ce qui est stocké
+### Traitement des données
 
-```yaml
-privacy:
-  local_only: true
+Les embeddings et l’extraction native par défaut s’exécutent localement. Si
+l’extraction Ollama ou un transport MCP réseau est activé, les requêtes utilisent
+le point de terminaison configuré. La rédaction des secrets par les hooks
+d’agent ne s’applique qu’à ce chemin de capture ; les écritures directes via
+MCP, REST et CLI ne partagent pas de politique automatique de rejet des secrets.
+Vérifiez et masquez les données sensibles avant leur stockage.
 
-memory:
-  allowed:
-    - project
-    - architecture
-    - decisions
+`mira_archive` archive explicitement les notes de session et journaux de debug
+éligibles selon les seuils d’âge configurés. Ce n’est pas un traitement périodique
+automatique : les enregistrements archivés restent stockés et visibles dans la
+chronologie, mais sont exclus du recall actif. Utilisez `mira_clear_memory` pour
+les supprimer définitivement.
 
-  forbidden:
-    - secrets
-    - credentials
-    - api_keys
-```
-
-MIRA détecte et rejette le contenu sensible :
-
-```
-MIRA a détecté un secret possible.
-Mémoire NON stockée.
-```
-
----
-
-## Politiques de Mémoire
-
-Contrôlez la durée de rétention des différents types de mémoires. Cela fonctionne avec l'architecture T0/T1/T2 de MIRA pour optimiser le stockage et le recall.
-
-```yaml
-policies:
-  architecture:
-    retention: permanent
-    priority: high
-
-  debugging:
-    retention: 90d
-
-  temporary:
-    retention: 7d
-
-  user_preferences:
-    retention: permanent
-```
-
-### Périodes de rétention supportées
-
-| Politique | Rétention | Auto-archive |
-|-----------|-----------|--------------|
-| `permanent` | N'expire jamais | Non |
-| `90d` | 90 jours | Oui |
-| `7d` | 7 jours | Oui |
-| `30d` | 30 jours | Oui |
-
-Les mémoires dépassant leur période de rétention sont automatiquement archivées et retirées du recall actif.
+Les seuils ci-dessus indiquent l’éligibilité à l’archivage explicite via `mira_archive` ; ils ne déclenchent pas de tâche périodique automatique.
 
 ### Quand utiliser chaque type
 
@@ -921,7 +879,7 @@ Choisissez le bon type de mémoire en fonction de ce que vous stockez :
 | `mira_status` | Statistiques système et santé |
 | `mira_health` | Health check rapide (JSON) |
 | `mira_timeline` | Reconstruction chronologique des mémoires |
-| `mira_archive` | Archiver et nettoyer les vieilles mémoires |
+| `mira_archive` | Archiver explicitement les anciennes mémoires éligibles ; elles restent stockées |
 | `mira_clear_memory` | Suppression permanente (globale ou par room) |
 | `mira_compress` | Compression contextuelle à base de règles pour les session_notes |
 | `mira_update` | Modifier une mémoire et régénérer ses données dérivées |
@@ -1009,7 +967,7 @@ et le recall REST, ainsi que les formats JSON, Markdown et Mem0 d'export/import.
 
 ### Recherche multilingue
 
-`mira_recall` accepte les requêtes dans n'importe quelle langue grâce aux embeddings cross-lingues. Lorsqu'une requête dans une langue cherche des mémoires dans une autre, MIRA élargit automatiquement la recherche avec des seuils relaxés.
+`mira_recall` peut rapprocher des paraphrases grâce aux embeddings et à la recherche lexicale. Les résultats entre langues dépendent du modèle configuré et ne sont pas garantis ; l’assouplissement des seuils ne traduit pas la requête.
 
 ```json
 {
@@ -1066,13 +1024,13 @@ api:
 
 ### Authentification
 
-Quand `auth_token` est défini, chaque requête doit porter :
+Quand `auth_token` est défini, les requêtes vers les endpoints de données `/api/v1` doivent porter :
 
 ```
 Authorization: Bearer mon-secret
 ```
 
-L’endpoint `/openapi.json` et les fichiers statiques du dashboard restent publics ; tous les endpoints de données `/api/v1` restent protégés.
+L’endpoint `/openapi.json` et les fichiers statiques du dashboard restent publics ; tous les endpoints de données `/api/v1` sont protégés par le jeton Bearer partagé configuré. Il s’agit d’une authentification de l’endpoint, sans autorisation par utilisateur ni par wing.
 
 ### Endpoints
 
@@ -1145,7 +1103,7 @@ Voir [docs/API_REFERENCES.md](docs/API_REFERENCES.md) pour la référence compl�
 
 ### Optimisations en v0.3.3
 
-- **Expansion de requête** — moyenne d'embeddings de variantes pour une récupération cross-lingue robuste
+- **Expansion de requête** — moyenne les embeddings de variantes nettoyées et centrées sur les mots-clés ; les résultats entre langues dépendent du modèle configuré
 - **Recherche lexicale FTS5** — recherche full-text SQLite avec triggers auto et backfill
 - **Fusion hybride RRF** — Reciprocal Rank Fusion (`k=60`) combinant HNSW et FTS5
 - **Clustering à la recherche** — déduplication en temps réel à cosine similarity ≥ 0.88

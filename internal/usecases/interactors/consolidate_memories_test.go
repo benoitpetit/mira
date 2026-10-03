@@ -30,6 +30,7 @@ func TestTruncateMemoryContentPreservesUTF8(t *testing.T) {
 type mockConsolidateRepository struct {
 	*mockStoreRepository
 	getTimelineFunc                 func(ctx context.Context, wing string, room *string, memType *valueobjects.MemoryType, since, until *string, limit int, cursor *string) ([]*valueobjects.TimelineItem, error)
+	listActiveCandidatesFunc        func(ctx context.Context, wing string, limit int, after *valueobjects.ConsolidationCandidateCursor) (valueobjects.ConsolidationCandidatePage, error)
 	getVerbatimFunc                 func(ctx context.Context, id uuid.UUID) (*entities.Verbatim, error)
 	getEmbeddingFunc                func(ctx context.Context, id uuid.UUID) (*entities.Embedding, error)
 	clearByIDsFunc                  func(ctx context.Context, ids []uuid.UUID) (int, error)
@@ -44,9 +45,13 @@ func (m *mockConsolidateRepository) GetTimeline(ctx context.Context, wing string
 	return nil, nil
 }
 
-func (m *mockConsolidateRepository) ListActiveConsolidationCandidates(ctx context.Context, wing string) ([]*valueobjects.TimelineItem, error) {
+func (m *mockConsolidateRepository) ListActiveConsolidationCandidates(ctx context.Context, wing string, limit int, after *valueobjects.ConsolidationCandidateCursor) (valueobjects.ConsolidationCandidatePage, error) {
+	if m.listActiveCandidatesFunc != nil {
+		return m.listActiveCandidatesFunc(ctx, wing, limit, after)
+	}
 	memType := valueobjects.TypeSessionNote
-	return m.GetTimeline(ctx, wing, nil, &memType, nil, nil, 1000, nil)
+	items, err := m.GetTimeline(ctx, wing, nil, &memType, nil, nil, limit, nil)
+	return valueobjects.ConsolidationCandidatePage{Items: items}, err
 }
 
 func (m *mockConsolidateRepository) GetVerbatimByID(ctx context.Context, id uuid.UUID) (*entities.Verbatim, error) {
@@ -339,6 +344,58 @@ func TestConsolidate_DissimilarNotesAreNotMerged(t *testing.T) {
 	}
 	if out.RemovedCount != 0 {
 		t.Errorf("RemovedCount: want 0, got %d", out.RemovedCount)
+	}
+}
+
+func TestConsolidateReadsEveryCandidatePage(t *testing.T) {
+	ctx := context.Background()
+	id1, id2 := uuid.New(), uuid.New()
+	item1, verbatim1, embedding1 := buildConsolidateNote(id1, "note on topic one", []float32{1, 0, 0, 0})
+	item2, verbatim2, embedding2 := buildConsolidateNote(id2, "note on topic two", []float32{0, 1, 0, 0})
+	cursor := &valueobjects.ConsolidationCandidateCursor{ExtractedAt: 12.5, FingerprintID: uuid.New()}
+	pageCalls := 0
+	repo := &mockConsolidateRepository{
+		mockStoreRepository: newMockStoreRepository(),
+		listActiveCandidatesFunc: func(_ context.Context, wing string, limit int, after *valueobjects.ConsolidationCandidateCursor) (valueobjects.ConsolidationCandidatePage, error) {
+			pageCalls++
+			if wing != "test-wing" || limit != consolidationCandidatePageSize {
+				t.Fatalf("candidate query scope = %q/%d, want test-wing/%d", wing, limit, consolidationCandidatePageSize)
+			}
+			switch pageCalls {
+			case 1:
+				if after != nil {
+					t.Fatalf("first page cursor = %#v, want nil", after)
+				}
+				return valueobjects.ConsolidationCandidatePage{Items: []*valueobjects.TimelineItem{item1}, Next: cursor}, nil
+			case 2:
+				if after == nil || after.ExtractedAt != cursor.ExtractedAt || after.FingerprintID != cursor.FingerprintID {
+					t.Fatalf("second page cursor = %#v, want %#v", after, cursor)
+				}
+				return valueobjects.ConsolidationCandidatePage{Items: []*valueobjects.TimelineItem{item2}}, nil
+			default:
+				t.Fatalf("unexpected page call %d", pageCalls)
+				return valueobjects.ConsolidationCandidatePage{}, nil
+			}
+		},
+		getVerbatimFunc: func(_ context.Context, id uuid.UUID) (*entities.Verbatim, error) {
+			if id == id1 {
+				return verbatim1, nil
+			}
+			return verbatim2, nil
+		},
+		getEmbeddingFunc: func(_ context.Context, id uuid.UUID) (*entities.Embedding, error) {
+			if id == id1 {
+				return embedding1, nil
+			}
+			return embedding2, nil
+		},
+	}
+	uc := NewConsolidateMemories(repo, &mockConsolidateVectorStore{}, nil, &mockConsolidateFingerprintExtractor{})
+	if _, err := uc.Execute(ctx, ConsolidateMemoriesInput{Wing: "test-wing"}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if pageCalls != 2 {
+		t.Fatalf("candidate pages read = %d, want 2", pageCalls)
 	}
 }
 

@@ -129,7 +129,9 @@ mira/
 
 The SQL records remain authoritative while derived indexes stay repairable. Soul capture filters provenance before extraction and stores bounded `TraitEvidence` beside each immutable snapshot. Retention compaction marks intermediate snapshots instead of deleting lineage. Consolidation marks source memories `superseded`, keeps `consolidated_from`, and supports revocation.
 
-Causal edges carry `confidence`, `status`, `evidence`, and `detector`; generic subjects such as `Note` are not sufficient for confirmation, and the configured lookback/age windows are applied. CBA multiplies relevance by calibrated extraction confidence and validation freshness, excludes non-active lifecycle rows, and keeps causal neighbors available for explanation. A local `BeliefRegistry` resolves active subject/predicate/value assertions and bounds feedback calibration to avoid autonomous score drift.
+Causal edges carry `confidence`, `status`, `evidence`, and `detector`; generic subjects such as `Note` are not sufficient for confirmation, and the configured lookback/age windows are applied. CBA multiplies relevance by calibrated extraction confidence and validation freshness, excludes non-active lifecycle rows, and keeps causal neighbors available for explanation. A local `BeliefRegistry` resolves active subject/predicate/value assertions and bounds feedback calibration to avoid autonomous score drift. PostgreSQL projection refreshes lock the target belief row before reading active supports, so a waiting refresh evaluates support changes committed by the transaction that held the lock.
+
+Consolidation reads only active session-note candidates. Storage returns keyset pages ordered by `(extracted_at DESC, fingerprint_id DESC)`; the interactor follows every cursor page before clustering so the former 1,000-row ceiling cannot silently omit older candidates. Timeline remains historical and exposes lifecycle state for inspection.
 
 The human brain does not record everything with the same fidelity. MIRA mimics this with three representation levels:
 

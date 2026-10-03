@@ -18,7 +18,10 @@ func TestServeDashboardServesExplorerAndAssets(t *testing.T) {
 		want string
 	}{
 		{path: "/", want: "searchKind"},
+		{path: "/", want: "searchWing"},
+		{path: "/", want: "searchGlobal"},
 		{path: "/app.js", want: "loadStats"},
+		{path: "/app.js", want: "lifecycle_state"},
 		{path: "/styles.css", want: "--accent"},
 	} {
 		req := httptest.NewRequest(http.MethodGet, tc.path, nil)

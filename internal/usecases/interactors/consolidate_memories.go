@@ -44,8 +44,10 @@ type transactionalLifecycleWriter interface {
 }
 
 type activeConsolidationCandidateReader interface {
-	ListActiveConsolidationCandidates(ctx context.Context, wing string) ([]*valueobjects.TimelineItem, error)
+	ListActiveConsolidationCandidates(ctx context.Context, wing string, limit int, after *valueobjects.ConsolidationCandidateCursor) (valueobjects.ConsolidationCandidatePage, error)
 }
+
+const consolidationCandidatePageSize = 500
 
 // NewConsolidateMemories creates a new consolidation interactor
 func NewConsolidateMemories(
@@ -75,9 +77,24 @@ func (uc *ConsolidateMemories) Execute(ctx context.Context, input ConsolidateMem
 	if !ok {
 		return nil, fmt.Errorf("repository does not support active consolidation candidates")
 	}
-	timelineItems, err := candidateReader.ListActiveConsolidationCandidates(ctx, input.Wing)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch active consolidation candidates: %w", err)
+	var timelineItems []*valueobjects.TimelineItem
+	var after *valueobjects.ConsolidationCandidateCursor
+	for {
+		page, err := candidateReader.ListActiveConsolidationCandidates(ctx, input.Wing, consolidationCandidatePageSize, after)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch active consolidation candidates: %w", err)
+		}
+		if len(page.Items) == 0 && page.Next != nil {
+			return nil, fmt.Errorf("failed to fetch active consolidation candidates: empty page returned a continuation cursor")
+		}
+		timelineItems = append(timelineItems, page.Items...)
+		if page.Next == nil {
+			break
+		}
+		if after != nil && page.Next.ExtractedAt == after.ExtractedAt && page.Next.FingerprintID == after.FingerprintID {
+			return nil, fmt.Errorf("failed to fetch active consolidation candidates: cursor did not advance")
+		}
+		after = page.Next
 	}
 
 	if len(timelineItems) < 2 {

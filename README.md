@@ -6,9 +6,9 @@
   ### Persistent memory for AI coding agents.
 
   Give Claude Code, Codex, Cursor and other MCP agents
-  a shared, private, local memory.
+  a shared, project-scoped memory with local storage by default.
 
-  ✓ 100% local · ✓ No API key · ✓ No cloud · ✓ MCP native · ✓ Token-efficient · ✓ Persistent across models
+  ✓ Local-first · ✓ No API key for default local components · ✓ MCP native · ✓ Token-efficient · ✓ Persistent across models
 
   [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue?style=flat-square)](LICENSE)
@@ -38,8 +38,7 @@
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
-- [Privacy & Memory Governance](#privacy--memory-governance)
-- [Memory Policies](#memory-policies)
+- [Data Handling](#data-handling)
 - [MCP API](#mcp-api)
 - [REST API](#rest-api)
 - [Performance](#performance)
@@ -52,12 +51,12 @@
 
 ## What is MIRA?
 
-**MIRA** gives your AI coding agents a persistent, private memory that survives across sessions, models, and tools.
+**MIRA** gives your AI coding agents persistent memory that survives across sessions, models, and tools. Its default storage and embedding path are local; optional network transports and Ollama extraction follow your configuration.
 
 Claude Code learns your project architecture on Monday. Codex automatically knows your decisions on Tuesday. Cursor remembers your debugging session on Wednesday. **Same memory.**
 
-- ✓ 100% local — your memories never leave your machine
-- ✓ No API key required
+- ✓ Local-first — default storage and embeddings run on your machine
+- ✓ No API key required for the default local configuration
 - ✓ MCP native — works with Claude Code, Codex, Cursor, Windsurf and more
 - ✓ Token-efficient — CBA algorithm maximizes information per token
 - ✓ Persistent across models — switch LLMs without losing context
@@ -196,13 +195,13 @@ A 384-dimensional float32 vector used exclusively for HNSW similarity search. Ne
 
 ### Memory Types and Decay
 
-| Type | λ (day⁻¹) | Half-life | Auto-archive | Usage |
-|------|-----------|-----------|--------------|-------|
+| Type | λ (day⁻¹) | Half-life | Archive eligibility | Usage |
+|------|-----------|-----------|---------------------|-------|
 | `decision` | 0.001 | ~693 days | No | Architectural decisions |
 | `fact` | 0.005 | ~139 days | No | Knowledge, facts |
 | `preference` | 0.01 | ~69 days | No | User preferences |
-| `session_note` | 0.1 | ~7 days | 30 days | Session notes |
-| `debug_log` | 0.5 | ~1.4 days | 7 days | Debug logs |
+| `session_note` | 0.1 | ~7 days | Explicit archive after 30 days by default | Session notes |
+| `debug_log` | 0.5 | ~1.4 days | Explicit archive after 7 days by default | Debug logs |
 
 ---
 
@@ -270,7 +269,7 @@ Query → Expansion → Dense (HNSW) + Lexical (SQL) → RRF Fusion → Clusteri
 
 ### 1. Query Expansion
 
-MIRA generates semantically close variants of the query (cleaned, without stopwords, top keywords) and **averages their embeddings**. This improves cross-lingual retrieval and robustness against vocabulary mismatch.
+MIRA generates query variants (cleaned text, stopword-filtered text, and key terms) and averages their embeddings. This can improve matching when wording differs; cross-language retrieval depends on the configured embedding model and is not guaranteed.
 
 ### 2. Hybrid Search (Dense + Lexical)
 
@@ -822,67 +821,22 @@ its first page. Keep the key outside the configuration file whenever possible.
 
 ---
 
-## Privacy & Memory Governance
+## Data Handling
 
-MIRA is 100% local by default — your memories never leave your machine. You can enforce stricter controls with memory governance policies.
+MIRA stores memories locally by default and uses a local embedding model by default. Network MCP transports and optional Ollama-based extraction can send requests to configured endpoints. Review those endpoints and your deployment before storing sensitive data. MIRA does not currently enforce the `privacy.local_only`, `memory.allowed`/`forbidden`, or per-type retention settings shown in older examples.
 
-### Restrict what gets stored
+### Data handling
 
-```yaml
-privacy:
-  local_only: true
+The default embedding and native extraction paths run locally. If Ollama
+extraction or network MCP is enabled, requests use the configured endpoint.
+Agent-hook secret redaction applies to that hook capture path; direct MCP, REST,
+and CLI writes do not share an automatic secret rejection policy. Review and
+redact sensitive content before storing it.
 
-memory:
-  allowed:
-    - project
-    - architecture
-    - decisions
-
-  forbidden:
-    - secrets
-    - credentials
-    - api_keys
-```
-
-MIRA will detect and reject sensitive content:
-
-```
-MIRA detected possible secret.
-Memory NOT stored.
-```
-
----
-
-## Memory Policies
-
-Control how long different types of memories are retained. This works with MIRA's T0/T1/T2 architecture to optimize storage and recall.
-
-```yaml
-policies:
-  architecture:
-    retention: permanent
-    priority: high
-
-  debugging:
-    retention: 90d
-
-  temporary:
-    retention: 7d
-
-  user_preferences:
-    retention: permanent
-```
-
-### Supported retention periods
-
-| Policy | Retention | Auto-archive |
-|--------|-----------|--------------|
-| `permanent` | Never expires | No |
-| `90d` | 90 days | Yes |
-| `7d` | 7 days | Yes |
-| `30d` | 30 days | Yes |
-
-Memories exceeding their retention period are automatically archived and removed from active recall.
+`mira_archive` explicitly archives eligible old session notes and debug logs
+using configured age thresholds. It is not a background retention scheduler;
+archived records remain stored and available in timeline history, while active
+recall excludes them. Use `mira_clear_memory` for permanent deletion.
 
 ### When to use each type
 
@@ -914,7 +868,7 @@ Choose the right memory type based on what you're storing:
 | `mira_status` | System statistics and health |
 | `mira_health` | Quick JSON health check |
 | `mira_timeline` | Chronological memory reconstruction |
-| `mira_archive` | Archive and clean old memories |
+| `mira_archive` | Explicitly archive eligible old memories; archived records remain stored |
 | `mira_clear_memory` | Permanently delete memories (global or room-scoped) |
 | `mira_compress` | Run rule-based context compression on session_notes |
 | `mira_update` | Update memory content and regenerate derived data |
@@ -1001,7 +955,7 @@ and the JSON, Markdown, and Mem0 export/import formats.
 
 ### Multilingual Search
 
-`mira_recall` accepts queries in any language thanks to cross-lingual embeddings. When a query in one language searches memories stored in another, MIRA automatically broadens the search with relaxed thresholds.
+`mira_recall` can match paraphrases through embeddings and lexical retrieval. Cross-language results depend on the configured embedding model and are not guaranteed; relaxed fallback thresholds do not translate the query.
 
 ```json
 {
@@ -1058,13 +1012,13 @@ api:
 
 ### Authentication
 
-When `auth_token` is set, every request must carry:
+When `auth_token` is set, requests to `/api/v1` data endpoints must carry:
 
 ```
 Authorization: Bearer my-secret
 ```
 
-The `/openapi.json` endpoint and dashboard shell/assets are public; all `/api/v1` data endpoints remain protected.
+The `/openapi.json` endpoint and dashboard shell/assets are public; all `/api/v1` data endpoints remain protected by the configured shared bearer token. This is endpoint authentication, not per-user or per-wing authorization.
 
 ### Endpoints
 
@@ -1137,7 +1091,7 @@ See [docs/API_REFERENCES.md](docs/API_REFERENCES.md) for full request/response s
 
 ### Optimizations in v0.3.3
 
-- **Query Expansion** — multi-variant embedding averaging for robust cross-lingual retrieval
+- **Query Expansion** — averages embeddings for cleaned and keyword-focused query variants; cross-language matching depends on the configured model
 - **SQL Lexical Search** — SQLite FTS5 or PostgreSQL GIN-backed simple text search
 - **RRF Hybrid Fusion** — Reciprocal Rank Fusion (`k=60`) combining HNSW and SQL lexical search
 - **Search-Time Clustering** — real-time deduplication at cosine similarity ≥ 0.88

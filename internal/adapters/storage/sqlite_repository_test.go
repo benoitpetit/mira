@@ -528,12 +528,12 @@ func TestListActiveConsolidationCandidatesExcludesInactiveButTimelineKeepsHistor
 		t.Fatal(err)
 	}
 
-	items, err := repo.ListActiveConsolidationCandidates(ctx, "lifecycle-candidates")
+	page, err := repo.ListActiveConsolidationCandidates(ctx, "lifecycle-candidates", 10, nil)
 	if err != nil {
 		t.Fatalf("ListActiveConsolidationCandidates: %v", err)
 	}
-	if len(items) != 1 || items[0].ID != active.ID.String() {
-		t.Fatalf("active candidates = %#v, want only %s", items, active.ID)
+	if len(page.Items) != 1 || page.Items[0].ID != active.ID.String() || page.Next != nil {
+		t.Fatalf("active candidates page = %#v, want only %s and no next page", page, active.ID)
 	}
 
 	history, err := repo.GetTimeline(ctx, "lifecycle-candidates", nil, nil, nil, nil, 100, nil)
@@ -552,7 +552,7 @@ func TestListActiveConsolidationCandidatesExcludesInactiveButTimelineKeepsHistor
 	}
 }
 
-func TestListActiveConsolidationCandidatesKeepsTheExistingBatchLimit(t *testing.T) {
+func TestListActiveConsolidationCandidatesDoesNotSilentlyTruncate(t *testing.T) {
 	repo, cleanup := setupTestDB(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -566,12 +566,41 @@ func TestListActiveConsolidationCandidatesKeepsTheExistingBatchLimit(t *testing.
 			t.Fatal(err)
 		}
 	}
-	items, err := repo.ListActiveConsolidationCandidates(ctx, "candidate-limit")
-	if err != nil {
+	if _, err := repo.DB().Exec(`UPDATE fingerprints SET extracted_at = 123.5`); err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1000 {
-		t.Fatalf("candidate count = %d, want bounded batch of 1000", len(items))
+	var items []*valueobjects.TimelineItem
+	var after *valueobjects.ConsolidationCandidateCursor
+	pageSizes := make([]int, 0, 4)
+	seen := make(map[string]bool)
+	for {
+		page, err := repo.ListActiveConsolidationCandidates(ctx, "candidate-limit", 300, after)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pageSizes = append(pageSizes, len(page.Items))
+		for _, item := range page.Items {
+			if seen[item.ID] {
+				t.Fatalf("duplicate candidate %s across pages", item.ID)
+			}
+			seen[item.ID] = true
+			items = append(items, item)
+		}
+		if page.Next == nil {
+			break
+		}
+		after = page.Next
+	}
+	if len(items) != 1001 {
+		t.Fatalf("candidate count = %d, want all 1001 eligible notes", len(items))
+	}
+	if len(pageSizes) != 4 || pageSizes[0] != 300 || pageSizes[1] != 300 || pageSizes[2] != 300 || pageSizes[3] != 101 {
+		t.Fatalf("page sizes = %v, want [300 300 300 101]", pageSizes)
+	}
+	for i := 1; i < len(items); i++ {
+		if items[i-1].CursorID <= items[i].CursorID {
+			t.Fatalf("equal-timestamp page order is not descending by fingerprint ID: %s then %s", items[i-1].CursorID, items[i].CursorID)
+		}
 	}
 }
 

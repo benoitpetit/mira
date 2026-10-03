@@ -743,6 +743,9 @@ func TestOpenAPITransportScopeAndMinCharsContracts(t *testing.T) {
 	if _, ok := archive["tokens_archived"]; !ok || !archive["tokens_freed"].Deprecated {
 		t.Errorf("archive schema must expose tokens_archived and mark tokens_freed deprecated: %#v", archive)
 	}
+	if _, ok := document.Components.Schemas["TimelineItem"].Properties["lifecycle_state"]; !ok {
+		t.Error("timeline schema must expose lifecycle_state")
+	}
 }
 
 func TestHandleCausal_InvalidUUID(t *testing.T) {

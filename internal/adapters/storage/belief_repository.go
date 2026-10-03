@@ -228,6 +228,15 @@ func upsertBeliefTx(ctx context.Context, tx beliefSourceSQL, belief *entities.Be
 }
 
 func refreshBeliefProjection(ctx context.Context, tx beliefSourceSQL, beliefID string, postgres bool) error {
+	if postgres {
+		// Lock before reading the support set. Under PostgreSQL's default
+		// READ COMMITTED isolation, the following SELECT sees commits that
+		// completed while this transaction waited for the belief row.
+		var lockedID string
+		if err := tx.QueryRowContext(ctx, beliefProjectionLockQuery(), beliefProjectionID(beliefID, true)).Scan(&lockedID); err != nil {
+			return fmt.Errorf("lock belief %s before refreshing its supports: %w", beliefID, err)
+		}
+	}
 	query := `SELECT source_id FROM belief_sources WHERE belief_id=? AND active=1 ORDER BY source_id`
 	if postgres {
 		query = `SELECT source_id::text FROM belief_sources WHERE belief_id=$1 AND active=TRUE ORDER BY source_id`
@@ -266,6 +275,10 @@ func refreshBeliefProjection(ctx context.Context, tx beliefSourceSQL, beliefID s
 	}
 	_, err = tx.ExecContext(ctx, updateQuery, args...)
 	return err
+}
+
+func beliefProjectionLockQuery() string {
+	return `SELECT id::text FROM beliefs WHERE id=$1 FOR UPDATE`
 }
 
 func beliefProjectionID(id string, postgres bool) any {

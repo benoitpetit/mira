@@ -12,7 +12,7 @@ MIRA is a **long-term memory system for Large Language Models (LLMs)** designed 
 
 - **Context is finite** — LLM windows range from 4K to 128K tokens, but projects span thousands of interactions.
 - **Not all memories are equal** — information density, recency, causal links, and narrative coherence matter.
-- **Local-first** — 100% local execution, deterministic, no external APIs required.
+- **Local-first defaults** — SQLite, native extraction, and embeddings run locally by default; optional Ollama extraction and network MCP transports use configured endpoints.
 - **[Market benchmark references](MARKET_REFERENCES.md)** — published competitor figures with explicit non-comparability guidance.
 
 ---
@@ -49,7 +49,7 @@ MIRA is a **long-term memory system for Large Language Models (LLMs)** designed 
 - **Context Budget Allocation (CBA)**: Greedy token-budget optimizer with eight core signals, quality/belief calibration and an optional diversity modifier
 - **HNSW Vector Search**: O(log n) approximate nearest neighbor over millions of memories
 - **Hybrid Search**: Dense + FTS5 lexical fusion via Reciprocal Rank Fusion (RRF)
-- **Query Expansion**: Multi-variant embedding averaging for cross-lingual robustness
+- **Query Expansion**: Embedding averages for cleaned and keyword-focused query variants; cross-language matching depends on the configured model
 - **Search-Time Clustering**: Real-time deduplication of near-duplicate results
 - **Heuristic Reranker**: Lightweight lexical reranking for precision boost
 - **Dynamic Budget Adjustment**: Semantic budget scales ±20% based on query complexity
@@ -58,7 +58,7 @@ MIRA is a **long-term memory system for Large Language Models (LLMs)** designed 
 ### Operations & Observability
 - **14 MCP Tools**: store, ingest, recall, load, update, search, consolidate,
   causal_chain, timeline, status, health, archive, clear_memory, and compress
-- **REST HTTP API**: Optional HTTP server on `:8080` — 13 endpoints with OpenAPI 3.1 spec, Bearer token auth, and graceful shutdown
+- **REST HTTP API**: Optional HTTP server on `:8080` — 14 endpoints with OpenAPI 3.1 spec, optional Bearer token auth, and graceful shutdown
 - **Prometheus Metrics**: `/metrics`, `/health`, `/health/live`, `/health/ready` — counters for store/recall/search/embed/errors, gauges for memory/vector counts
 - **Webhook Notifications**: HMAC-signed HTTP callbacks with circuit breaker resilience and DLQ retry
 - **Zero-Config Startup**: Runs without `config.yaml` using embedded defaults
@@ -81,5 +81,5 @@ MIRA is a **long-term memory system for Large Language Models (LLMs)** designed 
 
 ---
 
-*Version documented: 0.8.3*
-*Last updated: 2026-09-24*
+*Release version documented: 0.8.3. Local source can include unreleased changes beyond that tag.*
+*Last updated: 2026-10-03*

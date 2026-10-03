@@ -14,12 +14,13 @@ document.addEventListener("DOMContentLoaded", () => {
     const savedToken = sessionStorage.getItem(TOKEN_KEY) || "";
     document.getElementById("apiToken").value = savedToken;
     updateAuthStatus(savedToken ? "Token active" : "");
+    syncSearchScopeControls();
     loadStats();
     loadWings();
     setupEventListeners();
 });
 function setupEventListeners() {
-	document.getElementById("saveTokenBtn").addEventListener("click", () => {
+    document.getElementById("saveTokenBtn").addEventListener("click", () => {
 		const token = document.getElementById("apiToken").value.trim();
 		if (token) sessionStorage.setItem(TOKEN_KEY, token);
 		else sessionStorage.removeItem(TOKEN_KEY);
@@ -31,6 +32,7 @@ function setupEventListeners() {
         loadStats();
         goToFirstPage();
     });
+    document.getElementById("searchGlobal").addEventListener("change", syncSearchScopeControls);
 
     document.getElementById("searchBtn").addEventListener("click", searchMemories);
     document.getElementById("searchResults").addEventListener("click", showCausalExplanation);
@@ -81,12 +83,19 @@ async function loadWings() {
         
         const select = document.getElementById("timelineWing");
 		select.querySelectorAll("option:not(:first-child)").forEach(option => option.remove());
+        const searchWingSelect = document.getElementById("searchWing");
+		searchWingSelect.querySelectorAll("option:not(:first-child)").forEach(option => option.remove());
         if (data.stats && data.stats.active_wings) {
             data.stats.active_wings.forEach(wing => {
                 const option = document.createElement("option");
                 option.value = wing;
                 option.textContent = wing;
                 select.appendChild(option);
+
+                const searchOption = document.createElement("option");
+                searchOption.value = wing;
+                searchOption.textContent = wing;
+                searchWingSelect.appendChild(searchOption);
             });
         }
     } catch (error) {
@@ -98,25 +107,52 @@ async function searchMemories() {
     const query = document.getElementById("searchInput").value.trim();
     if (!query) return;
 
+    const global = document.getElementById("searchGlobal").checked;
+    const wing = document.getElementById("searchWing").value;
+    const room = document.getElementById("searchRoom").value.trim();
+    const resultsDiv = document.getElementById("searchResults");
+    if (!global && !wing) {
+        resultsDiv.innerHTML = '<div class="error">Choose a wing or explicitly select “Search all wings”.</div>';
+        return;
+    }
+
     const threshold = parseFloat(document.getElementById("thresholdSlider").value) || 0.15;
     const topK = parseInt(document.getElementById("topKInput").value) || 20;
 	const kind = document.getElementById("searchKind").value || undefined;
 
-    const resultsDiv = document.getElementById("searchResults");
     resultsDiv.innerHTML = '<div class="loading">Searching...</div>';
 
     try {
+        const body = { query, top_k: topK, threshold, global };
+        if (!global) {
+            body.wing = wing;
+            if (room) body.room = room;
+        }
+        if (kind) body.kind = kind;
         const response = await apiFetch(`${API_BASE}/memories/search`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ query, top_k: topK, threshold, kind })
+			body: JSON.stringify(body)
         });
 
-        const data = await response.json();
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || `request failed (${response.status})`);
         displaySearchResults(data.results || []);
     } catch (error) {
-        resultsDiv.innerHTML = `<div class="error">Search failed: ${error.message}</div>`;
+        resultsDiv.innerHTML = `<div class="error">Search failed: ${escapeHtml(error.message)}</div>`;
     }
+}
+
+function syncSearchScopeControls() {
+    const global = document.getElementById("searchGlobal").checked;
+    const wing = document.getElementById("searchWing");
+    const room = document.getElementById("searchRoom");
+    if (global) {
+        wing.value = "";
+        room.value = "";
+    }
+    wing.disabled = global;
+    room.disabled = global;
 }
 
 function displaySearchResults(results) {
@@ -254,7 +290,10 @@ function displayTimeline(items) {
                 <h4>${escapeHtml(item.summary || "No summary")}</h4>
                 <p>${escapeHtml(item.timestamp || "")} &bull; Wing: ${escapeHtml(item.wing || "—")}</p>
             </div>
-            <span class="badge">${escapeHtml(item.type || "unknown")}</span>
+            <div class="timeline-badges">
+                <span class="badge">${escapeHtml(item.type || "unknown")}</span>
+                <span class="badge lifecycle-${escapeHtml(item.lifecycle_state || "active")}">${escapeHtml(item.lifecycle_state || "active")}</span>
+            </div>
         </div>
     `).join("");
 }

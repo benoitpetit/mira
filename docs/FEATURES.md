@@ -52,8 +52,8 @@ calibrates source reliability inside the bounded `[0.75, 1.20]` interval.
 | Auto Type Detection | Detects decision, fact, preference, session_note, debug_log |
 | Business Memory Kinds | Persistent `identity`, `user`, `project`, `task`, `knowledge`, and `history` roles, independently filterable from type |
 | Decay Rate System | Per-type exponential decay (λ from 0.001 to 0.5) |
-| Auto-Archive | Session notes (>30d) and debug logs (>7d) automatically archived |
-| Archive Tool (`mira_archive`) | Manual archive trigger with token-freed stats |
+| Eligible for Archive | Session notes (>30d) and debug logs (>7d) become eligible under the configured age thresholds; archival is explicitly triggered |
+| Archive Tool (`mira_archive`) | Explicitly archive eligible records and report an estimated token count archived from active recall; records remain stored |
 | Clear Memory Tool (`mira_clear_memory`) | Global or wing/room-scoped permanent deletion |
 | Lifecycle Authority | `active`, `superseded`, `archived` and `contested` are persisted on T0 and mirrored in metadata |
 | Default Room Mapping | Auto-assigns rooms based on detected memory type |
@@ -127,14 +127,19 @@ stored vectors and model fingerprints transactionally, then rebuilds HNSW.
 | Tool | Description |
 |------|-------------|
 | `mira_store` | Store memory with auto-extraction and exact deduplication |
+| `mira_ingest` | Select substantive conversation messages and store history memories |
 | `mira_recall` | Retrieve context via multi-stage pipeline (expansion, hybrid search, clustering, reranker). Supports `session_id` for multi-turn injection |
 | `mira_load` | Load full verbatim by ID |
+| `mira_update` | Replace memory content and regenerate derived data |
+| `mira_search` | Raw semantic search; requires a wing unless global search is explicit |
+| `mira_consolidate` | Merge redundant session notes within a wing |
 | `mira_causal_chain` | Trace causal relationships |
 | `mira_timeline` | Chronological reconstruction with filters |
 | `mira_status` | System statistics, health, version, and uptime |
 | `mira_health` | Quick health check: JSON with `status`, `db_connected`, `memory_count` |
-| `mira_archive` | Archive old memories |
+| `mira_archive` | Explicitly archive eligible old memories; records remain stored |
 | `mira_clear_memory` | Permanent deletion (global or room-scoped) |
+| `mira_compress` | Create a rule-based summary for an eligible session note |
 
 ### Built-in identity tools
 
@@ -176,7 +181,7 @@ the server.
 | Feature | Description |
 |---------|-------------|
 | Optional REST Server | Disabled by default; enable via `api.enabled: true` or `--with-api` flag |
-| Local Memory Explorer | Embedded dashboard at `/` with statistics, semantic search, timeline filters, causal context and session-scoped bearer-token support |
+| Local Memory Explorer | Embedded dashboard at `/` with statistics, wing-scoped or explicitly global semantic search, timeline lifecycle badges, filters, causal context and session-scoped bearer-token support |
 | 14 Endpoints | `POST /memories`, `POST /memories/ingest`, `GET/PUT/DELETE /memories/{id}`, `POST /memories/recall`, `POST /memories/search`, `POST /memories/consolidate`, `DELETE /memories`, `GET /timeline`, `POST /archive`, `GET /causal/{id}`, `GET /status`, `GET /openapi.json` |
 | Bearer Token Auth | Optional `Authorization: Bearer <token>` — `/openapi.json` and dashboard assets are public while `/api/v1` data stays protected |
 | OpenAPI 3.1 Spec | Machine-generated Go struct spec served at `GET /openapi.json` (zero external deps) |
@@ -227,7 +232,7 @@ the server.
 | Native Go Extractor | Rule-based NER replacing archived `prose` library |
 | Entity Extraction | Capitalized word detection + known entity gazetteers |
 | Subject Inference | Infers subjects from sentence structure |
-| Token Counting | `tiktoken-go` for accurate OpenAI-style token counts |
+| Token Counting | Deterministic local estimates; values are planning estimates, not exact counts from a model-specific tokenizer |
 | Causal Pattern Detection | Regex-based relation detection (EN + FR) |
 | Model Hash Tracking | Tracks which embedding model generated each vector |
 | T0/T1 Validation Alerts | Inconsistencies stored in `fingerprint.data.custom.validation_alerts` |

@@ -26,7 +26,9 @@ accidentally share a memory wing.
 | `complete` | substantive user prompts | automatic when hooks exist | yes, when exposed |
 
 `standard` is the default. Every policy keeps secret redaction enabled and
-filters short or transient commands.
+filters short or transient commands. This redaction is part of the agent-hook
+capture path; direct writes through MCP, REST, CLI, or the Go API do not inherit
+that hook policy.
 
 ## Client behavior
 
