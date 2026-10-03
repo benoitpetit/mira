@@ -319,7 +319,9 @@ func (r *PostgreSQLRepository) GetFingerprintByVerbatimID(ctx context.Context, v
 	row := r.db.QueryRowContext(ctx,
 		`SELECT f.id, f.verbatim_id, f.ftype, f.extracted_at, f.entities, f.subjects, f.decision, f.data, f.fact_count, f.token_estimate, f.model_hash
 		 FROM fingerprints f
-		 WHERE f.verbatim_id = $1`,
+		 WHERE f.verbatim_id = $1
+		 ORDER BY f.extracted_at DESC, f.id DESC
+		 LIMIT 1`,
 		verbatimID,
 	)
 

@@ -23,6 +23,7 @@ type updateMockRepo struct {
 	fingerprints      map[uuid.UUID]*entities.Fingerprint
 	embeddings        map[uuid.UUID]*entities.Embedding
 	getVerbatimErr    error
+	getFingerprintErr error
 	beginErr          error
 	beginReturnsNil   bool
 	deleteVerbatimErr error
@@ -37,6 +38,11 @@ func newUpdateMockRepo() *updateMockRepo {
 		fingerprints: make(map[uuid.UUID]*entities.Fingerprint),
 		embeddings:   make(map[uuid.UUID]*entities.Embedding),
 	}
+}
+
+func seedUpdateMockRepo(repo *updateMockRepo, id uuid.UUID, content, wing string) {
+	repo.verbatims[id] = &entities.Verbatim{ID: id, Content: content, Wing: wing}
+	repo.fingerprints[id] = entities.NewFingerprint(id, valueobjects.TypeFact, "test-hash")
 }
 
 func (r *updateMockRepo) Begin() (*sql.Tx, error) {
@@ -95,14 +101,14 @@ func (r *updateMockRepo) StoreFingerprint(_ context.Context, fp *entities.Finger
 	if r.storeFpErr != nil {
 		return r.storeFpErr
 	}
-	r.fingerprints[fp.ID] = fp
+	r.fingerprints[fp.VerbatimID] = fp
 	return nil
 }
 func (r *updateMockRepo) StoreFingerprintTx(_ context.Context, _ *sql.Tx, fp *entities.Fingerprint) error {
 	if r.storeFpErr != nil {
 		return r.storeFpErr
 	}
-	r.fingerprints[fp.ID] = fp
+	r.fingerprints[fp.VerbatimID] = fp
 	return nil
 }
 
@@ -125,8 +131,15 @@ func (r *updateMockRepo) StoreEmbeddingTx(_ context.Context, _ *sql.Tx, emb *ent
 func (r *updateMockRepo) GetFingerprintByID(_ context.Context, _ uuid.UUID) (*entities.Fingerprint, error) {
 	return nil, nil
 }
-func (r *updateMockRepo) GetFingerprintByVerbatimID(_ context.Context, _ uuid.UUID) (*entities.Fingerprint, error) {
-	return nil, errors.New("not found")
+func (r *updateMockRepo) GetFingerprintByVerbatimID(_ context.Context, verbatimID uuid.UUID) (*entities.Fingerprint, error) {
+	if r.getFingerprintErr != nil {
+		return nil, r.getFingerprintErr
+	}
+	fp, ok := r.fingerprints[verbatimID]
+	if !ok {
+		return nil, errors.New("fingerprint not found")
+	}
+	return fp, nil
 }
 func (r *updateMockRepo) GetRecentFingerprintsByWing(_ context.Context, _ string, _ uuid.UUID, _ int) ([]*entities.Fingerprint, error) {
 	return nil, nil
@@ -258,10 +271,25 @@ func TestUpdateMemory_GetVerbatimByIDFailure(t *testing.T) {
 	}
 }
 
-func TestUpdateMemory_ExtractPipelineFailure(t *testing.T) {
+func TestUpdateMemoryFailsWhenExistingFingerprintIsMissing(t *testing.T) {
 	repo := newUpdateMockRepo()
 	id := uuid.New()
 	repo.verbatims[id] = &entities.Verbatim{ID: id, Content: "original", Wing: "w"}
+	uc := NewUpdateMemory(repo, &mockUpdateExtractor{}, &mockUpdateVectorStore{})
+
+	_, err := uc.Execute(context.Background(), UpdateMemoryInput{ID: id, Content: "updated"})
+	if err == nil || !strings.Contains(err.Error(), "failed to load existing fingerprint") {
+		t.Fatalf("expected missing fingerprint error, got %v", err)
+	}
+	if repo.verbatims[id].Content != "original" {
+		t.Fatalf("missing fingerprint changed original content: %q", repo.verbatims[id].Content)
+	}
+}
+
+func TestUpdateMemory_ExtractPipelineFailure(t *testing.T) {
+	repo := newUpdateMockRepo()
+	id := uuid.New()
+	seedUpdateMockRepo(repo, id, "original", "w")
 
 	uc := NewUpdateMemory(repo, &errUpdateExtractor{&mockUpdateExtractor{}}, &mockUpdateVectorStore{})
 	_, err := uc.Execute(context.Background(), UpdateMemoryInput{ID: id, Content: "new content"})
@@ -273,7 +301,7 @@ func TestUpdateMemory_ExtractPipelineFailure(t *testing.T) {
 func TestUpdateMemory_BeginTxFailure(t *testing.T) {
 	repo := newUpdateMockRepo()
 	id := uuid.New()
-	repo.verbatims[id] = &entities.Verbatim{ID: id, Content: "original", Wing: "w"}
+	seedUpdateMockRepo(repo, id, "original", "w")
 	repo.beginErr = errors.New("begin failed")
 
 	uc := NewUpdateMemory(repo, &mockUpdateExtractor{}, &mockUpdateVectorStore{})
@@ -286,7 +314,7 @@ func TestUpdateMemory_BeginTxFailure(t *testing.T) {
 func TestUpdateMemory_DeleteVerbatimTxFailure(t *testing.T) {
 	repo := newUpdateMockRepo()
 	id := uuid.New()
-	repo.verbatims[id] = &entities.Verbatim{ID: id, Content: "original", Wing: "w"}
+	seedUpdateMockRepo(repo, id, "original", "w")
 	repo.deleteVerbatimErr = errors.New("delete failed")
 
 	uc := NewUpdateMemory(repo, &mockUpdateExtractor{}, &mockUpdateVectorStore{})
@@ -299,7 +327,7 @@ func TestUpdateMemory_DeleteVerbatimTxFailure(t *testing.T) {
 func TestUpdateMemory_StoreFingerprintTxFailure(t *testing.T) {
 	repo := newUpdateMockRepo()
 	id := uuid.New()
-	repo.verbatims[id] = &entities.Verbatim{ID: id, Content: "original", Wing: "w"}
+	seedUpdateMockRepo(repo, id, "original", "w")
 	repo.storeFpErr = errors.New("fp store failed")
 
 	uc := NewUpdateMemory(repo, &mockUpdateExtractor{}, &mockUpdateVectorStore{})
@@ -312,7 +340,7 @@ func TestUpdateMemory_StoreFingerprintTxFailure(t *testing.T) {
 func TestUpdateMemory_StoreEmbeddingTxFailure(t *testing.T) {
 	repo := newUpdateMockRepo()
 	id := uuid.New()
-	repo.verbatims[id] = &entities.Verbatim{ID: id, Content: "original", Wing: "w"}
+	seedUpdateMockRepo(repo, id, "original", "w")
 	repo.storeEmbErr = errors.New("emb store failed")
 
 	uc := NewUpdateMemory(repo, &mockUpdateExtractor{}, &mockUpdateVectorStore{})
@@ -325,7 +353,7 @@ func TestUpdateMemory_StoreEmbeddingTxFailure(t *testing.T) {
 func TestUpdateMemory_CommitFailure(t *testing.T) {
 	repo := newUpdateMockRepo()
 	id := uuid.New()
-	repo.verbatims[id] = &entities.Verbatim{ID: id, Content: "original", Wing: "w"}
+	seedUpdateMockRepo(repo, id, "original", "w")
 	repo.beginRolledBack = true // tx is pre-rolled-back → Commit will fail
 
 	uc := NewUpdateMemory(repo, &mockUpdateExtractor{}, &mockUpdateVectorStore{})
@@ -338,7 +366,7 @@ func TestUpdateMemory_CommitFailure(t *testing.T) {
 func TestUpdateMemory_NilTxFallback(t *testing.T) {
 	repo := newUpdateMockRepo()
 	id := uuid.New()
-	repo.verbatims[id] = &entities.Verbatim{ID: id, Content: "original", Wing: "w"}
+	seedUpdateMockRepo(repo, id, "original", "w")
 	repo.beginReturnsNil = true // triggers the else branch in Execute
 
 	uc := NewUpdateMemory(repo, &mockUpdateExtractor{}, &mockUpdateVectorStore{})
@@ -357,7 +385,7 @@ func TestUpdateMemory_NilTxFallback(t *testing.T) {
 func TestUpdateMemory_RejectsInvalidContentBeforeExtraction(t *testing.T) {
 	repo := newUpdateMockRepo()
 	id := uuid.New()
-	repo.verbatims[id] = &entities.Verbatim{ID: id, Content: "original", Wing: "w"}
+	seedUpdateMockRepo(repo, id, "original", "w")
 
 	uc := NewUpdateMemory(repo, &mockUpdateExtractor{}, &mockUpdateVectorStore{})
 	if _, err := uc.Execute(context.Background(), UpdateMemoryInput{ID: id, Content: ""}); err == nil {

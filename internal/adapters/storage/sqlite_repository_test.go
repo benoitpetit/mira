@@ -969,6 +969,67 @@ func TestGetFingerprintByVerbatimID(t *testing.T) {
 	}
 }
 
+func TestGetFingerprintByVerbatimIDReturnsLatestFingerprint(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	v := entities.NewVerbatim("fingerprint history", "wing", nil)
+	if err := repo.StoreVerbatim(ctx, v); err != nil {
+		t.Fatalf("StoreVerbatim: %v", err)
+	}
+	older := entities.NewFingerprint(v.ID, valueobjects.TypeFact, "hash1")
+	older.ExtractedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	newer := entities.NewFingerprint(v.ID, valueobjects.TypePreference, "hash2")
+	newer.ExtractedAt = older.ExtractedAt.Add(time.Hour)
+	if err := repo.StoreFingerprint(ctx, older); err != nil {
+		t.Fatalf("StoreFingerprint(older): %v", err)
+	}
+	if err := repo.StoreFingerprint(ctx, newer); err != nil {
+		t.Fatalf("StoreFingerprint(newer): %v", err)
+	}
+
+	got, err := repo.GetFingerprintByVerbatimID(ctx, v.ID)
+	if err != nil {
+		t.Fatalf("GetFingerprintByVerbatimID: %v", err)
+	}
+	if got.ID != newer.ID || got.Type != valueobjects.TypePreference {
+		t.Fatalf("fingerprint = %s/%s, want latest %s/%s", got.ID, got.Type, newer.ID, valueobjects.TypePreference)
+	}
+}
+
+func TestGetFingerprintByVerbatimIDBreaksTimestampTiesByID(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	v := entities.NewVerbatim("fingerprint tie", "wing", nil)
+	if err := repo.StoreVerbatim(ctx, v); err != nil {
+		t.Fatalf("StoreVerbatim: %v", err)
+	}
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	first := entities.NewFingerprint(v.ID, valueobjects.TypeFact, "hash")
+	first.ID = uuid.MustParse("00000000-0000-0000-0000-000000000001")
+	first.ExtractedAt = at
+	last := entities.NewFingerprint(v.ID, valueobjects.TypeDecision, "hash")
+	last.ID = uuid.MustParse("00000000-0000-0000-0000-000000000002")
+	last.ExtractedAt = at
+	if err := repo.StoreFingerprint(ctx, first); err != nil {
+		t.Fatalf("StoreFingerprint(first): %v", err)
+	}
+	if err := repo.StoreFingerprint(ctx, last); err != nil {
+		t.Fatalf("StoreFingerprint(last): %v", err)
+	}
+
+	got, err := repo.GetFingerprintByVerbatimID(ctx, v.ID)
+	if err != nil {
+		t.Fatalf("GetFingerprintByVerbatimID: %v", err)
+	}
+	if got.ID != last.ID || got.Type != valueobjects.TypeDecision {
+		t.Fatalf("fingerprint = %s/%s, want ID tie-break %s/%s", got.ID, got.Type, last.ID, valueobjects.TypeDecision)
+	}
+}
+
 func TestGetConsequencesAndParents(t *testing.T) {
 	repo, cleanup := setupTestDB(t)
 	defer cleanup()

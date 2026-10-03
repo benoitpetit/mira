@@ -71,6 +71,14 @@ func (uc *UpdateMemory) Execute(ctx context.Context, input UpdateMemoryInput) (*
 	}).ValidateWithMaxContentLength(uc.maxContentLength); err != nil {
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
+	declaredFingerprint, err := uc.repo.GetFingerprintByVerbatimID(ctx, input.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load existing fingerprint: %w", err)
+	}
+	if declaredFingerprint == nil || !declaredFingerprint.Type.IsValid() {
+		return nil, fmt.Errorf("cannot preserve invalid existing memory type")
+	}
+	declaredType := declaredFingerprint.Type
 
 	// Work on a copy so an extractor or transaction failure cannot mutate a
 	// repository/mock object before the replacement is committed.
@@ -79,10 +87,15 @@ func (uc *UpdateMemory) Execute(ctx context.Context, input UpdateMemoryInput) (*
 	verbatim = &updated
 
 	// 3. Regenerate fingerprint and embedding
-	fp, emb, err := uc.extractor.ExtractPipeline(ctx, verbatim, nil)
+	fp, emb, err := uc.extractor.ExtractPipeline(ctx, verbatim, &declaredType)
 	if err != nil {
 		return nil, fmt.Errorf("extraction failed: %w", err)
 	}
+	// The update changes content, not the memory's declared type. Keep both the
+	// typed column and structured representation aligned even if an extractor
+	// ignores the forced type argument.
+	fp.Type = declaredType
+	fp.Data.Type = string(declaredType)
 
 	// 4. Atomically delete old records and insert new ones in a single transaction.
 	//    If the insert fails, the transaction rolls back and the original verbatim

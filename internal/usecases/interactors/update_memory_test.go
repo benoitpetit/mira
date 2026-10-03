@@ -63,6 +63,27 @@ func (m *taggingUpdateExtractor) ExtractPipeline(_ context.Context, v *entities.
 
 func (m *taggingUpdateExtractor) ModelHash() string { return "test-hash" }
 
+type declaredTypeUpdateExtractor struct {
+	forcedType *valueobjects.MemoryType
+}
+
+func (e *declaredTypeUpdateExtractor) ExtractPipeline(_ context.Context, v *entities.Verbatim, forcedType *valueobjects.MemoryType) (*entities.Fingerprint, *entities.Embedding, error) {
+	if forcedType != nil {
+		forcedCopy := *forcedType
+		e.forcedType = &forcedCopy
+	}
+	memType := valueobjects.TypeDebugLog
+	if forcedType != nil {
+		memType = *forcedType
+	}
+	fp := entities.NewFingerprint(v.ID, memType, "test-hash")
+	fp.Data.Type = string(memType)
+	fp.FactCount = 1
+	return fp, entities.NewEmbedding(v.ID, "test-hash", make([]float32, 4)), nil
+}
+
+func (e *declaredTypeUpdateExtractor) ModelHash() string { return "test-hash" }
+
 // mockUpdateVectorStore discards all vector operations.
 type mockUpdateVectorStore struct{}
 
@@ -171,6 +192,56 @@ func TestUpdateMemory_Success(t *testing.T) {
 	}
 	if stored.Content != "updated content" {
 		t.Errorf("DB content mismatch: want %q, got %q", "updated content", stored.Content)
+	}
+}
+
+func TestUpdateMemoryPreservesExistingFingerprintType(t *testing.T) {
+	repo, cleanup := setupUpdateTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	original := entities.NewVerbatim("original preference", "test-wing", nil)
+	fp := entities.NewFingerprint(original.ID, valueobjects.TypePreference, "test-hash")
+	fp.Data.Type = string(valueobjects.TypePreference)
+	emb := entities.NewEmbedding(original.ID, "test-hash", make([]float32, 4))
+	tx, err := repo.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.StoreVerbatimTx(ctx, tx, original); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := repo.StoreFingerprintTx(ctx, tx, fp); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := repo.StoreEmbeddingTx(ctx, tx, emb); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	extractor := &declaredTypeUpdateExtractor{}
+	uc := NewUpdateMemory(repo, extractor, &mockUpdateVectorStore{})
+	out, err := uc.Execute(ctx, UpdateMemoryInput{ID: original.ID, Content: "updated content that looks like a debug log"})
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if extractor.forcedType == nil || *extractor.forcedType != valueobjects.TypePreference {
+		t.Fatalf("forced type = %v, want %q", extractor.forcedType, valueobjects.TypePreference)
+	}
+	if out.Verbatim == nil {
+		t.Fatal("expected updated verbatim")
+	}
+	updatedFP, err := repo.GetFingerprintByVerbatimID(ctx, original.ID)
+	if err != nil {
+		t.Fatalf("GetFingerprintByVerbatimID: %v", err)
+	}
+	if updatedFP.Type != valueobjects.TypePreference || updatedFP.Data.Type != string(valueobjects.TypePreference) {
+		t.Fatalf("updated fingerprint type = %q (data %q), want %q", updatedFP.Type, updatedFP.Data.Type, valueobjects.TypePreference)
 	}
 }
 
