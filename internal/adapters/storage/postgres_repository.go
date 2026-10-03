@@ -706,33 +706,53 @@ func (r *PostgreSQLRepository) GetAllModels(ctx context.Context) ([]string, erro
 func (r *PostgreSQLRepository) GetStats(ctx context.Context) (*valueobjects.Stats, error) {
 	stats := valueobjects.NewStats()
 
-	_ = r.db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(token_count), 0) FROM verbatim`).Scan(&stats.VerbatimCount, &stats.TotalTokens)
-	_ = r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM fingerprints`).Scan(&stats.FingerprintCount)
-	_ = r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM embeddings`).Scan(&stats.EmbeddingCount)
-	_ = r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM causal_nodes`).Scan(&stats.CausalNodeCount)
-	_ = r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM causal_edges`).Scan(&stats.CausalEdgeCount)
-
-	rows, _ := r.db.QueryContext(ctx, `SELECT ftype, COUNT(*) FROM fingerprints GROUP BY ftype`)
-	if rows != nil {
-		defer rows.Close()
-		for rows.Next() {
-			var t string
-			var count int
-			if err := rows.Scan(&t, &count); err == nil {
-				stats.TypeCounts[t] = count
-			}
-		}
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(token_count), 0) FROM verbatim`).Scan(&stats.VerbatimCount, &stats.TotalTokens); err != nil {
+		return nil, fmt.Errorf("get stats verbatim totals: %w", err)
+	}
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM fingerprints`).Scan(&stats.FingerprintCount); err != nil {
+		return nil, fmt.Errorf("get stats fingerprint count: %w", err)
+	}
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM embeddings`).Scan(&stats.EmbeddingCount); err != nil {
+		return nil, fmt.Errorf("get stats embedding count: %w", err)
+	}
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM causal_nodes`).Scan(&stats.CausalNodeCount); err != nil {
+		return nil, fmt.Errorf("get stats causal node count: %w", err)
+	}
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM causal_edges`).Scan(&stats.CausalEdgeCount); err != nil {
+		return nil, fmt.Errorf("get stats causal edge count: %w", err)
 	}
 
-	row, _ := r.db.QueryContext(ctx, `SELECT DISTINCT wing FROM verbatim ORDER BY wing LIMIT 20`)
-	if row != nil {
-		defer row.Close()
-		for row.Next() {
-			var wing string
-			if err := row.Scan(&wing); err == nil {
-				stats.ActiveWings = append(stats.ActiveWings, wing)
-			}
+	typeRows, err := r.db.QueryContext(ctx, `SELECT ftype, COUNT(*) FROM fingerprints GROUP BY ftype`)
+	if err != nil {
+		return nil, fmt.Errorf("get stats type counts: %w", err)
+	}
+	defer typeRows.Close()
+	for typeRows.Next() {
+		var t string
+		var count int
+		if err := typeRows.Scan(&t, &count); err != nil {
+			return nil, fmt.Errorf("scan stats type count: %w", err)
 		}
+		stats.TypeCounts[t] = count
+	}
+	if err := typeRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate stats type counts: %w", err)
+	}
+
+	wingRows, err := r.db.QueryContext(ctx, `SELECT DISTINCT wing FROM verbatim ORDER BY wing LIMIT 20`)
+	if err != nil {
+		return nil, fmt.Errorf("get stats active wings: %w", err)
+	}
+	defer wingRows.Close()
+	for wingRows.Next() {
+		var wing string
+		if err := wingRows.Scan(&wing); err != nil {
+			return nil, fmt.Errorf("scan stats active wing: %w", err)
+		}
+		stats.ActiveWings = append(stats.ActiveWings, wing)
+	}
+	if err := wingRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate stats active wings: %w", err)
 	}
 
 	return stats, nil

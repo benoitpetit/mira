@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -423,6 +424,26 @@ func TestGetStats(t *testing.T) {
 	}
 	if stats.FingerprintCount != 1 {
 		t.Errorf("FingerprintCount = %d, want 1", stats.FingerprintCount)
+	}
+}
+
+func TestGetStatsReturnsDatabaseErrors(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	if err := repo.Close(); err != nil {
+		t.Fatalf("close repository: %v", err)
+	}
+
+	stats, err := repo.GetStats(context.Background())
+	if err == nil {
+		t.Fatal("GetStats() error = nil after database close")
+	}
+	if stats != nil {
+		t.Fatalf("GetStats() stats = %#v after query failure, want nil", stats)
+	}
+	if !strings.Contains(err.Error(), "verbatim totals") {
+		t.Fatalf("GetStats() error = %q, want informative query context", err)
 	}
 }
 
