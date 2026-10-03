@@ -22,15 +22,19 @@ import (
 // CybertronEmbedder uses Cybertron for real embeddings with a model pool
 // to allow concurrent encoding without global serialization.
 type CybertronEmbedder struct {
-	modelPool chan textencoding.Interface
-	allModels []textencoding.Interface
-	modelsDir string
-	modelName string
-	dimension int
-	closeOnce sync.Once
-	closed    bool
-	encodeWG  sync.WaitGroup
-	mu        sync.Mutex
+	modelPool       chan textencoding.Interface
+	allModels       []textencoding.Interface
+	modelsDir       string
+	modelName       string
+	dimension       int
+	closeOnce       sync.Once
+	closeDone       chan struct{}
+	closeErr        error
+	closed          bool
+	lifecycleCtx    context.Context
+	lifecycleCancel context.CancelFunc
+	encodeWG        sync.WaitGroup
+	mu              sync.Mutex
 }
 
 // CybertronEmbedderOptions configures the embedder
@@ -131,13 +135,16 @@ func NewCybertronEmbedder(opts CybertronEmbedderOptions) (*CybertronEmbedder, er
 	for _, mi := range models {
 		pool <- mi
 	}
+	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
 
 	return &CybertronEmbedder{
-		modelPool: pool,
-		allModels: models,
-		modelsDir: opts.ModelsDir,
-		modelName: opts.ModelName,
-		dimension: opts.Dimension,
+		modelPool:       pool,
+		allModels:       models,
+		modelsDir:       opts.ModelsDir,
+		modelName:       opts.ModelName,
+		dimension:       opts.Dimension,
+		lifecycleCtx:    lifecycleCtx,
+		lifecycleCancel: lifecycleCancel,
 	}, nil
 }
 
@@ -166,31 +173,31 @@ func (c *CybertronEmbedder) Encode(ctx context.Context, text string) ([]float32,
 		c.mu.Unlock()
 		return make([]float32, c.dimension), nil
 	}
+	if c.lifecycleCtx == nil {
+		c.lifecycleCtx, c.lifecycleCancel = context.WithCancel(context.Background())
+	}
+	encodeCtx, encodeCancel := context.WithCancel(ctx)
+	stopLifecycleCancel := context.AfterFunc(c.lifecycleCtx, encodeCancel)
 	c.encodeWG.Add(1)
 	c.mu.Unlock()
 	defer c.encodeWG.Done()
+	defer encodeCancel()
+	defer stopLifecycleCancel()
 
 	var model textencoding.Interface
 	select {
 	case model = <-c.modelPool:
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	case <-encodeCtx.Done():
+		return nil, encodeCtx.Err()
 	}
 
-	result, err := model.Encode(ctx, text, int(bert.MeanPooling))
+	result, err := model.Encode(encodeCtx, text, int(bert.MeanPooling))
 
-	// Return model to pool
-	select {
-	case c.modelPool <- model:
-	case <-ctx.Done():
-		// Still try to return the model to avoid leaking it
-		select {
-		case c.modelPool <- model:
-		default:
-		}
-		if err == nil {
-			err = ctx.Err()
-		}
+	// The pool has capacity for every model, so a checked-out model always has
+	// a slot available when returned. Keep it available for the finalizer.
+	c.modelPool <- model
+	if err == nil && encodeCtx.Err() != nil {
+		err = encodeCtx.Err()
 	}
 
 	if err != nil {
@@ -220,23 +227,44 @@ func (c *CybertronEmbedder) Encode(ctx context.Context, text string) ([]float32,
 
 // Close releases all model instances
 func (c *CybertronEmbedder) Close() error {
+	return c.CloseContext(context.Background())
+}
+
+// CloseContext prevents new encodes and waits for active encodes to finish
+// before finalizing models. If ctx expires, model cleanup continues in the
+// background and no active model is finalized early.
+func (c *CybertronEmbedder) CloseContext(ctx context.Context) error {
 	c.closeOnce.Do(func() {
 		c.mu.Lock()
 		c.closed = true
+		if c.lifecycleCancel != nil {
+			c.lifecycleCancel()
+		}
 		c.mu.Unlock()
-		c.encodeWG.Wait()
+		c.closeDone = make(chan struct{})
 
-		// All encoders have returned their models before the pool is drained.
-		drained := make([]textencoding.Interface, 0, len(c.allModels))
-		for i := 0; i < len(c.allModels); i++ {
-			drained = append(drained, <-c.modelPool)
-		}
-		for _, m := range drained {
-			tasks.Finalize(m)
-		}
-		close(c.modelPool)
+		go func() {
+			c.encodeWG.Wait()
+
+			// All encoders have returned their models before the pool is drained.
+			drained := make([]textencoding.Interface, 0, len(c.allModels))
+			for i := 0; i < len(c.allModels); i++ {
+				drained = append(drained, <-c.modelPool)
+			}
+			for _, m := range drained {
+				tasks.Finalize(m)
+			}
+			close(c.modelPool)
+			close(c.closeDone)
+		}()
 	})
-	return nil
+
+	select {
+	case <-c.closeDone:
+		return c.closeErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // ModelName returns the model name

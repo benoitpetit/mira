@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,6 +34,34 @@ type closeTrackingRepository struct {
 	ports.Repository
 	err   error
 	calls int
+}
+
+type blockingCloseEmbedder struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+	calls   atomic.Int32
+}
+
+func (e *blockingCloseEmbedder) Encode(context.Context, string) ([]float32, error) {
+	return nil, nil
+}
+
+func (e *blockingCloseEmbedder) Close() error {
+	e.calls.Add(1)
+	e.once.Do(func() { close(e.started) })
+	<-e.release
+	return nil
+}
+
+type channelCloseRepository struct {
+	ports.Repository
+	closed chan struct{}
+}
+
+func (r *channelCloseRepository) Close() error {
+	close(r.closed)
+	return nil
 }
 
 func (r *closeTrackingRepository) Close() error {
@@ -95,6 +125,81 @@ func TestApplicationCloseClosesEmbedderAndJoinsErrors(t *testing.T) {
 	}
 	if embedder.calls != 1 || repository.calls != 1 {
 		t.Errorf("second Close repeated cleanup: embedder=%d repository=%d", embedder.calls, repository.calls)
+	}
+}
+
+func TestApplicationCloseContextReturnsOnDeadlineAndFinishesCleanupLater(t *testing.T) {
+	embedder := &blockingCloseEmbedder{started: make(chan struct{}), release: make(chan struct{})}
+	repository := &channelCloseRepository{closed: make(chan struct{})}
+	a := &Application{embedder: embedder, repository: repository}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	if err := a.CloseContext(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("CloseContext error = %v, want deadline exceeded", err)
+	}
+	select {
+	case <-embedder.started:
+	case <-time.After(time.Second):
+		t.Fatal("background cleanup did not start embedder close")
+	}
+	select {
+	case <-repository.closed:
+		t.Fatal("repository closed before embedder cleanup completed")
+	default:
+	}
+
+	close(embedder.release)
+	select {
+	case <-repository.closed:
+	case <-time.After(time.Second):
+		t.Fatal("cleanup did not finish after embedder close returned")
+	}
+	if got := embedder.calls.Load(); got != 1 {
+		t.Fatalf("embedder Close calls = %d, want 1", got)
+	}
+	if err := a.Close(); err != nil {
+		t.Fatalf("Close after asynchronous cleanup = %v", err)
+	}
+}
+
+func TestApplicationRunReturnsAfterShutdownTimeoutWhileCleanupContinues(t *testing.T) {
+	embedder := &blockingCloseEmbedder{started: make(chan struct{}), release: make(chan struct{})}
+	repository := &channelCloseRepository{closed: make(chan struct{})}
+	cfg := config.Default()
+	cfg.MCP.Transport = "unsupported-test-transport"
+	a := &Application{config: cfg, embedder: embedder, repository: repository}
+
+	startedAt := time.Now()
+	runDone := make(chan error, 1)
+	go func() { runDone <- a.Run() }()
+	select {
+	case <-embedder.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not start deferred cleanup")
+	}
+	select {
+	case err := <-runDone:
+		if err == nil {
+			t.Fatal("Run error = nil, want unsupported transport error")
+		}
+		if elapsed := time.Since(startedAt); elapsed > 7*time.Second {
+			t.Fatalf("Run took %s to return after bounded shutdown, want <= 7s", elapsed)
+		}
+	case <-time.After(7 * time.Second):
+		t.Fatal("Run remained blocked past its shutdown timeout")
+	}
+	select {
+	case <-repository.closed:
+		t.Fatal("repository closed before embedder cleanup completed")
+	default:
+	}
+
+	close(embedder.release)
+	select {
+	case <-repository.closed:
+	case <-time.After(time.Second):
+		t.Fatal("deferred cleanup did not finish after embedder close returned")
 	}
 }
 

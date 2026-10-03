@@ -69,6 +69,8 @@ type Application struct {
 	metricsServer       *http.Server
 	startTime           time.Time
 	closeOnce           sync.Once
+	closeDone           chan struct{}
+	closeErr            error
 	buildCancel         context.CancelFunc // cancels HNSW build goroutine
 }
 
@@ -584,56 +586,85 @@ func (a *Application) initRestAPI() {
 // Close cleans up resources. It is safe to call multiple times; only the first
 // call performs actual cleanup (subsequent calls are no-ops).
 func (a *Application) Close() error {
-	var closeErr error
+	return a.CloseContext(context.Background())
+}
+
+// CloseContext starts cleanup once and bounds how long the caller waits.
+// Cleanup continues in the background when ctx expires.
+func (a *Application) CloseContext(ctx context.Context) error {
+	started := false
 	a.closeOnce.Do(func() {
-		if a.metricsServer != nil {
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := a.metricsServer.Shutdown(shutdownCtx); err != nil {
-				slog.Warn("observability server shutdown error", "error", err)
+		started = true
+		a.closeDone = make(chan struct{})
+		go func() {
+			a.closeErr = a.closeResources()
+			if a.closeErr != nil {
+				slog.Warn("application cleanup completed with errors", "error", a.closeErr)
 			}
-		}
-		if a.restServer != nil {
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := a.restServer.Shutdown(shutdownCtx); err != nil {
-				slog.Warn("rest server shutdown error", "error", err)
-			}
-		}
-
-		// Cancel the HNSW build goroutine if it's running
-		if a.buildCancel != nil {
-			a.buildCancel()
-			a.buildCancel = nil
-		}
-
-		if a.hnswIndex != nil {
-			slog.Info("saving hnsw index to disk")
-			if err := a.hnswIndex.Save(); err != nil {
-				slog.Warn("failed to save hnsw index", "error", err)
-			} else {
-				slog.Info("hnsw index saved", "vectors", a.hnswIndex.Stats())
-			}
-		}
-
-		if a.webhookManager != nil {
-			a.webhookManager.Stop()
-		}
-		if embedder, ok := a.embedder.(ports.Closer); ok {
-			if err := embedder.Close(); err != nil {
-				closeErr = errors.Join(closeErr, fmt.Errorf("failed to close embedder: %w", err))
-			}
-		}
-
-		// Agent memory shares the repository connection and has no independent
-		// close operation. The repository remains the single owner of storage.
-
-		if a.repository != nil {
-			if err := a.repository.Close(); err != nil {
-				closeErr = errors.Join(closeErr, fmt.Errorf("failed to close repository: %w", err))
-			}
-		}
+			close(a.closeDone)
+		}()
 	})
+
+	select {
+	case <-a.closeDone:
+		if started {
+			return a.closeErr
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (a *Application) closeResources() error {
+	var closeErr error
+	if a.metricsServer != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := a.metricsServer.Shutdown(shutdownCtx); err != nil {
+			slog.Warn("observability server shutdown error", "error", err)
+		}
+	}
+	if a.restServer != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := a.restServer.Shutdown(shutdownCtx); err != nil {
+			slog.Warn("rest server shutdown error", "error", err)
+		}
+	}
+
+	// Cancel the HNSW build goroutine if it's running
+	if a.buildCancel != nil {
+		a.buildCancel()
+		a.buildCancel = nil
+	}
+
+	if a.hnswIndex != nil {
+		slog.Info("saving hnsw index to disk")
+		if err := a.hnswIndex.Save(); err != nil {
+			slog.Warn("failed to save hnsw index", "error", err)
+		} else {
+			slog.Info("hnsw index saved", "vectors", a.hnswIndex.Stats())
+		}
+	}
+
+	if a.webhookManager != nil {
+		a.webhookManager.Stop()
+	}
+	if embedder, ok := a.embedder.(ports.Closer); ok {
+		if err := embedder.Close(); err != nil {
+			closeErr = errors.Join(closeErr, fmt.Errorf("failed to close embedder: %w", err))
+		}
+	}
+
+	// Agent memory shares the repository connection and has no independent
+	// close operation. The repository remains the single owner of storage.
+
+	if a.repository != nil {
+		if err := a.repository.Close(); err != nil {
+			closeErr = errors.Join(closeErr, fmt.Errorf("failed to close repository: %w", err))
+		}
+	}
 	return closeErr
 }
 
@@ -825,7 +856,19 @@ func boolToInt(value bool) int {
 
 // Run starts the MCP server
 func (a *Application) Run() error {
-	defer a.Close()
+	var shutdownCtx context.Context
+	var shutdownCancel context.CancelFunc
+	defer func() {
+		if shutdownCtx == nil {
+			shutdownCtx, shutdownCancel = context.WithTimeout(context.Background(), 5*time.Second)
+		}
+		if shutdownCancel != nil {
+			defer shutdownCancel()
+		}
+		if err := a.CloseContext(shutdownCtx); err != nil {
+			slog.Warn("application cleanup did not finish before shutdown deadline", "error", err)
+		}
+	}()
 
 	if a.webhookManager != nil {
 		a.webhookManager.Start()
@@ -914,8 +957,7 @@ func (a *Application) Run() error {
 	select {
 	case sig := <-sigChan:
 		slog.Info("received shutdown signal", "signal", sig)
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer shutdownCancel()
+		shutdownCtx, shutdownCancel = context.WithTimeout(context.Background(), 5*time.Second)
 		if sseServer != nil {
 			if err := sseServer.Shutdown(shutdownCtx); err != nil {
 				slog.Warn("sse server shutdown error", "error", err)
@@ -926,17 +968,10 @@ func (a *Application) Run() error {
 				slog.Warn("http server shutdown error", "error", err)
 			}
 		}
-		done := make(chan error, 1)
-		go func() { done <- a.Close() }()
-		select {
-		case err := <-done:
-			if err != nil {
-				slog.Warn("graceful shutdown completed with error", "error", err)
-			} else {
-				slog.Info("graceful shutdown completed")
-			}
-		case <-shutdownCtx.Done():
-			slog.Warn("graceful shutdown timed out")
+		if err := a.CloseContext(shutdownCtx); err != nil {
+			slog.Warn("graceful shutdown did not finish before deadline", "error", err)
+		} else {
+			slog.Info("graceful shutdown completed")
 		}
 		cancel()
 		return nil

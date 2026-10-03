@@ -19,6 +19,31 @@ type blockingTextEncoder struct {
 	closedBeforeEncode atomic.Bool
 }
 
+type contextAwareTextEncoder struct {
+	started        chan struct{}
+	encodeReturned chan struct{}
+	cancelObserved chan struct{}
+	closeCalls     atomic.Int32
+}
+
+func (m *contextAwareTextEncoder) Encode(ctx context.Context, _ string, _ int) (textencoding.Response, error) {
+	close(m.started)
+	<-ctx.Done()
+	close(m.cancelObserved)
+	close(m.encodeReturned)
+	return textencoding.Response{}, ctx.Err()
+}
+
+func (m *contextAwareTextEncoder) Close() error {
+	select {
+	case <-m.encodeReturned:
+	default:
+		return errors.New("finalized before Encode returned")
+	}
+	m.closeCalls.Add(1)
+	return nil
+}
+
 func (m *blockingTextEncoder) Encode(context.Context, string, int) (textencoding.Response, error) {
 	close(m.started)
 	<-m.release
@@ -132,5 +157,137 @@ func TestCybertronEmbedderCloseWaitsForActiveEncodeAndRejectsNew(t *testing.T) {
 	}
 	if got := model.closeCalls.Load(); got != 1 {
 		t.Errorf("model Close calls = %d, want 1", got)
+	}
+}
+
+func TestCybertronEmbedderCloseContextReturnsOnDeadlineAndFinalizesAfterEncode(t *testing.T) {
+	model := &blockingTextEncoder{
+		started:        make(chan struct{}),
+		release:        make(chan struct{}),
+		encodeReturned: make(chan struct{}),
+	}
+	embedder := &CybertronEmbedder{
+		modelPool: make(chan textencoding.Interface, 1),
+		allModels: []textencoding.Interface{model},
+		dimension: 2,
+	}
+	embedder.modelPool <- model
+
+	encodeDone := make(chan struct{})
+	go func() {
+		defer close(encodeDone)
+		_, _ = embedder.Encode(context.Background(), "in flight")
+	}()
+	select {
+	case <-model.started:
+	case <-time.After(time.Second):
+		t.Fatal("Encode did not start")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	if err := embedder.CloseContext(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("CloseContext error = %v, want deadline exceeded", err)
+	}
+	if got := model.closeCalls.Load(); got != 0 {
+		t.Fatalf("model finalized %d times before Encode returned", got)
+	}
+
+	close(model.release)
+	select {
+	case <-encodeDone:
+	case <-time.After(time.Second):
+		t.Fatal("Encode did not finish after release")
+	}
+	deadline := time.Now().Add(time.Second)
+	for model.closeCalls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if model.closedBeforeEncode.Load() {
+		t.Fatal("model finalized before Encode returned")
+	}
+	if got := model.closeCalls.Load(); got != 1 {
+		t.Fatalf("model Close calls = %d, want 1", got)
+	}
+}
+
+func TestCybertronEmbedderConcurrentCloseContextAndCloseShareCleanup(t *testing.T) {
+	model := &blockingTextEncoder{
+		started:        make(chan struct{}),
+		release:        make(chan struct{}),
+		encodeReturned: make(chan struct{}),
+	}
+	embedder := &CybertronEmbedder{
+		modelPool: make(chan textencoding.Interface, 1),
+		allModels: []textencoding.Interface{model},
+		dimension: 2,
+	}
+	embedder.modelPool <- model
+
+	go func() { _, _ = embedder.Encode(context.Background(), "in flight") }()
+	select {
+	case <-model.started:
+	case <-time.After(time.Second):
+		t.Fatal("Encode did not start")
+	}
+
+	closeReturned := make(chan error, 1)
+	go func() { closeReturned <- embedder.Close() }()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := embedder.CloseContext(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("CloseContext error = %v, want deadline exceeded", err)
+	}
+	close(model.release)
+	select {
+	case err := <-closeReturned:
+		if err != nil {
+			t.Fatalf("Close error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close did not finish after Encode returned")
+	}
+	if got := model.closeCalls.Load(); got != 1 {
+		t.Fatalf("model Close calls = %d, want 1", got)
+	}
+}
+
+func TestCybertronEmbedderCloseCancelsActiveEncodeBeforeFinalizing(t *testing.T) {
+	model := &contextAwareTextEncoder{
+		started:        make(chan struct{}),
+		encodeReturned: make(chan struct{}),
+		cancelObserved: make(chan struct{}),
+	}
+	embedder := &CybertronEmbedder{
+		modelPool: make(chan textencoding.Interface, 1),
+		allModels: []textencoding.Interface{model},
+		dimension: 2,
+	}
+	embedder.modelPool <- model
+
+	encodeDone := make(chan error, 1)
+	go func() {
+		_, err := embedder.Encode(context.Background(), "cancellable")
+		encodeDone <- err
+	}()
+	select {
+	case <-model.started:
+	case <-time.After(time.Second):
+		t.Fatal("Encode did not start")
+	}
+
+	if err := embedder.Close(); err != nil {
+		t.Fatalf("Close error = %v", err)
+	}
+	select {
+	case <-model.cancelObserved:
+	default:
+		t.Fatal("Close did not cancel the active Encode context")
+	}
+	if err := <-encodeDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Encode error = %v, want context canceled", err)
+	}
+	if got := model.closeCalls.Load(); got != 1 {
+		t.Fatalf("model Close calls = %d, want 1", got)
 	}
 }
