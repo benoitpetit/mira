@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1875,6 +1876,20 @@ func TestSQLiteRepository_UpdateVerbatimSummary(t *testing.T) {
 	}
 	if got.SummaryTokenCount != 6 {
 		t.Errorf("SummaryTokenCount = %d, want 6", got.SummaryTokenCount)
+	}
+}
+
+func TestSQLiteRepository_UpdateVerbatimSummaryNotFound(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	err := repo.UpdateVerbatimSummary(context.Background(), uuid.New(), "summary", 1)
+	var notFound *NotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("UpdateVerbatimSummary error = %v, want verbatim not-found error", err)
+	}
+	if notFound.Resource != "verbatim" {
+		t.Errorf("not-found resource = %q, want verbatim", notFound.Resource)
 	}
 }
 

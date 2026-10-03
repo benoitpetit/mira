@@ -224,11 +224,21 @@ func (r *PostgreSQLRepository) GetVerbatimByID(ctx context.Context, id uuid.UUID
 
 // UpdateVerbatimSummary implements VerbatimRepository
 func (r *PostgreSQLRepository) UpdateVerbatimSummary(ctx context.Context, id uuid.UUID, summary string, summaryTokens int) error {
-	_, err := r.db.ExecContext(ctx,
+	result, err := r.db.ExecContext(ctx,
 		`UPDATE verbatim SET summary = $1, summary_tokens = $2 WHERE id = $3`,
 		summary, summaryTokens, id,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("get updated verbatim summary rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return &NotFoundError{Resource: "verbatim"}
+	}
+	return nil
 }
 
 // StoreFingerprint implements FingerprintRepository
