@@ -41,6 +41,9 @@ func NewGetTimeline(statsRepo ports.StatsRepository) *GetTimeline {
 
 // Execute retrieves the timeline
 func (uc *GetTimeline) Execute(ctx context.Context, input GetTimelineInput) (*GetTimelineOutput, error) {
+	if input.Type != nil && !input.Type.IsValid() {
+		return nil, fmt.Errorf("invalid memory type %q", *input.Type)
+	}
 	if input.Since != nil {
 		if _, err := valueobjects.ParseTimelineBound(*input.Since, false); err != nil {
 			return nil, fmt.Errorf("invalid since value %q: %w", *input.Since, err)

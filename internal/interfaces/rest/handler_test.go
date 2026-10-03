@@ -972,6 +972,20 @@ func TestHandleTimeline_AllParams(t *testing.T) {
 	}
 }
 
+func TestHandleTimeline_InvalidTypeIsBadRequest(t *testing.T) {
+	handler := rest.NewHandler(
+		&fakeStore{}, &fakeRecall{}, &fakeLoad{}, &fakeUpdate{}, &fakeDelete{},
+		&fakeSearch{}, &fakeConsolidate{}, &fakeClear{}, &fakeTimeline{},
+		&fakeArchive{}, &fakeCausal{}, &fakeStatus{}, nil, nil,
+	)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/timeline?type=invalid_type", nil)
+	rest.NewServer(handler, ":0", "", nil, time.Second, time.Second).Handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body: %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+}
+
 // ── handleCausal error paths ──────────────────────────────────────────────────
 
 func TestHandleCausal_NotFound(t *testing.T) {

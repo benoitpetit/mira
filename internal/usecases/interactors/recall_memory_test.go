@@ -1390,3 +1390,23 @@ func TestScoreCandidatesAppliesBoundedBeliefCalibration(t *testing.T) {
 		t.Fatalf("score = %.3f, want normalized range [0,1]", candidate.Score)
 	}
 }
+
+func TestScoreCandidatesTagBoostUsesVerbatimID(t *testing.T) {
+	uc := NewRecallMemory(nil, nil, nil, nil, nil, DefaultRecallMemoryConfig(), nil, nil)
+	candidate := createTestCandidateWithData("tagged", time.Now(), 1, 100)
+	verbatimID := candidate.Verbatim.ID
+	fingerprintID := uuid.New()
+	candidate.Memory.ID = fingerprintID
+	candidate.Embedding = []float32{1}
+
+	uc.scoreCandidates([]*entities.Candidate{candidate}, []float32{0, 1}, map[uuid.UUID]bool{verbatimID: true})
+	if candidate.Relevance != 0.05 {
+		t.Fatalf("relevance = %.2f, want tag boost 0.05 keyed by verbatim ID", candidate.Relevance)
+	}
+
+	candidate.Relevance = 0
+	uc.scoreCandidates([]*entities.Candidate{candidate}, []float32{0, 1}, map[uuid.UUID]bool{fingerprintID: true})
+	if candidate.Relevance != 0 {
+		t.Fatalf("relevance = %.2f, want no boost keyed only by fingerprint ID", candidate.Relevance)
+	}
+}

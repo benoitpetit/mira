@@ -421,3 +421,14 @@ func TestGetTimeline_AllFilters(t *testing.T) {
 
 // Ensure interface is implemented
 var _ ports.StatsRepository = (*mockStatsRepositoryForTimeline)(nil)
+
+func TestGetTimeline_RejectsInvalidMemoryType(t *testing.T) {
+	repo := &mockStatsRepositoryForTimeline{}
+	interactor := NewGetTimeline(repo)
+	invalid := valueobjects.MemoryType("invalid_type")
+
+	_, err := interactor.Execute(context.Background(), GetTimelineInput{Type: &invalid})
+	if err == nil || !strings.Contains(err.Error(), "invalid memory type") {
+		t.Fatalf("Execute error = %v, want invalid memory type", err)
+	}
+}

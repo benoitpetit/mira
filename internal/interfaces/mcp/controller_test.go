@@ -1597,6 +1597,29 @@ func TestHandleStore_ExecuteError(t *testing.T) {
 	}
 }
 
+func TestHandleStore_RejectsInvalidMemoryType(t *testing.T) {
+	controller := newTestController(func(c *Controller) { c.storeMemory = &mockStoreMemory{} })
+	_, err := controller.handleStore(context.Background(), map[string]interface{}{
+		"content": "hello",
+		"wing":    "test-wing",
+		"type":    "invalid_type",
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid type") {
+		t.Fatalf("handleStore error = %v, want invalid type", err)
+	}
+}
+
+func TestHandleTimeline_RejectsInvalidMemoryType(t *testing.T) {
+	controller := newTestController(func(c *Controller) { c.getTimeline = &mockGetTimeline{} })
+	_, err := controller.handleTimeline(context.Background(), map[string]interface{}{
+		"wing": "test-wing",
+		"type": "invalid_type",
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid type") {
+		t.Fatalf("handleTimeline error = %v, want invalid type", err)
+	}
+}
+
 // ============================================================================
 // handleRecall — additional parameter branches
 // ============================================================================

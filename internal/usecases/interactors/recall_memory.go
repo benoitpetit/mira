@@ -695,7 +695,7 @@ func (uc *RecallMemory) scoreCandidates(candidates []*entities.Candidate, queryV
 		}
 
 		// Tag boost (small additive boost for lexical alignment)
-		if tagBoostIDs != nil && tagBoostIDs[c.ID()] {
+		if tagBoostIDs != nil && c.Verbatim != nil && tagBoostIDs[c.Verbatim.ID] {
 			c.Relevance += 0.05
 			if c.Relevance > 1.0 {
 				c.Relevance = 1.0

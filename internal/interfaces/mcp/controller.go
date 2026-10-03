@@ -740,11 +740,16 @@ func (c *Controller) handleStore(ctx context.Context, args map[string]interface{
 
 	var memType *valueobjects.MemoryType
 	if t, ok := args["type"]; ok {
-		if ts, ok := t.(string); ok && ts != "" {
+		ts, isString := t.(string)
+		if !isString {
+			return nil, fmt.Errorf("type must be a string")
+		}
+		if ts != "" {
 			mt := valueobjects.MemoryType(ts)
-			if mt.IsValid() {
-				memType = &mt
+			if !mt.IsValid() {
+				return nil, fmt.Errorf("invalid type %q; valid values: decision, fact, preference, session_note, debug_log", ts)
 			}
+			memType = &mt
 		}
 	}
 	var memoryKind *valueobjects.MemoryKind
@@ -1307,7 +1312,15 @@ func (c *Controller) handleTimeline(ctx context.Context, args map[string]interfa
 		}
 	}
 	if t, ok := args["type"]; ok {
-		if ts, ok := t.(string); ok && ts != "" {
+		ts, isString := t.(string)
+		if !isString {
+			return nil, fmt.Errorf("type must be a string")
+		}
+		if ts != "" {
+			mt := valueobjects.MemoryType(ts)
+			if !mt.IsValid() {
+				return nil, fmt.Errorf("invalid type %q; valid values: decision, fact, preference, session_note, debug_log", ts)
+			}
 			memType = &ts
 		}
 	}

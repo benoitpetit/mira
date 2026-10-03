@@ -546,6 +546,10 @@ func (h *Handler) handleTimeline(w http.ResponseWriter, r *http.Request) {
 	}
 	if v := q.Get("type"); v != "" {
 		mt := valueobjects.MemoryType(v)
+		if !mt.IsValid() {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid type %q; valid values: decision, fact, preference, session_note, debug_log", v))
+			return
+		}
 		input.Type = &mt
 	}
 	if v := q.Get("since"); v != "" {
