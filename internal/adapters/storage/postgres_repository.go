@@ -712,7 +712,7 @@ func (r *PostgreSQLRepository) GetStats(ctx context.Context) (*valueobjects.Stat
 	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM fingerprints`).Scan(&stats.FingerprintCount); err != nil {
 		return nil, fmt.Errorf("get stats fingerprint count: %w", err)
 	}
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM embeddings`).Scan(&stats.EmbeddingCount); err != nil {
+	if err := r.db.QueryRowContext(ctx, activeEmbeddingCountQuery).Scan(&stats.EmbeddingCount); err != nil {
 		return nil, fmt.Errorf("get stats embedding count: %w", err)
 	}
 	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM causal_nodes`).Scan(&stats.CausalNodeCount); err != nil {

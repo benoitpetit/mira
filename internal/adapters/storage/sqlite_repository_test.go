@@ -427,6 +427,34 @@ func TestGetStats(t *testing.T) {
 	}
 }
 
+func TestGetStatsEmbeddingCountMatchesActiveEmbeddings(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	active := storeFullMemory(t, repo, "active embedding", "wing")
+	archived := storeFullMemory(t, repo, "archived embedding", "wing")
+	if err := repo.SetVerbatimLifecycle(ctx, archived.ID, entities.LifecycleArchived, nil); err != nil {
+		t.Fatalf("archive embedding: %v", err)
+	}
+
+	authoritative, err := repo.GetAllEmbeddings(ctx)
+	if err != nil {
+		t.Fatalf("GetAllEmbeddings: %v", err)
+	}
+	if len(authoritative) != 1 || authoritative[0].ID != active.ID {
+		t.Fatalf("GetAllEmbeddings = %#v, want only active embedding %s", authoritative, active.ID)
+	}
+
+	stats, err := repo.GetStats(ctx)
+	if err != nil {
+		t.Fatalf("GetStats: %v", err)
+	}
+	if stats.EmbeddingCount != len(authoritative) {
+		t.Fatalf("EmbeddingCount = %d, active authoritative embeddings = %d", stats.EmbeddingCount, len(authoritative))
+	}
+}
+
 func TestGetStatsReturnsDatabaseErrors(t *testing.T) {
 	repo, cleanup := setupTestDB(t)
 	defer cleanup()
