@@ -547,7 +547,7 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 }
 
 func filterCandidatesValidAt(candidates []*entities.Candidate, at time.Time) []*entities.Candidate {
-	valid := candidates[:0]
+	var valid []*entities.Candidate
 	for _, candidate := range candidates {
 		if candidate != nil && candidate.Memory != nil && candidate.Verbatim != nil && candidate.Verbatim.IsValidAt(at) {
 			valid = append(valid, candidate)
@@ -560,7 +560,7 @@ func filterCandidatesByKind(candidates []*entities.Candidate, kind *valueobjects
 	if kind == nil {
 		return candidates
 	}
-	filtered := candidates[:0]
+	var filtered []*entities.Candidate
 	for _, candidate := range candidates {
 		if candidate != nil && candidate.Memory != nil && candidate.Verbatim != nil && candidate.Verbatim.Kind == *kind {
 			filtered = append(filtered, candidate)

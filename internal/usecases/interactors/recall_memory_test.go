@@ -1361,6 +1361,23 @@ func TestFilterCandidatesValidAt(t *testing.T) {
 	}
 }
 
+func TestFilterCandidatesValidAtDoesNotMutateInputSlice(t *testing.T) {
+	now := time.Date(2026, 4, 15, 12, 0, 0, 0, time.UTC)
+	expired := createTestCandidateWithRelevance("expired", now, 0.9)
+	expiresAt := now.Add(-time.Second)
+	expired.Verbatim.ValidUntil = &expiresAt
+	valid := createTestCandidateWithRelevance("valid", now, 0.8)
+	input := []*entities.Candidate{expired, valid}
+
+	got := filterCandidatesValidAt(input, now)
+	if len(got) != 1 || got[0].ID() != valid.ID() {
+		t.Fatalf("filtered candidates = %v, want only %s", got, valid.ID())
+	}
+	if input[0] != expired || input[1] != valid {
+		t.Fatalf("input slice was mutated: got [%v, %v]", input[0].ID(), input[1].ID())
+	}
+}
+
 func TestFilterCandidatesByKind(t *testing.T) {
 	now := time.Now()
 	user := createTestCandidateWithRelevance("user", now, 0.9)
@@ -1372,6 +1389,24 @@ func TestFilterCandidatesByKind(t *testing.T) {
 	got := filterCandidatesByKind([]*entities.Candidate{user, project}, &kind)
 	if len(got) != 1 || got[0].ID() != user.ID() {
 		t.Fatalf("filtered candidates = %v, want only %s", got, user.ID())
+	}
+}
+
+func TestFilterCandidatesByKindDoesNotMutateInputSlice(t *testing.T) {
+	now := time.Now()
+	project := createTestCandidateWithRelevance("project", now, 0.9)
+	project.Verbatim.Kind = valueobjects.KindProject
+	user := createTestCandidateWithRelevance("user", now, 0.8)
+	user.Verbatim.Kind = valueobjects.KindUser
+	input := []*entities.Candidate{project, user}
+
+	kind := valueobjects.KindUser
+	got := filterCandidatesByKind(input, &kind)
+	if len(got) != 1 || got[0].ID() != user.ID() {
+		t.Fatalf("filtered candidates = %v, want only %s", got, user.ID())
+	}
+	if input[0] != project || input[1] != user {
+		t.Fatalf("input slice was mutated: got [%v, %v]", input[0].ID(), input[1].ID())
 	}
 }
 
