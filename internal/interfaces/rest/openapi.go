@@ -92,6 +92,7 @@ type oaSchema struct {
 	Minimum    *int                `json:"minimum,omitempty"`
 	Maximum    *int                `json:"maximum,omitempty"`
 	Default    *int                `json:"default,omitempty"`
+	MaxItems   *int                `json:"maxItems,omitempty"`
 	Properties map[string]oaSchema `json:"properties,omitempty"`
 	Items      *oaSchema           `json:"items,omitempty"`
 	Required   []string            `json:"required,omitempty"`
@@ -345,6 +346,9 @@ func buildSchemas() map[string]oaSchema {
 	boolean := func() oaSchema { return oaSchema{Type: "boolean"} }
 	uuid := func() oaSchema { return oaSchema{Type: "string", Format: "uuid"} }
 	arr := func(item oaSchema) oaSchema { return oaSchema{Type: "array", Items: &item} }
+	maxIngestItems := maxConversationItems
+	ingestMessages := arr(ref("ConversationMessage"))
+	ingestMessages.MaxItems = &maxIngestItems
 
 	return map[string]oaSchema{
 		"Error": {
@@ -401,7 +405,7 @@ func buildSchemas() map[string]oaSchema {
 		"ConversationIngestRequest": {
 			Type: "object",
 			Properties: map[string]oaSchema{
-				"messages":          arr(ref("ConversationMessage")),
+				"messages":          ingestMessages,
 				"wing":              str(),
 				"room":              str(),
 				"include_assistant": boolean(),

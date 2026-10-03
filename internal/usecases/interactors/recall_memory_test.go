@@ -1,6 +1,7 @@
 package interactors
 
 import (
+	"container/heap"
 	"context"
 	"errors"
 	"fmt"
@@ -73,6 +74,15 @@ func (m *mockRecallCausalGraph) GetChildren(ctx context.Context, nodeID uuid.UUI
 	return nil, nil
 }
 
+type mockRecallRelationGraph struct {
+	mockRecallCausalGraph
+	relation valueobjects.RelationType
+}
+
+func (m *mockRecallRelationGraph) RelationBetween(_ context.Context, fromID, toID uuid.UUID) (valueobjects.RelationType, bool) {
+	return m.relation, m.HasEdge(context.Background(), fromID, toID)
+}
+
 type mockRecallVectorStore struct {
 	candidates []*entities.Candidate
 	searchFunc func(ctx context.Context, vector []float32, limit int, wing, room *string) ([]*entities.Candidate, error)
@@ -88,6 +98,59 @@ func TestCausalRelationFactorUsesConfiguredAlpha(t *testing.T) {
 	}
 	if got := causalRelationFactor(valueobjects.RelContradicts, 0.2); got != 1 {
 		t.Fatalf("contradiction factor = %.2f, want 1.00", got)
+	}
+}
+
+func TestCandidateHeapBreaksScoreTiesByID(t *testing.T) {
+	lowID := &entities.Candidate{Memory: &entities.Fingerprint{ID: uuid.MustParse("11111111-1111-1111-1111-111111111111")}, Score: 0.5}
+	highID := &entities.Candidate{Memory: &entities.Fingerprint{ID: uuid.MustParse("22222222-2222-2222-2222-222222222222")}, Score: 0.5}
+	h := &candidateHeap{candidates: []*entities.Candidate{highID, lowID}}
+	heap.Init(h)
+	if got := heap.Pop(h).(*entities.Candidate); got != lowID {
+		t.Fatal("equal scores should pop the candidate with the lower ID first")
+	}
+}
+
+func TestPruneFallbackBreaksScoreTiesByID(t *testing.T) {
+	uc := &RecallMemory{}
+	highID := &entities.Candidate{Memory: &entities.Fingerprint{ID: uuid.MustParse("22222222-2222-2222-2222-222222222222")}, Relevance: 0.5}
+	lowID := &entities.Candidate{Memory: &entities.Fingerprint{ID: uuid.MustParse("11111111-1111-1111-1111-111111111111")}, Relevance: 0.5}
+	got := uc.pruneCandidatesWithThreshold([]*entities.Candidate{highID, lowID}, 0.9)
+	if len(got) != 2 || got[0] != lowID || got[1] != highID {
+		t.Fatal("fallback candidates with equal scores should sort by ID")
+	}
+}
+
+func TestSelectGreedyDoesNotPruneCausalBoostFromLazyScoring(t *testing.T) {
+	config := DefaultRecallMemoryConfig()
+	config.ThresholdFloor = 0.75
+	config.ThresholdCeiling = 0.75
+	config.SessionBoostBeta = 0
+	config.SessionBoostMax = 1
+	config.DiversityBoostAlpha = 0
+	config.CausalPenaltyAlpha = 0.2
+	first := createTestCandidateWithRelevance("first", time.Now(), 0.99)
+	causal := createTestCandidateWithRelevance("causal", time.Now(), 0.7)
+	for _, candidate := range []*entities.Candidate{first, causal} {
+		candidate.Density = 1
+		candidate.Recency = 1
+		candidate.ExtractionConfidence = 1
+		candidate.ValidationFreshness = 1
+		candidate.LifecycleFactor = 1
+		candidate.BeliefCalibration = 1
+	}
+	graph := &mockRecallRelationGraph{
+		mockRecallCausalGraph: mockRecallCausalGraph{edges: map[string]bool{first.ID().String() + ":" + causal.ID().String(): true}},
+		relation:              valueobjects.RelBecause,
+	}
+	uc := NewRecallMemory(&mockRecallVectorStore{}, &mockRecallOverlapCache{}, graph, &mockRecallEmbedder{}, &mockRecallRenderer{}, config, &mockRecallMetricsCollector{}, nil)
+
+	selected := uc.selectGreedy(context.Background(), []*entities.Candidate{first, causal}, 1000, nil)
+	if len(selected) != 2 {
+		t.Fatalf("selected %d memories, want both", len(selected))
+	}
+	if causal.CausalPenalty != 1.2 {
+		t.Fatalf("causal candidate factor = %v, want lazy causal boost 1.2", causal.CausalPenalty)
 	}
 }
 
@@ -1245,6 +1308,54 @@ func TestApplyReranker_FallbackOnError(t *testing.T) {
 		if math.Abs(c.Relevance-wantRelev[i]) > 1e-9 {
 			t.Errorf("candidate %d: relevance should be unchanged, want %f got %f", i, wantRelev[i], c.Relevance)
 		}
+	}
+}
+
+func TestApplyReranker_FallsBackWhenAnyScoreIsNonFinite(t *testing.T) {
+	for _, invalidScore := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
+		t.Run(fmt.Sprint(invalidScore), func(t *testing.T) {
+			config := DefaultRecallMemoryConfig()
+			config.RerankerTopK = 10
+			config.Reranker = &mockRecallReranker{rerankFunc: func(_ context.Context, _ string, candidates []string) ([]float64, error) {
+				return []float64{invalidScore, 0.2}, nil
+			}}
+			uc := NewRecallMemory(&mockRecallVectorStore{}, &mockRecallOverlapCache{}, &mockRecallCausalGraph{}, &mockRecallEmbedder{}, &mockRecallRenderer{}, config, &mockRecallMetricsCollector{}, nil)
+			uc.rerankerTopK = 10
+
+			now := time.Now()
+			first := createTestCandidateWithRelevance("first", now, 0.9)
+			second := createTestCandidateWithRelevance("second", now, 0.7)
+			out := uc.applyReranker(context.Background(), "query", []*entities.Candidate{first, second})
+			if first.Relevance != 0.9 || second.Relevance != 0.7 {
+				t.Fatalf("non-finite reranker output partially changed relevance: first=%v second=%v", first.Relevance, second.Relevance)
+			}
+			if out[0] != first || out[1] != second {
+				t.Fatal("non-finite reranker output should preserve the semantic ranking")
+			}
+		})
+	}
+}
+
+func TestApplyReranker_UsesIDToBreakRelevanceTies(t *testing.T) {
+	config := DefaultRecallMemoryConfig()
+	config.RerankerTopK = 10
+	config.Reranker = &mockRecallReranker{rerankFunc: func(_ context.Context, _ string, candidates []string) ([]float64, error) {
+		return []float64{0.5, 0.5}, nil
+	}}
+	uc := NewRecallMemory(&mockRecallVectorStore{}, &mockRecallOverlapCache{}, &mockRecallCausalGraph{}, &mockRecallEmbedder{}, &mockRecallRenderer{}, config, &mockRecallMetricsCollector{}, nil)
+	uc.rerankerTopK = 10
+
+	now := time.Now()
+	lowID := createTestCandidateWithRelevance("low-id", now, 0.8)
+	highID := createTestCandidateWithRelevance("high-id", now, 0.8)
+	lowID.Memory.ID = uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	lowID.Verbatim.ID = lowID.Memory.ID
+	highID.Memory.ID = uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	highID.Verbatim.ID = highID.Memory.ID
+
+	out := uc.applyReranker(context.Background(), "query", []*entities.Candidate{highID, lowID})
+	if out[0] != lowID || out[1] != highID {
+		t.Fatal("equal relevance scores should sort by candidate ID")
 	}
 }
 

@@ -954,11 +954,20 @@ func (r *PostgreSQLRepository) ClearAll(ctx context.Context) error {
 	}
 	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
 
-	_, _ = tx.ExecContext(ctx, `TRUNCATE verbatim CASCADE`)
-	_, _ = tx.ExecContext(ctx, `TRUNCATE overlap_cache`)
-	_, _ = tx.ExecContext(ctx, `TRUNCATE webhook_dlq`)
+	if _, err := tx.ExecContext(ctx, `TRUNCATE verbatim CASCADE`); err != nil {
+		return fmt.Errorf("failed to clear verbatim and related data: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `TRUNCATE overlap_cache`); err != nil {
+		return fmt.Errorf("failed to clear overlap cache: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `TRUNCATE webhook_dlq`); err != nil {
+		return fmt.Errorf("failed to clear webhook dead-letter queue: %w", err)
+	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit clear transaction: %w", err)
+	}
+	return nil
 }
 
 // ClearByRoom implements StatsRepository

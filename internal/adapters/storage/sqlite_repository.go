@@ -1008,13 +1008,19 @@ func (r *SQLiteRepository) ArchiveOldMemories(ctx context.Context) (*valueobject
 
 	// Archive session notes
 	sessionThreshold := now - float64(r.opts.SessionNoteArchiveDays*24*60*60)
-	sessionIDs, sessionTokens := r.collectArchiveTargets(ctx, tx, "session_note", sessionThreshold)
+	sessionIDs, sessionTokens, err := r.collectArchiveTargets(ctx, tx, "session_note", sessionThreshold)
+	if err != nil {
+		return nil, err
+	}
 	result.SessionNotes = len(sessionIDs)
 	result.TokensFreed += sessionTokens
 
 	// Archive debug logs
 	debugThreshold := now - float64(r.opts.DebugLogArchiveDays*24*60*60)
-	debugIDs, debugTokens := r.collectArchiveTargets(ctx, tx, "debug_log", debugThreshold)
+	debugIDs, debugTokens, err := r.collectArchiveTargets(ctx, tx, "debug_log", debugThreshold)
+	if err != nil {
+		return nil, err
+	}
 	result.DebugLogs = len(debugIDs)
 	result.TokensFreed += debugTokens
 
@@ -1026,7 +1032,9 @@ func (r *SQLiteRepository) ArchiveOldMemories(ctx context.Context) (*valueobject
 		}
 	}
 
-	_, _ = tx.ExecContext(ctx, `DELETE FROM overlap_cache WHERE ttl < ?`, now)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM overlap_cache WHERE ttl < ?`, now); err != nil {
+		return nil, fmt.Errorf("failed to purge overlap cache: %w", err)
+	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("failed to commit archive transaction: %w", err)
@@ -1043,17 +1051,32 @@ func (r *SQLiteRepository) ClearAll(ctx context.Context) error {
 	}
 	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
 
-	_, _ = tx.ExecContext(ctx, `DELETE FROM causal_edges`)
-	_, _ = tx.ExecContext(ctx, `DELETE FROM causal_nodes`)
-	_, _ = tx.ExecContext(ctx, `DELETE FROM embeddings`)
-	_, _ = tx.ExecContext(ctx, `DELETE FROM fingerprints`)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM causal_edges`); err != nil {
+		return fmt.Errorf("failed to clear causal edges: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM causal_nodes`); err != nil {
+		return fmt.Errorf("failed to clear causal nodes: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM embeddings`); err != nil {
+		return fmt.Errorf("failed to clear embeddings: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM fingerprints`); err != nil {
+		return fmt.Errorf("failed to clear fingerprints: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM memory_tags`); err != nil {
 		return fmt.Errorf("failed to clear memory tags: %w", err)
 	}
-	_, _ = tx.ExecContext(ctx, `DELETE FROM verbatim`)
-	_, _ = tx.ExecContext(ctx, `DELETE FROM overlap_cache`)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM verbatim`); err != nil {
+		return fmt.Errorf("failed to clear verbatim: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM overlap_cache`); err != nil {
+		return fmt.Errorf("failed to clear overlap cache: %w", err)
+	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit clear transaction: %w", err)
+	}
+	return nil
 }
 
 // ClearByIDs removes all memories and related data for a list of verbatim IDs.
@@ -1174,12 +1197,14 @@ func (r *SQLiteRepository) ClearByRoom(ctx context.Context, wing string, room *s
 		return 0, err
 	}
 	if count == 0 {
-		_ = tx.Commit()
+		if err := tx.Commit(); err != nil {
+			return 0, fmt.Errorf("failed to commit clear transaction: %w", err)
+		}
 		return 0, nil
 	}
 
 	//nolint:gosec // roomCondition is a fixed SQL fragment; all values are bound
-	_, _ = tx.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM causal_edges WHERE from_id IN (
 			SELECT id FROM fingerprints WHERE verbatim_id IN (
 				SELECT id FROM verbatim WHERE wing = ? `+roomCondition+`
@@ -1190,33 +1215,41 @@ func (r *SQLiteRepository) ClearByRoom(ctx context.Context, wing string, room *s
 			)
 		)`,
 		append(append([]interface{}{}, args...), args...)...,
-	)
+	); err != nil {
+		return 0, fmt.Errorf("failed to clear causal edges by room: %w", err)
+	}
 
 	//nolint:gosec // roomCondition is a fixed SQL fragment; all values are bound
-	_, _ = tx.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM causal_nodes WHERE id IN (
 			SELECT id FROM fingerprints WHERE verbatim_id IN (
 				SELECT id FROM verbatim WHERE wing = ? `+roomCondition+`
 			)
 		)`,
 		args...,
-	)
+	); err != nil {
+		return 0, fmt.Errorf("failed to clear causal nodes by room: %w", err)
+	}
 
 	//nolint:gosec // roomCondition is a fixed SQL fragment; all values are bound
-	_, _ = tx.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM embeddings WHERE id IN (
 			SELECT id FROM verbatim WHERE wing = ? `+roomCondition+`
 		)`,
 		args...,
-	)
+	); err != nil {
+		return 0, fmt.Errorf("failed to clear embeddings by room: %w", err)
+	}
 
 	//nolint:gosec // roomCondition is a fixed SQL fragment; all values are bound
-	_, _ = tx.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM fingerprints WHERE verbatim_id IN (
 			SELECT id FROM verbatim WHERE wing = ? `+roomCondition+`
 		)`,
 		args...,
-	)
+	); err != nil {
+		return 0, fmt.Errorf("failed to clear fingerprints by room: %w", err)
+	}
 
 	//nolint:gosec // roomCondition is a fixed SQL fragment; all values are bound.
 	if _, err := tx.ExecContext(ctx,
@@ -1276,7 +1309,7 @@ func (r *SQLiteRepository) ensureFTS5(ctx context.Context) bool {
 	return true
 }
 
-func (r *SQLiteRepository) collectArchiveTargets(ctx context.Context, tx *sql.Tx, ftype string, threshold float64) (ids []uuid.UUID, totalTokens int) {
+func (r *SQLiteRepository) collectArchiveTargets(ctx context.Context, tx *sql.Tx, ftype string, threshold float64) (ids []uuid.UUID, totalTokens int, err error) {
 	rows, err := tx.QueryContext(ctx,
 		`SELECT v.id, v.token_count FROM verbatim v
 		 JOIN fingerprints f ON v.id = f.verbatim_id
@@ -1284,7 +1317,7 @@ func (r *SQLiteRepository) collectArchiveTargets(ctx context.Context, tx *sql.Tx
 		threshold, ftype,
 	)
 	if err != nil {
-		return nil, 0
+		return nil, 0, fmt.Errorf("failed to select %s memories for archive: %w", ftype, err)
 	}
 	defer rows.Close()
 
@@ -1292,17 +1325,20 @@ func (r *SQLiteRepository) collectArchiveTargets(ctx context.Context, tx *sql.Tx
 		var idBytes []byte
 		var tokenCount int
 		if err := rows.Scan(&idBytes, &tokenCount); err != nil {
-			continue
+			return nil, 0, fmt.Errorf("failed to scan %s archive target: %w", ftype, err)
 		}
 		id, err := uuid.FromBytes(idBytes)
 		if err != nil {
-			continue
+			return nil, 0, fmt.Errorf("failed to decode %s archive target ID: %w", ftype, err)
 		}
 		ids = append(ids, id)
 		totalTokens += tokenCount
 	}
 
-	return ids, totalTokens
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("failed to iterate %s archive targets: %w", ftype, err)
+	}
+	return ids, totalTokens, nil
 }
 
 // SearchLexical implements EmbeddingSource

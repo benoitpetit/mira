@@ -630,6 +630,56 @@ func TestArchiveOldMemories(t *testing.T) {
 	}
 }
 
+func TestArchiveOldMemoriesReturnsTargetQueryErrors(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	v := entities.NewVerbatim("old session note", "test", nil)
+	v.CreatedAt = time.Now().Add(-40 * 24 * time.Hour)
+	if err := repo.StoreVerbatim(ctx, v); err != nil {
+		t.Fatalf("StoreVerbatim(): %v", err)
+	}
+	if err := repo.StoreFingerprint(ctx, entities.NewFingerprint(v.ID, valueobjects.TypeSessionNote, "h")); err != nil {
+		t.Fatalf("StoreFingerprint(): %v", err)
+	}
+	if _, err := repo.DB().ExecContext(ctx, `DROP TABLE fingerprints`); err != nil {
+		t.Fatalf("DROP fingerprints: %v", err)
+	}
+	if _, err := repo.ArchiveOldMemories(ctx); err == nil {
+		t.Fatal("ArchiveOldMemories() succeeded after archive target query became invalid")
+	}
+	got, err := repo.GetVerbatimByID(ctx, v.ID)
+	if err != nil {
+		t.Fatalf("GetVerbatimByID() after failed archive: %v", err)
+	}
+	if got.LifecycleState != entities.LifecycleActive {
+		t.Fatalf("lifecycle state = %q, want active", got.LifecycleState)
+	}
+}
+
+func TestArchiveOldMemoriesReturnsOverlapCachePurgeErrors(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	a, b := uuid.New(), uuid.New()
+	if _, err := repo.DB().ExecContext(ctx, `INSERT INTO overlap_cache (id_a, id_b, similarity, computed_at, ttl) VALUES (?, ?, 0.5, 0, 1)`, a[:], b[:]); err != nil {
+		t.Fatalf("insert overlap cache: %v", err)
+	}
+	if _, err := repo.DB().ExecContext(ctx, `CREATE TRIGGER fail_overlap_cache_purge BEFORE DELETE ON overlap_cache BEGIN SELECT RAISE(ABORT, 'injected overlap cache failure'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+	if _, err := repo.ArchiveOldMemories(ctx); err == nil {
+		t.Fatal("ArchiveOldMemories() swallowed overlap cache purge failure")
+	}
+	var count int
+	if err := repo.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM overlap_cache WHERE id_a = ? AND id_b = ?`, a[:], b[:]).Scan(&count); err != nil {
+		t.Fatalf("count overlap cache: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("overlap cache rows after failed transaction = %d, want 1", count)
+	}
+}
+
 func TestRegisterAndGetAllModels(t *testing.T) {
 	repo, cleanup := setupTestDB(t)
 	defer cleanup()
@@ -1604,6 +1654,29 @@ func TestClearAll(t *testing.T) {
 	}
 }
 
+func TestClearAllRollsBackWhenDeleteFails(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	v := storeFullMemory(t, repo, "preserve after rollback", "test")
+	if _, err := repo.DB().ExecContext(ctx, `CREATE TRIGGER fail_fingerprint_clear BEFORE DELETE ON fingerprints BEGIN SELECT RAISE(ABORT, 'injected fingerprint clear failure'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+	if err := repo.ClearAll(ctx); err == nil {
+		t.Fatal("ClearAll() succeeded after a delete statement failed")
+	}
+	if _, err := repo.GetVerbatimByID(ctx, v.ID); err != nil {
+		t.Fatalf("ClearAll() did not roll back earlier deletes: %v", err)
+	}
+	var count int
+	if err := repo.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM fingerprints WHERE verbatim_id = ?`, v.ID[:]).Scan(&count); err != nil {
+		t.Fatalf("count fingerprints after rollback: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("fingerprints after rollback = %d, want 1", count)
+	}
+}
+
 func TestClearByIDs(t *testing.T) {
 	repo, cleanup := setupTestDB(t)
 	defer cleanup()
@@ -1830,6 +1903,36 @@ func TestClearByRoom(t *testing.T) {
 	}
 	if _, err := repo.GetVerbatimByID(ctx, vKeep.ID); err == nil {
 		t.Error("vKeep should be gone after ClearByRoom(wingA, nil)")
+	}
+}
+
+func TestClearByRoomRollsBackWhenDeleteFails(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	room := "room"
+	v := entities.NewVerbatim("preserve after rollback", "wing", &room)
+	if err := repo.StoreVerbatim(ctx, v); err != nil {
+		t.Fatalf("StoreVerbatim(): %v", err)
+	}
+	if err := repo.StoreFingerprint(ctx, entities.NewFingerprint(v.ID, valueobjects.TypeFact, "h")); err != nil {
+		t.Fatalf("StoreFingerprint(): %v", err)
+	}
+	if _, err := repo.DB().ExecContext(ctx, `CREATE TRIGGER fail_room_fingerprint_clear BEFORE DELETE ON fingerprints BEGIN SELECT RAISE(ABORT, 'injected fingerprint clear failure'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+	if _, err := repo.ClearByRoom(ctx, "wing", &room); err == nil {
+		t.Fatal("ClearByRoom() succeeded after a delete statement failed")
+	}
+	if _, err := repo.GetVerbatimByID(ctx, v.ID); err != nil {
+		t.Fatalf("ClearByRoom() did not roll back earlier deletes: %v", err)
+	}
+	var count int
+	if err := repo.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM fingerprints WHERE verbatim_id = ?`, v.ID[:]).Scan(&count); err != nil {
+		t.Fatalf("count fingerprints after rollback: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("fingerprints after rollback = %d, want 1", count)
 	}
 }
 

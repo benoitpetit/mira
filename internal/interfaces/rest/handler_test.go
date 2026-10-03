@@ -574,6 +574,22 @@ func TestOpenAPICausalContractMatchesRuntimeBounds(t *testing.T) {
 	}
 }
 
+func TestOpenAPIConversationIngestDeclaresMessageLimit(t *testing.T) {
+	response := httptest.NewRecorder()
+	rest.ServeSpec(response, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
+	var doc map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("decode OpenAPI document: %v", err)
+	}
+	schemas := doc["components"].(map[string]any)["schemas"].(map[string]any)
+	request := schemas["ConversationIngestRequest"].(map[string]any)
+	properties := request["properties"].(map[string]any)
+	messages := properties["messages"].(map[string]any)
+	if messages["maxItems"] != float64(1000) {
+		t.Fatalf("ConversationIngestRequest.messages maxItems = %v, want 1000", messages["maxItems"])
+	}
+}
+
 func TestHandleCausal_InvalidUUID(t *testing.T) {
 	s := newSuite(t)
 	resp := s.get("/api/v1/causal/bad-id")

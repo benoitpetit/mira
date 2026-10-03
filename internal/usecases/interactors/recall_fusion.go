@@ -22,8 +22,13 @@ func reciprocalRankFusion(dense, lexical []*entities.Candidate, k int) []*entiti
 	candidatesByID := make(map[uuid.UUID]*entities.Candidate)
 
 	// Assign dense ranks
+	denseSeen := make(map[uuid.UUID]bool, len(dense))
 	for i, c := range dense {
 		id := c.ID()
+		if denseSeen[id] {
+			continue
+		}
+		denseSeen[id] = true
 		scores[id] += 1.0 / (float64(k) + float64(i+1))
 		r := ranks[id]
 		r.dense = i + 1
@@ -32,8 +37,13 @@ func reciprocalRankFusion(dense, lexical []*entities.Candidate, k int) []*entiti
 	}
 
 	// Assign lexical ranks
+	lexicalSeen := make(map[uuid.UUID]bool, len(lexical))
 	for i, c := range lexical {
 		id := c.ID()
+		if lexicalSeen[id] {
+			continue
+		}
+		lexicalSeen[id] = true
 		scores[id] += 1.0 / (float64(k) + float64(i+1))
 		r := ranks[id]
 		r.lexical = i + 1

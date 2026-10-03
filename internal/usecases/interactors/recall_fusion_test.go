@@ -59,3 +59,23 @@ func TestReciprocalRankFusion_EmptyLexical(t *testing.T) {
 		t.Errorf("expected dense result when lexical is empty")
 	}
 }
+
+func TestReciprocalRankFusion_DuplicateWithinSourceCountsOnlyOnce(t *testing.T) {
+	makeCandidate := func(id string) *entities.Candidate {
+		parsed := uuid.MustParse(id)
+		return &entities.Candidate{
+			Memory:   &entities.Fingerprint{ID: parsed, Type: valueobjects.TypeFact},
+			Verbatim: &entities.Verbatim{ID: parsed},
+		}
+	}
+	a := makeCandidate("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	b := makeCandidate("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+
+	fused := reciprocalRankFusion([]*entities.Candidate{a, a, a, b}, []*entities.Candidate{b}, 1)
+	if len(fused) != 2 {
+		t.Fatalf("got %d fused candidates, want 2", len(fused))
+	}
+	if fused[0].ID() != b.ID() {
+		t.Fatalf("duplicate source entry inflated %s above candidate present in both lists %s", fused[1].ID(), b.ID())
+	}
+}

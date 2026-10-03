@@ -45,8 +45,14 @@ type candidateHeap struct {
 	candidates []*entities.Candidate
 }
 
-func (h candidateHeap) Len() int           { return len(h.candidates) }
-func (h candidateHeap) Less(i, j int) bool { return h.candidates[i].Score > h.candidates[j].Score }
+func (h candidateHeap) Len() int { return len(h.candidates) }
+func (h candidateHeap) Less(i, j int) bool {
+	left, right := h.candidates[i], h.candidates[j]
+	if left.Score == right.Score {
+		return left.ID().String() < right.ID().String()
+	}
+	return left.Score > right.Score
+}
 func (h candidateHeap) Swap(i, j int) {
 	h.candidates[i], h.candidates[j] = h.candidates[j], h.candidates[i]
 }
@@ -889,7 +895,11 @@ func (uc *RecallMemory) pruneCandidatesWithThreshold(candidates []*entities.Cand
 	if len(pruned) == 0 && len(candidates) > 0 {
 		// Fallback: keep top 5
 		sort.Slice(candidates, func(i, j int) bool {
-			return candidatePruneScore(candidates[i]) > candidatePruneScore(candidates[j])
+			left, right := candidatePruneScore(candidates[i]), candidatePruneScore(candidates[j])
+			if left == right {
+				return candidates[i].ID().String() < candidates[j].ID().String()
+			}
+			return left > right
 		})
 		topN := 5
 		if len(candidates) < topN {
@@ -917,6 +927,9 @@ func candidatePruneScore(candidate *entities.Candidate) float64 {
 func (uc *RecallMemory) applyReranker(ctx context.Context, query string, candidates []*entities.Candidate) []*entities.Candidate {
 	// Sort by current relevance to pick top-k
 	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].Relevance == candidates[j].Relevance {
+			return candidates[i].ID().String() < candidates[j].ID().String()
+		}
 		return candidates[i].Relevance > candidates[j].Relevance
 	})
 
@@ -935,19 +948,24 @@ func (uc *RecallMemory) applyReranker(ctx context.Context, query string, candida
 	if err != nil {
 		return candidates
 	}
+	for _, score := range scores {
+		if math.IsNaN(score) || math.IsInf(score, 0) {
+			return candidates
+		}
+	}
 
 	// Blend rerank score with semantic relevance
 	for i, c := range topCandidates {
 		if i < len(scores) {
-			c.Relevance = 0.7*c.Relevance + 0.3*scores[i]
-			if c.Relevance > 1.0 {
-				c.Relevance = 1.0
-			}
+			c.Relevance = clampRecallScore(0.7*c.Relevance + 0.3*clampRecallScore(scores[i]))
 		}
 	}
 
 	// Re-sort by blended relevance
 	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].Relevance == candidates[j].Relevance {
+			return candidates[i].ID().String() < candidates[j].ID().String()
+		}
 		return candidates[i].Relevance > candidates[j].Relevance
 	})
 
@@ -1011,11 +1029,14 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 
 	// Initialize scores for all candidates
 	for _, c := range h.candidates {
-		initialScore := c.Relevance * c.Density * c.Recency
+		initialScore := c.Relevance * c.Density * c.Recency * c.ExtractionConfidence * c.ValidationFreshness * c.LifecycleFactor * c.BeliefCalibration
 		if uc.sessionMemoryBoost > 0 && sessionMemoryIDs != nil && sessionMemoryIDs[c.ID()] {
 			initialScore *= uc.sessionMemoryBoost
 		}
-		maxPossibleScore := initialScore * 1.0 * 1.0 * (1.0 + uc.sessionBoostBeta) * (1.0 + uc.diversityBoostAlpha)
+		maxCausalBoost := 1.0 + clampRecallScore(uc.causalPenaltyAlpha)
+		maxSessionBoost := math.Max(1.0, math.Min(1.0+uc.sessionBoostBeta, uc.sessionBoostMax))
+		maxDiversityBoost := 1.0 + math.Max(0, uc.diversityBoostAlpha)
+		maxPossibleScore := clampRecallScore(initialScore * maxCausalBoost * maxSessionBoost * maxDiversityBoost)
 		if maxPossibleScore < greedyThreshold {
 			c.Score = maxPossibleScore
 			c.MaxOverlap = 0
