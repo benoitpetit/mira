@@ -1,10 +1,59 @@
 package rest
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/benoitpetit/mira/internal/domain/entities"
+	"github.com/benoitpetit/mira/internal/usecases/ports"
 )
+
+type recordingAuditRepository struct {
+	ports.AuditRepository
+	logs chan *entities.AuditLog
+}
+
+func (r *recordingAuditRepository) SaveAuditLog(_ context.Context, entry *entities.AuditLog) error {
+	r.logs <- entry
+	return nil
+}
+
+func TestAuditMiddlewareDoesNotStoreBearerToken(t *testing.T) {
+	const bearer = "recognizable-bearer-secret-token-123456"
+	audit := &recordingAuditRepository{logs: make(chan *entities.AuditLog, 1)}
+	handler := auditMiddleware(audit, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+
+	select {
+	case entry := <-audit.logs:
+		if entry.Actor != "token:present" {
+			t.Errorf("audit actor = %q, want token:present", entry.Actor)
+		}
+		stored := strings.Join([]string{entry.Actor, entry.Action, entry.Resource, entry.Metadata}, "\n")
+		for _, prefix := range []string{bearer[:8], bearer[:16], bearer} {
+			if strings.Contains(stored, prefix) {
+				t.Errorf("audit entry leaked bearer prefix %q: %+v", prefix, entry)
+			}
+		}
+		if entry.Action != "GET /api/v1/status" || entry.Status != http.StatusNoContent {
+			t.Errorf("audit event = action %q status %d, want successful status event", entry.Action, entry.Status)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("audit event was not saved")
+	}
+}
 
 // ── wingForRequest ────────────────────────────────────────────────────────────
 

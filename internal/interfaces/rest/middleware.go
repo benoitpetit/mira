@@ -300,12 +300,7 @@ func auditMiddleware(repo ports.AuditRepository, next http.Handler) http.Handler
 		if wing, ok := r.Context().Value(CtxKeyWing).(string); ok {
 			actor = "wing:" + wing
 		} else if bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "); bearer != "" {
-			// Use a short hash of the token if available to avoid logging secrets
-			if len(bearer) > 8 {
-				actor = "token:" + bearer[:8] + "..."
-			} else {
-				actor = "token:present"
-			}
+			actor = "token:present"
 		}
 
 		action := r.Method + " " + r.URL.Path
