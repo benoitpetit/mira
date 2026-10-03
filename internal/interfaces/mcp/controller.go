@@ -79,8 +79,12 @@ func sanitizeStoredMemoryContent(content string) string {
 		}
 		// Additional structural check: detect lines that look like directives
 		// (uppercase, single words that are common instruction triggers)
-		if len(strings.Fields(l)) <= 3 {
-			firstWord := strings.Fields(l)[0]
+		fields := strings.Fields(l)
+		if len(fields) == 0 {
+			continue
+		}
+		if len(fields) <= 3 {
+			firstWord := fields[0]
 			if firstWord == "system" ||
 				firstWord == "ignore" ||
 				firstWord == "forget" ||
