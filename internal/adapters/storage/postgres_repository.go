@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -442,11 +443,15 @@ func (r *PostgreSQLRepository) StoreEmbeddingTx(ctx context.Context, tx *sql.Tx,
 		vectorStr += fmt.Sprintf("%f", v)
 	}
 	vectorStr += "]"
+	normalized := 0
+	if emb.Normalized {
+		normalized = 1
+	}
 
 	_, err := tx.ExecContext(ctx,
 		`INSERT INTO embeddings (id, model_hash, dim, vector, normalized, created_at)
 		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		emb.ID, emb.ModelHash, emb.Dim, vectorStr, emb.Normalized, float64(emb.CreatedAt.Unix()),
+		emb.ID, emb.ModelHash, emb.Dim, vectorStr, normalized, float64(emb.CreatedAt.Unix()),
 	)
 	return err
 }
@@ -454,25 +459,37 @@ func (r *PostgreSQLRepository) StoreEmbeddingTx(ctx context.Context, tx *sql.Tx,
 // GetEmbeddingByID implements EmbeddingRepository
 func (r *PostgreSQLRepository) GetEmbeddingByID(ctx context.Context, id uuid.UUID) (*entities.Embedding, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, model_hash, dim, vector::float4[], normalized, created_at FROM embeddings WHERE id = $1`,
+		`SELECT id, model_hash, dim, vector::text, normalized, created_at FROM embeddings WHERE id = $1`,
 		id,
 	)
 
 	var emb entities.Embedding
 	var createdAt float64
-	var vector []float32
+	var vectorText string
+	var normalized int
 
-	// pgx can scan float4[] into []float32
-	err := row.Scan(&emb.ID, &emb.ModelHash, &emb.Dim, &vector, &emb.Normalized, &createdAt)
+	err := row.Scan(&emb.ID, &emb.ModelHash, &emb.Dim, &vectorText, &normalized, &createdAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("embedding not found")
 		}
 		return nil, err
 	}
+	vectorText = strings.Trim(vectorText, "[]")
+	if vectorText != "" {
+		components := strings.Split(vectorText, ",")
+		emb.Vector = make([]float32, len(components))
+		for i, component := range components {
+			value, err := strconv.ParseFloat(strings.TrimSpace(component), 32)
+			if err != nil {
+				return nil, fmt.Errorf("decode embedding vector component %d: %w", i, err)
+			}
+			emb.Vector[i] = float32(value)
+		}
+	}
 
 	emb.CreatedAt = time.Unix(int64(createdAt), 0)
-	emb.Vector = vector
+	emb.Normalized = normalized != 0
 
 	return &emb, nil
 }
