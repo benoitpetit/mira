@@ -15,8 +15,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/benoitpetit/mira/internal/adapters/storage"
+	"github.com/benoitpetit/mira/internal/adapters/vector"
 	"github.com/benoitpetit/mira/internal/config"
 	"github.com/benoitpetit/mira/internal/usecases/ports"
+	"github.com/google/uuid"
 )
 
 type closeTrackingEmbedder struct {
@@ -121,6 +124,35 @@ func TestNewApplication_Minimal(t *testing.T) {
 	}
 	if err := app.Close(); err != nil {
 		t.Errorf("Close: %v", err)
+	}
+}
+
+func TestNewApplicationWiresConfiguredOverlapCacheTTL(t *testing.T) {
+	cfg := minimalCfg(t)
+	cfg.OverlapCache.TTLDays = 2
+	a, err := NewApplication(cfg)
+	if err != nil {
+		t.Fatalf("NewApplication: %v", err)
+	}
+	defer a.Close()
+
+	repo, ok := a.repository.(*storage.SQLiteRepository)
+	if !ok {
+		t.Fatalf("repository type = %T, want SQLiteRepository", a.repository)
+	}
+	cache, ok := a.overlapCache.(*vector.SQLOverlapCache)
+	if !ok {
+		t.Fatalf("overlap cache type = %T, want SQLOverlapCache", a.overlapCache)
+	}
+	idA, idB := uuid.New(), uuid.New()
+	cache.Set(context.Background(), idA, idB, 0.5)
+
+	var computedAt, expiresAt float64
+	if err := repo.DB().QueryRow(`SELECT computed_at, ttl FROM overlap_cache`).Scan(&computedAt, &expiresAt); err != nil {
+		t.Fatalf("read stored overlap TTL: %v", err)
+	}
+	if got := expiresAt - computedAt; got != 2*24*60*60 {
+		t.Fatalf("stored TTL = %v seconds, want two config days (%d)", got, 2*24*60*60)
 	}
 }
 

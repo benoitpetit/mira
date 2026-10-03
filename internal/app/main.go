@@ -351,7 +351,7 @@ func (a *Application) initVectorStore() {
 	}
 
 	// Overlap cache (shared between HNSW and RecallMemory)
-	a.overlapCache = vector.NewSQLOverlapCache(repo.DB(), cfg.Storage.Type)
+	a.overlapCache = vector.NewSQLOverlapCache(repo.DB(), cfg.Storage.Type, cfg.OverlapCache.TTLDays)
 
 	// HNSW options
 	hnswOpts := vector.DefaultHNSWOptions()

@@ -90,6 +90,20 @@ func TestOverlapCacheTTL(t *testing.T) {
 	}
 }
 
+func TestSQLiteOverlapCacheUsesConfiguredShortTTL(t *testing.T) {
+	repo := setupTestDBForCache(t)
+	cache := NewSQLiteOverlapCache(repo.DB(), 1)
+	cache.Set(context.Background(), uuid.New(), uuid.New(), 0.61)
+
+	var computedAt, expiresAt float64
+	if err := repo.DB().QueryRow(`SELECT computed_at, ttl FROM overlap_cache`).Scan(&computedAt, &expiresAt); err != nil {
+		t.Fatalf("read stored overlap TTL: %v", err)
+	}
+	if got := expiresAt - computedAt; got != 24*60*60 {
+		t.Fatalf("stored TTL = %v seconds, want one configured day (%d)", got, 24*60*60)
+	}
+}
+
 // TestOverlapCacheKeyOrder tests that key order is normalized
 func TestOverlapCacheKeyOrder(t *testing.T) {
 	repo := setupTestDBForCache(t)

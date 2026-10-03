@@ -16,10 +16,23 @@ import (
 type SQLOverlapCache struct {
 	db       *sql.DB
 	postgres bool
+	ttlDays  int
 }
 
-func NewSQLOverlapCache(db *sql.DB, dialect string) *SQLOverlapCache {
-	return &SQLOverlapCache{db: db, postgres: strings.EqualFold(strings.TrimSpace(dialect), "postgres") || strings.EqualFold(strings.TrimSpace(dialect), "postgresql")}
+const defaultOverlapCacheTTLDays = 30
+
+// NewSQLOverlapCache creates a pairwise overlap cache for SQLite or PostgreSQL.
+// When ttlDays is omitted or non-positive, the historical 30-day TTL is used.
+func NewSQLOverlapCache(db *sql.DB, dialect string, ttlDays ...int) *SQLOverlapCache {
+	days := defaultOverlapCacheTTLDays
+	if len(ttlDays) > 0 && ttlDays[0] > 0 {
+		days = ttlDays[0]
+	}
+	return &SQLOverlapCache{
+		db:       db,
+		postgres: strings.EqualFold(strings.TrimSpace(dialect), "postgres") || strings.EqualFold(strings.TrimSpace(dialect), "postgresql"),
+		ttlDays:  days,
+	}
 }
 
 func (c *SQLOverlapCache) ids(idA, idB uuid.UUID) (interface{}, interface{}) {
@@ -54,7 +67,7 @@ func (c *SQLOverlapCache) Set(ctx context.Context, idA, idB uuid.UUID, similarit
 	}
 	a, b := c.ids(idA, idB)
 	now := float64(time.Now().Unix())
-	ttl := now + 30*24*3600
+	ttl := now + float64(c.ttlDays)*24*3600
 	query := `INSERT OR REPLACE INTO overlap_cache (id_a, id_b, similarity, computed_at, ttl) VALUES (?, ?, ?, ?, ?)`
 	if c.postgres {
 		query = `INSERT INTO overlap_cache (id_a, id_b, similarity, computed_at, ttl) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id_a, id_b) DO UPDATE SET similarity = EXCLUDED.similarity, computed_at = EXCLUDED.computed_at, ttl = EXCLUDED.ttl`

@@ -65,6 +65,51 @@ func TestSQLOverlapCacheWorksWithSQLite(t *testing.T) {
 	}
 }
 
+func TestSQLOverlapCacheUsesConfiguredShortTTL(t *testing.T) {
+	repo, err := storage.NewSQLiteRepository(filepath.Join(t.TempDir(), "mira.db"), storage.DefaultSQLiteOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+
+	cache := NewSQLOverlapCache(repo.DB(), "sqlite", 1)
+	a, b := uuid.New(), uuid.New()
+	cache.Set(context.Background(), a, b, 0.42)
+
+	var computedAt, expiresAt float64
+	if err := repo.DB().QueryRow(`SELECT computed_at, ttl FROM overlap_cache`).Scan(&computedAt, &expiresAt); err != nil {
+		t.Fatalf("read stored overlap TTL: %v", err)
+	}
+	if got := expiresAt - computedAt; got != 24*60*60 {
+		t.Fatalf("stored TTL = %v seconds, want one configured day (%d)", got, 24*60*60)
+	}
+
+	if _, err := repo.DB().Exec(`UPDATE overlap_cache SET ttl = ?`, time.Now().Unix()-1); err != nil {
+		t.Fatalf("expire stored overlap: %v", err)
+	}
+	if _, found := cache.Get(context.Background(), a, b); found {
+		t.Fatal("cache returned an entry after its stored TTL expired")
+	}
+}
+
+func TestSQLOverlapCacheDefaultsToHistoricalThirtyDayTTL(t *testing.T) {
+	repo, err := storage.NewSQLiteRepository(filepath.Join(t.TempDir(), "mira.db"), storage.DefaultSQLiteOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+
+	cache := NewSQLOverlapCache(repo.DB(), "sqlite")
+	cache.Set(context.Background(), uuid.New(), uuid.New(), 0.42)
+	var computedAt, expiresAt float64
+	if err := repo.DB().QueryRow(`SELECT computed_at, ttl FROM overlap_cache`).Scan(&computedAt, &expiresAt); err != nil {
+		t.Fatalf("read stored overlap TTL: %v", err)
+	}
+	if got := expiresAt - computedAt; got != 30*24*60*60 {
+		t.Fatalf("default stored TTL = %v seconds, want historical 30 days (%d)", got, 30*24*60*60)
+	}
+}
+
 func TestSQLSessionCacheWorksWithSQLite(t *testing.T) {
 	repo, err := storage.NewSQLiteRepository(filepath.Join(t.TempDir(), "mira.db"), storage.DefaultSQLiteOptions())
 	if err != nil {

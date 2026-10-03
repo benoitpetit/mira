@@ -12,12 +12,18 @@ import (
 
 // SQLiteOverlapCache implements OverlapCache using SQLite
 type SQLiteOverlapCache struct {
-	db *sql.DB
+	db      *sql.DB
+	ttlDays int
 }
 
-// NewSQLiteOverlapCache creates a new SQLite overlap cache
-func NewSQLiteOverlapCache(db *sql.DB) *SQLiteOverlapCache {
-	return &SQLiteOverlapCache{db: db}
+// NewSQLiteOverlapCache creates a new SQLite overlap cache. When ttlDays is
+// omitted or non-positive, it uses the historical 30-day TTL.
+func NewSQLiteOverlapCache(db *sql.DB, ttlDays ...int) *SQLiteOverlapCache {
+	days := defaultOverlapCacheTTLDays
+	if len(ttlDays) > 0 && ttlDays[0] > 0 {
+		days = ttlDays[0]
+	}
+	return &SQLiteOverlapCache{db: db, ttlDays: days}
 }
 
 // Get implements OverlapCache
@@ -49,7 +55,7 @@ func (c *SQLiteOverlapCache) Set(ctx context.Context, idA, idB uuid.UUID, simila
 	}
 
 	now := time.Now().Unix()
-	ttl := now + 30*24*3600 // 30 days
+	ttl := now + int64(c.ttlDays)*24*3600
 
 	_, _ = c.db.ExecContext(ctx,
 		`INSERT OR REPLACE INTO overlap_cache (id_a, id_b, similarity, computed_at, ttl) 
