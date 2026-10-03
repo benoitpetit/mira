@@ -29,6 +29,7 @@ type CybertronEmbedder struct {
 	dimension int
 	closeOnce sync.Once
 	closed    bool
+	encodeWG  sync.WaitGroup
 	mu        sync.Mutex
 }
 
@@ -156,16 +157,18 @@ func validModelConfig(path string) bool {
 
 // Encode implements Embedder
 func (c *CybertronEmbedder) Encode(ctx context.Context, text string) ([]float32, error) {
-	if text == "" {
-		return make([]float32, c.dimension), nil
-	}
-
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		return nil, fmt.Errorf("embedder is closed")
 	}
+	if text == "" {
+		c.mu.Unlock()
+		return make([]float32, c.dimension), nil
+	}
+	c.encodeWG.Add(1)
 	c.mu.Unlock()
+	defer c.encodeWG.Done()
 
 	var model textencoding.Interface
 	select {
@@ -221,17 +224,12 @@ func (c *CybertronEmbedder) Close() error {
 		c.mu.Lock()
 		c.closed = true
 		c.mu.Unlock()
+		c.encodeWG.Wait()
 
-		// Drain the pool to collect all models
+		// All encoders have returned their models before the pool is drained.
 		drained := make([]textencoding.Interface, 0, len(c.allModels))
 		for i := 0; i < len(c.allModels); i++ {
-			select {
-			case m := <-c.modelPool:
-				drained = append(drained, m)
-			case <-time.After(2 * time.Second):
-				log.Printf("[Embedder] Timeout draining model pool during close")
-				break
-			}
+			drained = append(drained, <-c.modelPool)
 		}
 		for _, m := range drained {
 			tasks.Finalize(m)
