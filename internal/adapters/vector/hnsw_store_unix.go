@@ -373,7 +373,9 @@ func (h *HNSWStore) ClearAll(ctx context.Context) error {
 	h.idToUUID = make(map[string]uuid.UUID)
 	h.uuidToID = make(map[uuid.UUID]string)
 	h.nextID = 0
-	h.ready = false
+	// An empty graph is a valid, searchable index. Keeping it ready also lets
+	// subsequent AddCandidate calls become searchable without a rebuild.
+	h.ready = true
 
 	if h.indexPath != "" {
 		_ = os.Remove(h.indexPath)

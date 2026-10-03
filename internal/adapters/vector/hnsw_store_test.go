@@ -818,6 +818,65 @@ func TestHNSWStoreLoadRejectsPersistedPartialIndex(t *testing.T) {
 	}
 }
 
+func TestHNSWStoreClearAddSearchAndRestart(t *testing.T) {
+	const dimension = 3
+	store, repo, cleanup := setupTestStoreT(t, dimension)
+	defer cleanup()
+	ctx := context.Background()
+	initial := createAndPersistCandidate(t, repo, dimension, "wing", nil, 0.1)
+	if err := store.AddCandidate(ctx, initial); err != nil {
+		t.Fatalf("add initial candidate: %v", err)
+	}
+	if err := store.BuildFromStore(ctx); err != nil {
+		t.Fatalf("build initial index: %v", err)
+	}
+	fallback := NewFallbackVectorStore(store, NewBruteForceVectorStore(repo))
+
+	if err := repo.ClearAll(ctx); err != nil {
+		t.Fatalf("clear authoritative repository: %v", err)
+	}
+	if err := fallback.ClearAll(ctx); err != nil {
+		t.Fatalf("clear vector index: %v", err)
+	}
+	if !store.IsReady() {
+		t.Fatal("empty HNSW index should remain ready after ClearAll")
+	}
+	empty, err := fallback.Search(ctx, []float32{1, 0, 0}, 5, nil, nil)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("search empty index = %v, %v; want no results and no error", empty, err)
+	}
+
+	added := createAndPersistCandidate(t, repo, dimension, "wing", nil, 0.8)
+	if err := fallback.AddCandidate(ctx, added); err != nil {
+		t.Fatalf("add candidate after clear: %v", err)
+	}
+	results, err := fallback.Search(ctx, added.Embedding, 5, nil, nil)
+	if err != nil {
+		t.Fatalf("search after clear/add: %v", err)
+	}
+	if len(results) != 1 || results[0].Verbatim.ID != added.Verbatim.ID {
+		t.Fatalf("search after clear/add = %v, want new candidate %s", results, added.Verbatim.ID)
+	}
+	if err := store.Save(); err != nil {
+		t.Fatalf("save post-clear index: %v", err)
+	}
+
+	loaded, err := NewHNSWStore(repo, dimension, store.indexPath, DefaultHNSWOptions())
+	if err != nil {
+		t.Fatalf("create reload store: %v", err)
+	}
+	if err := loaded.Load(); err != nil {
+		t.Fatalf("load post-clear index: %v", err)
+	}
+	if !loaded.IsReady() {
+		t.Fatal("complete post-clear index should load ready")
+	}
+	results, err = loaded.Search(ctx, added.Embedding, 5, nil, nil)
+	if err != nil || len(results) != 1 || results[0].Verbatim.ID != added.Verbatim.ID {
+		t.Fatalf("search after restart = %v, %v; want new candidate %s", results, err, added.Verbatim.ID)
+	}
+}
+
 // TestHNSWStore_SearchLexical_AndExact delegates to the underlying SQLite store.
 // Without FTS5 these calls should return gracefully (nil or error).
 func TestHNSWStore_SearchLexical_AndExact(t *testing.T) {
