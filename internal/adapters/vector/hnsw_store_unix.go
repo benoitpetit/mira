@@ -670,6 +670,11 @@ func (h *HNSWStore) Load() error {
 	if data.ModelHash != "" && h.modelHash != "" && data.ModelHash != h.modelHash {
 		return fmt.Errorf("model hash mismatch: saved=%s, expected=%s", data.ModelHash, h.modelHash)
 	}
+	if len(data.Nodes) > 0 {
+		if err := h.validateLoadedIndex(data); err != nil {
+			return err
+		}
+	}
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -691,9 +696,8 @@ func (h *HNSWStore) Load() error {
 		for _, nodeData := range data.Nodes {
 			// Verify vector dimension
 			if len(nodeData.Embedding) != h.dimension {
-				log.Printf("[Vector] Warning: skipping node %s with wrong dimension: got %d, expected %d",
+				return fmt.Errorf("index node dimension mismatch: node=%s, got=%d, expected=%d",
 					nodeData.ID, len(nodeData.Embedding), h.dimension)
-				continue
 			}
 
 			n := node{
@@ -703,10 +707,9 @@ func (h *HNSWStore) Load() error {
 			h.graph.Add(n)
 		}
 
-		// Verify loaded node count matches
+		// A partially materialized graph must stay unavailable to searches.
 		if h.graph.Len() != len(data.Nodes) {
-			log.Printf("[Vector] Warning: loaded %d nodes but expected %d",
-				h.graph.Len(), len(data.Nodes))
+			return fmt.Errorf("index node count mismatch: loaded=%d, saved=%d", h.graph.Len(), len(data.Nodes))
 		}
 
 		h.ready = true
@@ -717,6 +720,71 @@ func (h *HNSWStore) Load() error {
 
 	log.Printf("[Vector] HNSW mappings loaded: %d mappings, nextID=%d (graph will be rebuilt)",
 		len(h.uuidToID), h.nextID)
+	return nil
+}
+
+// validateLoadedIndex rejects persisted graphs that do not exactly cover the
+// currently compatible authoritative embeddings. This also detects partial
+// version-1 indexes written before completeness was enforced during builds.
+func (h *HNSWStore) validateLoadedIndex(data hnswIndexData) error {
+	embeddings, err := h.store.GetAllEmbeddings(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to validate persisted index against embeddings: %w", err)
+	}
+	if len(data.Nodes) != len(data.UUIDToID) {
+		return fmt.Errorf("index node count mismatch: nodes=%d, mappings=%d", len(data.Nodes), len(data.UUIDToID))
+	}
+
+	expected := make(map[uuid.UUID]struct{}, len(embeddings))
+	for _, embedding := range embeddings {
+		if embedding == nil {
+			return fmt.Errorf("authoritative embedding mismatch: nil embedding")
+		}
+		if h.modelHash != "" && embedding.ModelHash != "" && embedding.ModelHash != h.modelHash {
+			return fmt.Errorf("authoritative embedding model hash mismatch: embedding=%s, got=%s, expected=%s", embedding.ID, embedding.ModelHash, h.modelHash)
+		}
+		if len(embedding.Vector) != h.dimension {
+			return fmt.Errorf("authoritative embedding dimension mismatch: embedding=%s, got=%d, expected=%d", embedding.ID, len(embedding.Vector), h.dimension)
+		}
+		expected[embedding.ID] = struct{}{}
+	}
+
+	indexed := make(map[uuid.UUID]string, len(data.UUIDToID))
+	nodeIDs := make(map[string]uuid.UUID, len(data.Nodes))
+	for idString, nodeID := range data.UUIDToID {
+		id, err := uuid.Parse(idString)
+		if err != nil {
+			return fmt.Errorf("invalid UUID in persisted index mapping: %s", idString)
+		}
+		if _, duplicate := indexed[id]; duplicate {
+			return fmt.Errorf("duplicate UUID in persisted index mapping: %s", id)
+		}
+		indexed[id] = nodeID
+	}
+	for _, nodeData := range data.Nodes {
+		id, err := uuid.Parse(nodeData.UUID)
+		if err != nil {
+			return fmt.Errorf("invalid UUID in persisted index node: %s", nodeData.UUID)
+		}
+		if previous, duplicate := nodeIDs[nodeData.ID]; duplicate {
+			return fmt.Errorf("duplicate node ID in persisted index: %s maps to %s and %s", nodeData.ID, previous, id)
+		}
+		nodeIDs[nodeData.ID] = id
+		if mappedID, ok := indexed[id]; !ok || mappedID != nodeData.ID {
+			return fmt.Errorf("index mapping mismatch for embedding %s", id)
+		}
+	}
+
+	for id := range expected {
+		if _, ok := indexed[id]; !ok {
+			return fmt.Errorf("authoritative embedding count mismatch: index is missing %s", id)
+		}
+	}
+	for id := range indexed {
+		if _, ok := expected[id]; !ok {
+			return fmt.Errorf("authoritative embedding count mismatch: index contains stale %s", id)
+		}
+	}
 	return nil
 }
 

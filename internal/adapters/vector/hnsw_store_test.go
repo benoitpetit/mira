@@ -769,6 +769,55 @@ func TestHNSWStoreBuildFromStoreKeepsIncompatibleEmbeddingsNotReady(t *testing.T
 	}
 }
 
+func TestHNSWStoreLoadRejectsPersistedPartialIndex(t *testing.T) {
+	const dimension = 3
+	store, repo, cleanup := setupTestStoreT(t, dimension)
+	defer cleanup()
+	ctx := context.Background()
+	store.SetModelHash("current-model")
+
+	// Keep one compatible vector in the persisted graph while BuildFromStore
+	// skips incompatible authoritative embeddings.
+	createAndPersistCandidate(t, repo, dimension, "wing", nil, 0.1)
+	compatible := entities.NewVerbatim("compatible", "wing", nil)
+	fingerprint := entities.NewFingerprint(compatible.ID, valueobjects.TypeFact, "current-model")
+	if err := repo.StoreVerbatim(ctx, compatible); err != nil {
+		t.Fatalf("store compatible verbatim: %v", err)
+	}
+	if err := repo.StoreFingerprint(ctx, fingerprint); err != nil {
+		t.Fatalf("store compatible fingerprint: %v", err)
+	}
+	if err := repo.StoreEmbedding(ctx, entities.NewEmbedding(compatible.ID, "current-model", []float32{1, 0, 0})); err != nil {
+		t.Fatalf("store compatible embedding: %v", err)
+	}
+
+	if err := store.BuildFromStore(ctx); err == nil {
+		t.Fatal("BuildFromStore succeeded after skipping an incompatible embedding")
+	}
+	if err := store.Save(); err != nil {
+		t.Fatalf("save incomplete index: %v", err)
+	}
+
+	loaded, err := NewHNSWStore(repo, dimension, store.indexPath, DefaultHNSWOptions())
+	if err != nil {
+		t.Fatalf("create reload store: %v", err)
+	}
+	loaded.SetModelHash("current-model")
+	loadErr := loaded.Load()
+	if loaded.IsReady() {
+		t.Fatalf("Load marked an index with missing authoritative embeddings ready (error: %v)", loadErr)
+	}
+
+	fallback := NewFallbackVectorStore(loaded, NewBruteForceVectorStore(repo))
+	results, err := fallback.Search(ctx, []float32{1, 0, 0}, 5, nil, nil)
+	if err != nil {
+		t.Fatalf("fallback search after rejected load: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("fallback returned %d authoritative candidates, want 2", len(results))
+	}
+}
+
 // TestHNSWStore_SearchLexical_AndExact delegates to the underlying SQLite store.
 // Without FTS5 these calls should return gracefully (nil or error).
 func TestHNSWStore_SearchLexical_AndExact(t *testing.T) {
