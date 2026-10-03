@@ -19,7 +19,7 @@ import (
 )
 
 // setupTestStore creates a temporary HNSW store for benchmarking
-func setupTestStore(b *testing.B, dim int) (*HNSWStore, func()) {
+func setupTestStore(b *testing.B, dim int) (*HNSWStore, *storage.SQLiteRepository, func()) {
 	tmpDir := b.TempDir()
 	dbPath := tmpDir + "/test.db"
 	indexPath := tmpDir + "/vectors.bin"
@@ -38,7 +38,7 @@ func setupTestStore(b *testing.B, dim int) (*HNSWStore, func()) {
 		repo.Close()
 	}
 
-	return store, cleanup
+	return store, repo, cleanup
 }
 
 // setupTestStoreT creates a temporary HNSW store for testing (uses *testing.T)
@@ -98,20 +98,24 @@ func createAndPersistCandidate(t *testing.T, repo *storage.SQLiteRepository, dim
 	embedding := createTestVector(dim, vectorValue)
 	candidate := entities.NewCandidate(fingerprint, verbatim, embedding)
 
-	// Persist to database
-	ctx := context.Background()
-	if err := repo.StoreVerbatim(ctx, verbatim); err != nil {
-		t.Fatalf("Failed to store verbatim: %v", err)
-	}
-	if err := repo.StoreFingerprint(ctx, fingerprint); err != nil {
-		t.Fatalf("Failed to store fingerprint: %v", err)
-	}
-	emb := entities.NewEmbedding(verbatim.ID, "test-model", embedding)
-	if err := repo.StoreEmbedding(ctx, emb); err != nil {
-		t.Fatalf("Failed to store embedding: %v", err)
-	}
+	persistCandidate(t, repo, candidate)
 
 	return candidate
+}
+
+func persistCandidate(tb testing.TB, repo *storage.SQLiteRepository, candidate *entities.Candidate) {
+	tb.Helper()
+	ctx := context.Background()
+	if err := repo.StoreVerbatim(ctx, candidate.Verbatim); err != nil {
+		tb.Fatalf("Failed to store verbatim: %v", err)
+	}
+	if err := repo.StoreFingerprint(ctx, candidate.Memory); err != nil {
+		tb.Fatalf("Failed to store fingerprint: %v", err)
+	}
+	emb := entities.NewEmbedding(candidate.Verbatim.ID, "test-model", candidate.Embedding)
+	if err := repo.StoreEmbedding(ctx, emb); err != nil {
+		tb.Fatalf("Failed to store embedding: %v", err)
+	}
 }
 
 type outOfOrderEmbeddingSource struct {
@@ -231,7 +235,7 @@ func TestHNSWStoreSearchPreservesGraphRankAfterHydration(t *testing.T) {
 // BenchmarkHNSWAdd measures insertion performance
 func BenchmarkHNSWAdd(b *testing.B) {
 	dim := 384
-	store, cleanup := setupTestStore(b, dim)
+	store, _, cleanup := setupTestStore(b, dim)
 	defer cleanup()
 
 	vectors := make([][]float32, b.N)
@@ -249,18 +253,19 @@ func BenchmarkHNSWAdd(b *testing.B) {
 // BenchmarkHNSWSearch measures search performance
 func BenchmarkHNSWSearch(b *testing.B) {
 	dim := 384
-	store, cleanup := setupTestStore(b, dim)
+	store, repo, cleanup := setupTestStore(b, dim)
 	defer cleanup()
 
 	// Add some vectors first
 	numVectors := 1000
 	for i := 0; i < numVectors; i++ {
 		candidate := createTestCandidate(generateRandomVector(dim))
-		_ = store.AddCandidate(context.Background(), candidate)
+		persistCandidate(b, repo, candidate)
 	}
 
-	// Mark store as ready for search
-	_ = store.BuildFromStore(context.Background())
+	if err := store.BuildFromStore(context.Background()); err != nil {
+		b.Fatalf("BuildFromStore: %v", err)
+	}
 
 	query := generateRandomVector(dim)
 	limit := 10
@@ -278,17 +283,18 @@ func BenchmarkHNSWSearchScalability(b *testing.B) {
 
 	for _, size := range sizes {
 		b.Run(fmt.Sprintf("size_%d", size), func(b *testing.B) {
-			store, cleanup := setupTestStore(b, dim)
+			store, repo, cleanup := setupTestStore(b, dim)
 			defer cleanup()
 
 			// Add vectors
 			for i := 0; i < size; i++ {
 				candidate := createTestCandidate(generateRandomVector(dim))
-				_ = store.AddCandidate(context.Background(), candidate)
+				persistCandidate(b, repo, candidate)
 			}
 
-			// Mark store as ready
-			_ = store.BuildFromStore(context.Background())
+			if err := store.BuildFromStore(context.Background()); err != nil {
+				b.Fatalf("BuildFromStore: %v", err)
+			}
 
 			query := generateRandomVector(dim)
 			limit := 10
@@ -304,18 +310,19 @@ func BenchmarkHNSWSearchScalability(b *testing.B) {
 // BenchmarkHNSWConcurrentAccess measures concurrent search performance
 func BenchmarkHNSWConcurrentAccess(b *testing.B) {
 	dim := 384
-	store, cleanup := setupTestStore(b, dim)
+	store, repo, cleanup := setupTestStore(b, dim)
 	defer cleanup()
 
 	// Add vectors
 	numVectors := 1000
 	for i := 0; i < numVectors; i++ {
 		candidate := createTestCandidate(generateRandomVector(dim))
-		_ = store.AddCandidate(context.Background(), candidate)
+		persistCandidate(b, repo, candidate)
 	}
 
-	// Mark store as ready
-	_ = store.BuildFromStore(context.Background())
+	if err := store.BuildFromStore(context.Background()); err != nil {
+		b.Fatalf("BuildFromStore: %v", err)
+	}
 
 	queries := make([][]float32, 100)
 	for i := 0; i < 100; i++ {
@@ -338,18 +345,20 @@ func BenchmarkHNSWBuildTime(b *testing.B) {
 	dim := 384
 	numVectors := 2000
 
-	store, cleanup := setupTestStore(b, dim)
+	store, repo, cleanup := setupTestStore(b, dim)
 	defer cleanup()
 
 	// Pre-populate store
 	for j := 0; j < numVectors; j++ {
 		candidate := createTestCandidate(generateRandomVector(dim))
-		_ = store.AddCandidate(context.Background(), candidate)
+		persistCandidate(b, repo, candidate)
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = store.BuildFromStore(context.Background())
+		if err := store.BuildFromStore(context.Background()); err != nil {
+			b.Fatalf("BuildFromStore: %v", err)
+		}
 	}
 }
 
@@ -404,6 +413,27 @@ func TestHNSWBasicOperations(t *testing.T) {
 	// Note: results may be empty because the candidates are not persisted to SQLite
 	// This is expected behavior for this test
 	t.Logf("Search returned %d results", len(results))
+}
+
+func TestPersistedHNSWBenchmarkFixtureBuildsExpectedIndex(t *testing.T) {
+	store, repo, cleanup := setupTestStoreT(t, 4)
+	defer cleanup()
+	candidate := createTestCandidate([]float32{1, 0, 0, 0})
+
+	persistCandidate(t, repo, candidate)
+	if err := store.BuildFromStore(context.Background()); err != nil {
+		t.Fatalf("BuildFromStore: %v", err)
+	}
+	if got := store.Stats(); got != 1 {
+		t.Fatalf("index contains %d vectors, want 1 persisted vector", got)
+	}
+	results, err := store.Search(context.Background(), []float32{1, 0, 0, 0}, 1, nil, nil)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("Search returned %d results, want 1", len(results))
+	}
 }
 
 // TestHNSWDelete tests deletion
