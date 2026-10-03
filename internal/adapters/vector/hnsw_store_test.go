@@ -916,9 +916,9 @@ func TestHNSWStore_ClearAll(t *testing.T) {
 		t.Fatalf("ClearAll: %v", err)
 	}
 
-	// After ClearAll the index is reset and no longer ready.
-	if store.IsReady() {
-		t.Error("expected store to be NOT ready after ClearAll")
+	// An empty graph is a valid searchable index after ClearAll.
+	if !store.IsReady() {
+		t.Error("expected empty store to remain ready after ClearAll")
 	}
 	if store.Stats() != 0 {
 		t.Errorf("Stats() = %d after ClearAll, want 0", store.Stats())
