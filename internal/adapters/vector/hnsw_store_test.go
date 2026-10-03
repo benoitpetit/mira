@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/benoitpetit/mira/internal/adapters/storage"
@@ -722,6 +723,50 @@ func TestHNSWStore_SetModelHash(t *testing.T) {
 	defer cleanup()
 	// Must not panic.
 	store.SetModelHash("abc123")
+}
+
+func TestHNSWStoreBuildFromStoreKeepsIncompatibleEmbeddingsNotReady(t *testing.T) {
+	const dimension = 3
+	store, repo, cleanup := setupTestStoreT(t, dimension)
+	defer cleanup()
+	ctx := context.Background()
+	store.SetModelHash("current-model")
+
+	modelMismatch := createAndPersistCandidate(t, repo, dimension, "wing", nil, 0.1)
+
+	wrongDimension := entities.NewVerbatim("wrong dimension", "wing", nil)
+	fingerprint := entities.NewFingerprint(wrongDimension.ID, valueobjects.TypeFact, "current-model")
+	if err := repo.StoreVerbatim(ctx, wrongDimension); err != nil {
+		t.Fatalf("store wrong-dimension verbatim: %v", err)
+	}
+	if err := repo.StoreFingerprint(ctx, fingerprint); err != nil {
+		t.Fatalf("store wrong-dimension fingerprint: %v", err)
+	}
+	if err := repo.StoreEmbedding(ctx, entities.NewEmbedding(wrongDimension.ID, "current-model", []float32{1, 0})); err != nil {
+		t.Fatalf("store wrong-dimension embedding: %v", err)
+	}
+
+	err := store.BuildFromStore(ctx)
+	if err == nil {
+		t.Fatal("BuildFromStore succeeded after skipping authoritative embeddings")
+	}
+	if !strings.Contains(err.Error(), "model hash mismatch: 1") || !strings.Contains(err.Error(), "dimension mismatch: 1") {
+		t.Fatalf("BuildFromStore error = %q, want mismatch counts", err)
+	}
+	if store.IsReady() {
+		t.Fatal("index reported ready despite skipped authoritative embeddings")
+	}
+
+	// Startup keeps this index behind a fallback wrapper; a not-ready partial
+	// graph must therefore leave the authoritative brute-force path available.
+	fallback := NewFallbackVectorStore(store, NewBruteForceVectorStore(repo))
+	results, err := fallback.Search(ctx, []float32{1, 0, 0}, 5, nil, nil)
+	if err != nil {
+		t.Fatalf("fallback search: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("fallback returned %d candidates, want both authoritative embeddings (including %v)", len(results), modelMismatch.ID())
+	}
 }
 
 // TestHNSWStore_SearchLexical_AndExact delegates to the underlying SQLite store.

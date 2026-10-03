@@ -412,13 +412,17 @@ func (h *HNSWStore) BuildFromStore(ctx context.Context) error {
 	h.ready = false
 
 	count := 0
+	modelHashMismatches := 0
+	dimensionMismatches := 0
 	for _, emb := range embeddings {
 		if h.modelHash != "" && emb.ModelHash != "" && emb.ModelHash != h.modelHash {
 			log.Printf("[Vector] Warning: skipping embedding %s from model %s; expected %s", emb.ID, emb.ModelHash, h.modelHash)
+			modelHashMismatches++
 			continue
 		}
 		if len(emb.Vector) != h.dimension {
 			log.Printf("[Vector] Warning: skipping embedding %s with wrong dimension: got %d, expected %d", emb.ID, len(emb.Vector), h.dimension)
+			dimensionMismatches++
 			continue
 		}
 		// Add to HNSW
@@ -432,6 +436,10 @@ func (h *HNSWStore) BuildFromStore(ctx context.Context) error {
 		}
 		h.graph.Add(n)
 		count++
+	}
+
+	if modelHashMismatches > 0 || dimensionMismatches > 0 {
+		return fmt.Errorf("HNSW index incomplete: skipped authoritative embeddings (model hash mismatch: %d, dimension mismatch: %d)", modelHashMismatches, dimensionMismatches)
 	}
 
 	h.ready = true
