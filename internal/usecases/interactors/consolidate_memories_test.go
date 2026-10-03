@@ -419,8 +419,10 @@ func TestConsolidate_CustomThreshold(t *testing.T) {
 
 // mockConsolidateVectorStore captures AddCandidate calls for consolidation tests.
 type mockConsolidateVectorStore struct {
-	addFunc    func(ctx context.Context, c *entities.Candidate) error
-	deleteFunc func(ctx context.Context, id uuid.UUID) error
+	addFunc      func(ctx context.Context, c *entities.Candidate) error
+	deleteFunc   func(ctx context.Context, id uuid.UUID) error
+	rebuildFunc  func(ctx context.Context) error
+	rebuildCalls int
 }
 
 func (m *mockConsolidateVectorStore) Search(ctx context.Context, vector []float32, limit int, wing, room *string) ([]*entities.Candidate, error) {
@@ -443,6 +445,13 @@ func (m *mockConsolidateVectorStore) Delete(ctx context.Context, id uuid.UUID) e
 }
 func (m *mockConsolidateVectorStore) ClearAll(ctx context.Context) error { return nil }
 func (m *mockConsolidateVectorStore) ClearByRoom(ctx context.Context, wing string, room *string) error {
+	return nil
+}
+func (m *mockConsolidateVectorStore) Rebuild(ctx context.Context) error {
+	m.rebuildCalls++
+	if m.rebuildFunc != nil {
+		return m.rebuildFunc(ctx)
+	}
 	return nil
 }
 
@@ -476,10 +485,11 @@ func TestRevokeConsolidationUsesAtomicLifecycleTransaction(t *testing.T) {
 	repo.verbatims[synthesisID] = synthesis
 	repo.fingerprints[uuid.New()] = entities.NewFingerprint(sourceID, valueobjects.TypeFact, "test-model")
 
-	if err := NewRevokeConsolidation(repo).Execute(ctx, synthesisID); err != nil {
+	vectorStore := &mockConsolidateVectorStore{}
+	if err := NewRevokeConsolidation(repo, vectorStore).Execute(ctx, synthesisID); err != nil {
 		t.Fatalf("first revoke failed: %v", err)
 	}
-	if err := NewRevokeConsolidation(repo).Execute(ctx, synthesisID); err != nil {
+	if err := NewRevokeConsolidation(repo, vectorStore).Execute(ctx, synthesisID); err != nil {
 		t.Fatalf("second revoke should be idempotent: %v", err)
 	}
 	if repo.transactionalLifecycleCalls != 4 {
@@ -490,5 +500,69 @@ func TestRevokeConsolidationUsesAtomicLifecycleTransaction(t *testing.T) {
 	}
 	if synthesis.LifecycleState != entities.LifecycleContested {
 		t.Errorf("synthesis lifecycle = %q, want contested", synthesis.LifecycleState)
+	}
+	if vectorStore.rebuildCalls != 2 {
+		t.Errorf("vector rebuild calls = %d, want one per idempotent revoke", vectorStore.rebuildCalls)
+	}
+}
+
+func TestRevokeConsolidationRejectsMalformedSourceBeforeMutation(t *testing.T) {
+	ctx := context.Background()
+	synthesisID := uuid.New()
+	synthesis := &entities.Verbatim{
+		ID:             synthesisID,
+		LifecycleState: entities.LifecycleActive,
+		Metadata:       map[string]any{"consolidated_from": []any{"not-a-uuid"}},
+	}
+	repo := &mockConsolidateRepository{
+		mockStoreRepository: newMockStoreRepository(),
+		getVerbatimFunc: func(_ context.Context, id uuid.UUID) (*entities.Verbatim, error) {
+			if id == synthesisID {
+				return synthesis, nil
+			}
+			return nil, errors.New("memory not found")
+		},
+	}
+	if err := NewRevokeConsolidation(repo, &mockConsolidateVectorStore{}).Execute(ctx, synthesisID); err == nil {
+		t.Fatal("expected malformed source metadata to fail")
+	}
+	if repo.transactionalLifecycleCalls != 0 {
+		t.Fatalf("lifecycle writes = %d, want none", repo.transactionalLifecycleCalls)
+	}
+	if synthesis.LifecycleState != entities.LifecycleActive {
+		t.Fatalf("synthesis lifecycle = %q, want unchanged active", synthesis.LifecycleState)
+	}
+}
+
+func TestRevokeConsolidationReportsCommittedRepairFailure(t *testing.T) {
+	ctx := context.Background()
+	sourceID := uuid.New()
+	synthesisID := uuid.New()
+	source := &entities.Verbatim{ID: sourceID, LifecycleState: entities.LifecycleSuperseded}
+	synthesis := &entities.Verbatim{ID: synthesisID, LifecycleState: entities.LifecycleActive, Metadata: map[string]any{"consolidated_from": []string{sourceID.String()}}}
+	repo := &mockConsolidateRepository{
+		mockStoreRepository: newMockStoreRepository(),
+		getVerbatimFunc: func(_ context.Context, id uuid.UUID) (*entities.Verbatim, error) {
+			if id == sourceID {
+				return source, nil
+			}
+			if id == synthesisID {
+				return synthesis, nil
+			}
+			return nil, errors.New("memory not found")
+		},
+	}
+	repo.verbatims[sourceID] = source
+	repo.fingerprints[uuid.New()] = entities.NewFingerprint(sourceID, valueobjects.TypeFact, "test-model")
+	vectorStore := &mockConsolidateVectorStore{rebuildFunc: func(context.Context) error { return errors.New("rebuild failed") }}
+	if err := NewRevokeConsolidation(repo, vectorStore).Execute(ctx, synthesisID); err == nil || !strings.Contains(err.Error(), "committed") {
+		t.Fatalf("expected truthful committed repair error, got %v", err)
+	}
+	if source.LifecycleState != entities.LifecycleActive || synthesis.LifecycleState != entities.LifecycleContested {
+		t.Fatalf("SQL lifecycle not committed: source=%q synthesis=%q", source.LifecycleState, synthesis.LifecycleState)
+	}
+	vectorStore.rebuildFunc = nil
+	if err := NewRevokeConsolidation(repo, vectorStore).Execute(ctx, synthesisID); err != nil {
+		t.Fatalf("retry after repair failure failed: %v", err)
 	}
 }
