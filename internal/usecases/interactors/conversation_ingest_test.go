@@ -1,6 +1,7 @@
 package interactors
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
@@ -75,5 +76,22 @@ func TestConversationMemoryInputsSelectsAndAnnotatesMessages(t *testing.T) {
 	}
 	if inputs[1].Metrics["role"] != "assistant" || inputs[1].Metrics["message_index"] != 2 {
 		t.Errorf("metrics = %#v", inputs[1].Metrics)
+	}
+}
+
+func TestValidateConversationMemoryInputsUsesStoreContentLimit(t *testing.T) {
+	inputs := []StoreMemoryInput{
+		{Content: "four", Wing: "api"},
+		{Content: "five!", Wing: "api"},
+	}
+	validation := ValidateConversationMemoryInputs(inputs, 4)
+	if len(validation) != len(inputs) {
+		t.Fatalf("got %d validation results for %d inputs", len(validation), len(inputs))
+	}
+	if validation[0] != nil {
+		t.Errorf("content at the configured limit failed validation: %v", validation[0])
+	}
+	if validation[1] == nil || !strings.Contains(validation[1].Error(), "maximum length of 4") {
+		t.Errorf("content above the configured limit error = %v", validation[1])
 	}
 }

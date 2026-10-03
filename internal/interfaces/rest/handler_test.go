@@ -184,6 +184,7 @@ type suite struct {
 	causal      *fakeCausal
 	status      *fakeStatus
 	audit       *fakeAudit
+	handler     *rest.Handler
 	server      *httptest.Server
 }
 
@@ -209,6 +210,7 @@ func newSuite(t *testing.T) *suite {
 		s.search, s.consolidate, s.clear, s.timeline,
 		s.archive, s.causal, s.status, s.audit, nil,
 	)
+	s.handler = h
 	srv := rest.NewServer(h, ":0", "", nil, 5*time.Second, 5*time.Second)
 	s.server = httptest.NewServer(srv.Handler)
 	t.Cleanup(s.server.Close)
@@ -331,6 +333,45 @@ func TestHandleIngest_DryRunDoesNotStore(t *testing.T) {
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	if len(s.store.inputs) != 0 {
+		t.Errorf("dry run stored %#v", s.store.inputs)
+	}
+}
+
+func TestHandleIngest_DryRunReportsConfiguredContentLimitFailures(t *testing.T) {
+	s := newSuite(t)
+	s.handler.SetMaxContentLength(4)
+	resp := s.post("/api/v1/memories/ingest", map[string]any{
+		"wing":      "test",
+		"min_chars": 1,
+		"dry_run":   true,
+		"messages": []map[string]string{
+			{"role": "assistant", "content": "excluded"},
+			{"role": "user", "content": "four"},
+			{"role": "user", "content": "five!"},
+		},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	var out struct {
+		Selected            int  `json:"selected"`
+		Stored              int  `json:"stored"`
+		Failed              int  `json:"failed"`
+		WouldFailValidation int  `json:"would_fail_validation"`
+		DryRun              bool `json:"dry_run"`
+		ValidationErrors    []struct {
+			MessageIndex int    `json:"message_index"`
+			Error        string `json:"error"`
+		} `json:"validation_errors"`
+	}
+	decodeJSON(t, resp, &out)
+	if out.Selected != 2 || out.Stored != 0 || out.Failed != 0 || out.WouldFailValidation != 1 || !out.DryRun {
+		t.Errorf("dry-run response = %#v", out)
+	}
+	if len(out.ValidationErrors) != 1 || out.ValidationErrors[0].MessageIndex != 3 || !strings.Contains(out.ValidationErrors[0].Error, "maximum length of 4") {
+		t.Errorf("dry-run validation errors = %#v", out.ValidationErrors)
 	}
 	if len(s.store.inputs) != 0 {
 		t.Errorf("dry run stored %#v", s.store.inputs)
@@ -587,6 +628,17 @@ func TestOpenAPIConversationIngestDeclaresMessageLimit(t *testing.T) {
 	messages := properties["messages"].(map[string]any)
 	if messages["maxItems"] != float64(1000) {
 		t.Fatalf("ConversationIngestRequest.messages maxItems = %v, want 1000", messages["maxItems"])
+	}
+	ingestResponse := schemas["ConversationIngestResponse"].(map[string]any)
+	responseProperties := ingestResponse["properties"].(map[string]any)
+	if responseProperties["would_fail_validation"].(map[string]any)["type"] != "integer" {
+		t.Fatalf("ConversationIngestResponse.would_fail_validation schema = %#v", responseProperties["would_fail_validation"])
+	}
+	validationErrors := responseProperties["validation_errors"].(map[string]any)
+	validationItem := validationErrors["items"].(map[string]any)
+	validationProperties := validationItem["properties"].(map[string]any)
+	if validationProperties["message_index"].(map[string]any)["type"] != "integer" || validationProperties["error"].(map[string]any)["type"] != "string" {
+		t.Fatalf("ConversationIngestResponse.validation_errors item schema = %#v", validationItem)
 	}
 }
 

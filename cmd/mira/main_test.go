@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -438,6 +439,90 @@ func TestIngestRequiresExactlyOneInputMode(t *testing.T) {
 		if err := cmd.Execute(); err == nil {
 			t.Errorf("args %v: expected input mode validation error", args)
 		}
+	}
+}
+
+func TestIngestDryRunReportsConfiguredContentValidation(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("mcp:\n  max_content_length: 4\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	conversationPath := filepath.Join(dir, "conversation.json")
+	if err := os.WriteFile(conversationPath, []byte(`[{"role":"assistant","content":"excluded"},{"role":"user","content":"five!"}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	previousConfigPath := globalFlags.configPath
+	globalFlags.configPath = configPath
+	t.Cleanup(func() { globalFlags.configPath = previousConfigPath })
+
+	readPipe, writePipe, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousStdout := os.Stdout
+	os.Stdout = writePipe
+	cmd := newIngestCmd()
+	cmd.SetArgs([]string{"--file", conversationPath, "--wing", "api", "--min-chars", "1", "--dry-run"})
+	commandErr := cmd.Execute()
+	_ = writePipe.Close()
+	os.Stdout = previousStdout
+	output, readErr := io.ReadAll(readPipe)
+	_ = readPipe.Close()
+	if commandErr != nil {
+		t.Fatalf("ingest dry-run failed: %v", commandErr)
+	}
+	if readErr != nil {
+		t.Fatalf("read dry-run output: %v", readErr)
+	}
+	if !strings.Contains(string(output), "1 fail") || !strings.Contains(string(output), "maximum length of 4") || !strings.Contains(string(output), "Extraction and storage are not attempted") || !strings.Contains(string(output), "[2]") {
+		t.Fatalf("dry-run output does not report input validation accurately:\n%s", output)
+	}
+}
+
+func TestIngestStreamDryRunReportsSourceLineValidation(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("mcp:\n  max_content_length: 4\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	previousConfigPath := globalFlags.configPath
+	globalFlags.configPath = configPath
+	t.Cleanup(func() { globalFlags.configPath = previousConfigPath })
+
+	stdin, stdinWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stdinWriter.WriteString("{\"role\":\"assistant\",\"content\":\"excluded\"}\n{\"role\":\"user\",\"content\":\"five!\"}\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = stdinWriter.Close()
+	previousStdin := os.Stdin
+	os.Stdin = stdin
+	t.Cleanup(func() { os.Stdin = previousStdin })
+
+	readPipe, writePipe, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousStdout := os.Stdout
+	os.Stdout = writePipe
+	t.Cleanup(func() { os.Stdout = previousStdout })
+	commandErr := ingestConversationStream("api", nil, false, 1, true)
+	_ = writePipe.Close()
+	os.Stdout = previousStdout
+	_ = stdin.Close()
+	output, readErr := io.ReadAll(readPipe)
+	_ = readPipe.Close()
+	if commandErr != nil {
+		t.Fatalf("stream ingest dry-run failed: %v", commandErr)
+	}
+	if readErr != nil {
+		t.Fatalf("read stream dry-run output: %v", readErr)
+	}
+	if !strings.Contains(string(output), "line 2") || !strings.Contains(string(output), "maximum length of 4") || !strings.Contains(string(output), "Extraction and storage are not attempted") {
+		t.Fatalf("stream dry-run output does not report the source line accurately:\n%s", output)
 	}
 }
 

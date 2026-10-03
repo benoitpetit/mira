@@ -346,6 +346,14 @@ func buildSchemas() map[string]oaSchema {
 	boolean := func() oaSchema { return oaSchema{Type: "boolean"} }
 	uuid := func() oaSchema { return oaSchema{Type: "string", Format: "uuid"} }
 	arr := func(item oaSchema) oaSchema { return oaSchema{Type: "array", Items: &item} }
+	validationError := oaSchema{
+		Type: "object",
+		Properties: map[string]oaSchema{
+			"message_index": integer(),
+			"error":         str(),
+		},
+		Required: []string{"message_index", "error"},
+	}
 	maxIngestItems := maxConversationItems
 	ingestMessages := arr(ref("ConversationMessage"))
 	ingestMessages.MaxItems = &maxIngestItems
@@ -417,10 +425,12 @@ func buildSchemas() map[string]oaSchema {
 		"ConversationIngestResponse": {
 			Type: "object",
 			Properties: map[string]oaSchema{
-				"selected": integer(),
-				"stored":   integer(),
-				"failed":   integer(),
-				"dry_run":  boolean(),
+				"selected":              integer(),
+				"stored":                integer(),
+				"failed":                integer(),
+				"would_fail_validation": integer(),
+				"validation_errors":     arr(validationError),
+				"dry_run":               boolean(),
 			},
 		},
 		"UpdateMemoryRequest": {

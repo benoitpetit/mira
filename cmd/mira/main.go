@@ -2066,17 +2066,31 @@ Examples:
 			if len(inputs) == 0 {
 				return fmt.Errorf("ingest: no messages matched the selected roles and --min-chars=%d", minChars)
 			}
-			if dryRun {
-				fmt.Printf("Dry-run: %d of %d conversation messages would be extracted as history memories.\n", len(inputs), len(messages))
-				for index, input := range inputs {
-					fmt.Printf("  [%d] role=%-9s len=%d %q\n", index+1, input.Metrics["role"], len([]rune(input.Content)), truncateRunes(input.Content, 80))
-				}
-				return nil
-			}
-
 			cfg, err := loadConfig()
 			if err != nil {
 				return err
+			}
+			if dryRun {
+				failed := 0
+				validation := interactors.ValidateConversationMemoryInputs(inputs, cfg.MCP.MaxContentLength)
+				for _, err := range validation {
+					if err != nil {
+						failed++
+					}
+				}
+				fmt.Printf("Dry-run: %d of %d messages selected; %d pass input validation and %d fail. Extraction and storage are not attempted.\n", len(inputs), len(messages), len(inputs)-failed, failed)
+				for index, input := range inputs {
+					status := "passes input validation"
+					if validation[index] != nil {
+						status = "validation error: " + validation[index].Error()
+					}
+					messageIndex, ok := input.Metrics["message_index"].(int)
+					if !ok {
+						messageIndex = index + 1
+					}
+					fmt.Printf("  [%d] role=%-9s len=%d %s %q\n", messageIndex, input.Metrics["role"], len([]rune(input.Content)), status, truncateRunes(input.Content, 80))
+				}
+				return nil
 			}
 			applyStoragePath(cfg)
 			application, err := app.NewApplication(cfg)
@@ -2112,11 +2126,11 @@ Examples:
 
 func ingestConversationStream(wing string, room *string, includeAssistant bool, minChars int, dryRun bool) error {
 	var store func(context.Context, interactors.StoreMemoryInput) error
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
 	if !dryRun {
-		cfg, err := loadConfig()
-		if err != nil {
-			return err
-		}
 		applyStoragePath(cfg)
 		application, err := app.NewApplication(cfg)
 		if err != nil {
@@ -2132,7 +2146,7 @@ func ingestConversationStream(wing string, room *string, includeAssistant bool, 
 
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 4096), 1024*1024)
-	line, selected, stored, failed := 0, 0, 0, 0
+	line, selected, stored, failed, wouldFail := 0, 0, 0, 0, 0
 	for scanner.Scan() {
 		line++
 		raw := strings.TrimSpace(scanner.Text())
@@ -2158,7 +2172,13 @@ func ingestConversationStream(wing string, room *string, includeAssistant bool, 
 		input.Metrics["source"] = "conversation_stream"
 		input.Metrics["message_index"] = line
 		if dryRun {
-			fmt.Printf("Dry-run: line %d role=%-9s len=%d %q\n", line, input.Metrics["role"], len([]rune(input.Content)), truncateRunes(input.Content, 80))
+			status := "passes input validation"
+			validation := interactors.ValidateConversationMemoryInputs([]interactors.StoreMemoryInput{input}, cfg.MCP.MaxContentLength)[0]
+			if validation != nil {
+				status = "validation error: " + validation.Error()
+				wouldFail++
+			}
+			fmt.Printf("Dry-run: line %d role=%-9s len=%d %s %q\n", line, input.Metrics["role"], len([]rune(input.Content)), status, truncateRunes(input.Content, 80))
 			continue
 		}
 		if err := store(context.Background(), input); err != nil {
@@ -2175,7 +2195,7 @@ func ingestConversationStream(wing string, room *string, includeAssistant bool, 
 		return fmt.Errorf("ingest: no streamed messages matched the selected roles and --min-chars=%d", minChars)
 	}
 	if dryRun {
-		fmt.Printf("Stream dry-run complete: %d message(s) would be extracted as history memories.\n", selected)
+		fmt.Printf("Stream dry-run complete: %d message(s) selected; %d pass input validation and %d fail. Extraction and storage are not attempted.\n", selected, selected-wouldFail, wouldFail)
 		return nil
 	}
 	fmt.Printf("Conversation stream complete: %d stored, %d failed (selected: %d)\n", stored, failed, selected)

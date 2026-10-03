@@ -86,6 +86,11 @@ type (
 	}
 )
 
+type conversationValidationError struct {
+	MessageIndex int    `json:"message_index"`
+	Error        string `json:"error"`
+}
+
 // ── Handler ───────────────────────────────────────────────────────────────────
 
 // Handler is the REST API controller.
@@ -314,12 +319,24 @@ func (h *Handler) handleIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response := struct {
-		Selected int  `json:"selected"`
-		Stored   int  `json:"stored"`
-		Failed   int  `json:"failed"`
-		DryRun   bool `json:"dry_run"`
-	}{Selected: len(inputs), DryRun: body.DryRun}
+		Selected            int                           `json:"selected"`
+		Stored              int                           `json:"stored"`
+		Failed              int                           `json:"failed"`
+		WouldFailValidation int                           `json:"would_fail_validation"`
+		ValidationErrors    []conversationValidationError `json:"validation_errors"`
+		DryRun              bool                          `json:"dry_run"`
+	}{Selected: len(inputs), ValidationErrors: make([]conversationValidationError, 0), DryRun: body.DryRun}
 	if body.DryRun {
+		for index, err := range interactors.ValidateConversationMemoryInputs(inputs, h.maxContentLength) {
+			if err != nil {
+				response.WouldFailValidation++
+				messageIndex, ok := inputs[index].Metrics["message_index"].(int)
+				if !ok {
+					messageIndex = index + 1
+				}
+				response.ValidationErrors = append(response.ValidationErrors, conversationValidationError{MessageIndex: messageIndex, Error: err.Error()})
+			}
+		}
 		writeJSON(w, http.StatusOK, response)
 		return
 	}

@@ -1316,6 +1316,40 @@ func TestHandleIngestStoresSelectedConversationMessages(t *testing.T) {
 	}
 }
 
+func TestHandleIngestDryRunReportsConfiguredContentValidation(t *testing.T) {
+	storeCalls := 0
+	controller := newTestController(func(c *Controller) {
+		c.limits.MaxContentLength = 4
+		c.storeMemory = &mockStoreMemory{executeFunc: func(_ context.Context, _ interactors.StoreMemoryInput) (*interactors.StoreMemoryOutput, error) {
+			storeCalls++
+			return &interactors.StoreMemoryOutput{}, nil
+		}}
+	})
+
+	result, err := controller.handleIngest(context.Background(), map[string]interface{}{
+		"messages": []interface{}{
+			map[string]interface{}{"role": "assistant", "content": "excluded"},
+			map[string]interface{}{"role": "user", "content": "four"},
+			map[string]interface{}{"role": "user", "content": "five!"},
+		},
+		"wing":      "api",
+		"min_chars": float64(1),
+		"dry_run":   true,
+	})
+	if err != nil {
+		t.Fatalf("handleIngest dry-run failed: %v", err)
+	}
+	text := result.Content[0].(mcptypes.TextContent).Text
+	for _, want := range []string{"2 of 3 messages selected", "1 pass input validation", "1 fail", "Extraction and storage are not attempted", "message 3: content exceeds maximum length of 4"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("dry-run result %q missing %q", text, want)
+		}
+	}
+	if storeCalls != 0 {
+		t.Errorf("dry-run executed store %d times", storeCalls)
+	}
+}
+
 // ============================================================================
 // RegisterTools
 // ============================================================================

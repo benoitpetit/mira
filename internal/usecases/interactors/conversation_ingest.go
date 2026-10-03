@@ -179,3 +179,13 @@ func ConversationMemoryInputs(messages []ConversationMessage, wing string, room 
 	}
 	return inputs, nil
 }
+
+// ValidateConversationMemoryInputs reports preflight errors using the same
+// constraints as StoreMemory.Execute. The returned slice aligns with inputs.
+func ValidateConversationMemoryInputs(inputs []StoreMemoryInput, maxContentLength int) []error {
+	errors := make([]error, len(inputs))
+	for index, input := range inputs {
+		errors[index] = input.ValidateWithMaxContentLength(maxContentLength)
+	}
+	return errors
+}

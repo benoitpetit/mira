@@ -687,7 +687,18 @@ func (c *Controller) handleIngest(ctx context.Context, args map[string]interface
 		return nil, fmt.Errorf("no messages matched the selected roles and min_chars=%d", minChars)
 	}
 	if dryRun, _ := args["dry_run"].(bool); dryRun {
-		return mcpTextResult(fmt.Sprintf("Dry-run: %d of %d conversation messages would be extracted as history memories.", len(inputs), len(messages))), nil
+		validation := interactors.ValidateConversationMemoryInputs(inputs, c.limits.MaxContentLength)
+		validationErrors := make([]string, 0)
+		for index, err := range validation {
+			if err != nil {
+				validationErrors = append(validationErrors, fmt.Sprintf("message %v: %v", inputs[index].Metrics["message_index"], err))
+			}
+		}
+		preview := fmt.Sprintf("Dry-run: %d of %d messages selected; %d pass input validation and %d fail. Extraction and storage are not attempted.", len(inputs), len(messages), len(inputs)-len(validationErrors), len(validationErrors))
+		if len(validationErrors) > 0 {
+			preview += " Validation errors: " + strings.Join(validationErrors, "; ")
+		}
+		return mcpTextResult(preview), nil
 	}
 
 	stored, failed := 0, 0
