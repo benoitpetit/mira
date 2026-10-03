@@ -1,12 +1,15 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -39,6 +42,7 @@ type closeTrackingRepository struct {
 type blockingCloseEmbedder struct {
 	started chan struct{}
 	release chan struct{}
+	err     error
 	once    sync.Once
 	calls   atomic.Int32
 }
@@ -51,12 +55,29 @@ func (e *blockingCloseEmbedder) Close() error {
 	e.calls.Add(1)
 	e.once.Do(func() { close(e.started) })
 	<-e.release
-	return nil
+	return e.err
 }
 
 type channelCloseRepository struct {
 	ports.Repository
 	closed chan struct{}
+}
+
+type synchronizedBuffer struct {
+	mu sync.Mutex
+	bytes.Buffer
+}
+
+func (b *synchronizedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.Buffer.Write(p)
+}
+
+func (b *synchronizedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.Buffer.String()
 }
 
 func (r *channelCloseRepository) Close() error {
@@ -120,11 +141,54 @@ func TestApplicationCloseClosesEmbedderAndJoinsErrors(t *testing.T) {
 	if repository.calls != 1 {
 		t.Errorf("repository Close calls = %d, want 1", repository.calls)
 	}
-	if err := a.Close(); err != nil {
-		t.Errorf("second Close error = %v, want nil for no-op close", err)
+	if err := a.Close(); !errors.Is(err, embedderErr) || !errors.Is(err, repositoryErr) {
+		t.Errorf("second Close error = %v, want the same stored cleanup errors", err)
 	}
 	if embedder.calls != 1 || repository.calls != 1 {
 		t.Errorf("second Close repeated cleanup: embedder=%d repository=%d", embedder.calls, repository.calls)
+	}
+}
+
+func TestApplicationCloseContextReturnsSharedCleanupErrorToConcurrentAndLaterCallers(t *testing.T) {
+	embedderErr := errors.New("blocked embedder close failed")
+	repositoryErr := errors.New("repository close failed")
+	embedder := &blockingCloseEmbedder{started: make(chan struct{}), release: make(chan struct{}), err: embedderErr}
+	repository := &closeTrackingRepository{err: repositoryErr}
+	a := &Application{embedder: embedder, repository: repository}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := a.CloseContext(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("initial CloseContext error = %v, want deadline exceeded", err)
+	}
+	select {
+	case <-embedder.started:
+	case <-time.After(time.Second):
+		t.Fatal("background cleanup did not start")
+	}
+
+	secondStarted := make(chan struct{})
+	secondDone := make(chan error, 1)
+	go func() {
+		close(secondStarted)
+		secondDone <- a.CloseContext(context.Background())
+	}()
+	<-secondStarted
+	close(embedder.release)
+
+	select {
+	case err := <-secondDone:
+		if !errors.Is(err, embedderErr) || !errors.Is(err, repositoryErr) {
+			t.Fatalf("concurrent CloseContext error = %v, want both cleanup errors", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("concurrent CloseContext did not return after cleanup")
+	}
+	if err := a.Close(); !errors.Is(err, embedderErr) || !errors.Is(err, repositoryErr) {
+		t.Fatalf("later Close error = %v, want same stored cleanup errors", err)
+	}
+	if embedder.calls.Load() != 1 || repository.calls != 1 {
+		t.Fatalf("cleanup repeated: embedder=%d repository=%d", embedder.calls.Load(), repository.calls)
 	}
 }
 
@@ -200,6 +264,83 @@ func TestApplicationRunReturnsAfterShutdownTimeoutWhileCleanupContinues(t *testi
 	case <-repository.closed:
 	case <-time.After(time.Second):
 		t.Fatal("deferred cleanup did not finish after embedder close returned")
+	}
+}
+
+func TestRunWithSignalsDoesNotRecheckExpiredShutdownContext(t *testing.T) {
+	app, err := NewApplication(minimalCfg(t))
+	if err != nil {
+		t.Fatalf("NewApplication: %v", err)
+	}
+	embedder := &blockingCloseEmbedder{started: make(chan struct{}), release: make(chan struct{})}
+	app.embedder = embedder
+
+	app.config.MCP.Transport = "unsupported-test-transport"
+
+	logOutput := &synchronizedBuffer{}
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logOutput, nil)))
+	defer slog.SetDefault(previousLogger)
+
+	signals := make(chan os.Signal, 1)
+	signals <- os.Interrupt
+	runDone := make(chan error, 1)
+	go func() { runDone <- app.runWithSignals(signals, 25*time.Millisecond) }()
+
+	select {
+	case <-embedder.started:
+	case <-time.After(time.Second):
+		t.Fatal("signal shutdown did not begin cleanup")
+	}
+	select {
+	case err := <-runDone:
+		if err != nil {
+			t.Fatalf("Run returned error = %v, want nil after signal", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Run did not return after the shutdown deadline")
+	}
+	if strings.Contains(logOutput.String(), "application cleanup did not finish before shutdown deadline") {
+		t.Fatalf("defer reported a second timeout after the signal shutdown attempt: %s", logOutput.String())
+	}
+	if got := strings.Count(logOutput.String(), "graceful shutdown did not finish before deadline"); got != 1 {
+		t.Fatalf("graceful shutdown timeout log count = %d, want 1; logs: %s", got, logOutput.String())
+	}
+
+	close(embedder.release)
+	if err := app.CloseContext(context.Background()); err != nil {
+		t.Fatalf("CloseContext after background cleanup = %v", err)
+	}
+}
+
+func TestRunWithSignalsReturnsSuccessAfterCleanupCompletes(t *testing.T) {
+	app, err := NewApplication(minimalCfg(t))
+	if err != nil {
+		t.Fatalf("NewApplication: %v", err)
+	}
+	embedder := &closeTrackingEmbedder{}
+	app.embedder = embedder
+	app.config.MCP.Transport = "unsupported-test-transport"
+
+	logOutput := &synchronizedBuffer{}
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logOutput, nil)))
+	defer slog.SetDefault(previousLogger)
+
+	signals := make(chan os.Signal, 1)
+	signals <- os.Interrupt
+	if err := app.runWithSignals(signals, time.Second); err != nil {
+		t.Fatalf("Run returned error = %v, want nil after signal", err)
+	}
+	if embedder.calls != 1 {
+		t.Fatalf("embedder Close calls = %d, want 1", embedder.calls)
+	}
+	logs := logOutput.String()
+	if got := strings.Count(logs, "graceful shutdown completed"); got != 1 {
+		t.Fatalf("graceful shutdown completion log count = %d, want 1; logs: %s", got, logs)
+	}
+	if strings.Contains(logs, "did not finish before shutdown deadline") {
+		t.Fatalf("successful shutdown logged a deadline warning: %s", logs)
 	}
 }
 

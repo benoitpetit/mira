@@ -583,8 +583,8 @@ func (a *Application) initRestAPI() {
 
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 
-// Close cleans up resources. It is safe to call multiple times; only the first
-// call performs actual cleanup (subsequent calls are no-ops).
+// Close cleans up resources once. It is safe to call multiple times; every
+// completed call returns the stored result of that shared cleanup.
 func (a *Application) Close() error {
 	return a.CloseContext(context.Background())
 }
@@ -592,9 +592,7 @@ func (a *Application) Close() error {
 // CloseContext starts cleanup once and bounds how long the caller waits.
 // Cleanup continues in the background when ctx expires.
 func (a *Application) CloseContext(ctx context.Context) error {
-	started := false
 	a.closeOnce.Do(func() {
-		started = true
 		a.closeDone = make(chan struct{})
 		go func() {
 			a.closeErr = a.closeResources()
@@ -607,10 +605,7 @@ func (a *Application) CloseContext(ctx context.Context) error {
 
 	select {
 	case <-a.closeDone:
-		if started {
-			return a.closeErr
-		}
-		return nil
+		return a.closeErr
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -856,14 +851,25 @@ func boolToInt(value bool) int {
 
 // Run starts the MCP server
 func (a *Application) Run() error {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
+	return a.runWithSignals(sigChan, 5*time.Second)
+}
+
+func (a *Application) runWithSignals(sigChan <-chan os.Signal, shutdownTimeout time.Duration) error {
 	var shutdownCtx context.Context
 	var shutdownCancel context.CancelFunc
+	cleanupAttempted := false
 	defer func() {
-		if shutdownCtx == nil {
-			shutdownCtx, shutdownCancel = context.WithTimeout(context.Background(), 5*time.Second)
-		}
 		if shutdownCancel != nil {
 			defer shutdownCancel()
+		}
+		if cleanupAttempted {
+			return
+		}
+		if shutdownCtx == nil {
+			shutdownCtx, shutdownCancel = context.WithTimeout(context.Background(), shutdownTimeout)
 		}
 		if err := a.CloseContext(shutdownCtx); err != nil {
 			slog.Warn("application cleanup did not finish before shutdown deadline", "error", err)
@@ -917,9 +923,6 @@ func (a *Application) Run() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
 	// Start the optional REST API server in a background goroutine.
 	if a.restServer != nil {
 		go func() {
@@ -953,11 +956,9 @@ func (a *Application) Run() error {
 			errChan <- fmt.Errorf("unsupported transport: %s (stdio, sse, or http supported)", a.config.MCP.Transport)
 		}
 	}()
-
-	select {
-	case sig := <-sigChan:
+	shutdownForSignal := func(sig os.Signal) error {
 		slog.Info("received shutdown signal", "signal", sig)
-		shutdownCtx, shutdownCancel = context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, shutdownCancel = context.WithTimeout(context.Background(), shutdownTimeout)
 		if sseServer != nil {
 			if err := sseServer.Shutdown(shutdownCtx); err != nil {
 				slog.Warn("sse server shutdown error", "error", err)
@@ -968,6 +969,7 @@ func (a *Application) Run() error {
 				slog.Warn("http server shutdown error", "error", err)
 			}
 		}
+		cleanupAttempted = true
 		if err := a.CloseContext(shutdownCtx); err != nil {
 			slog.Warn("graceful shutdown did not finish before deadline", "error", err)
 		} else {
@@ -975,6 +977,19 @@ func (a *Application) Run() error {
 		}
 		cancel()
 		return nil
+	}
+
+	// Prefer a signal already received while the transport was starting. Once
+	// shutdown begins, don't run another select branch that can bypass it.
+	select {
+	case sig := <-sigChan:
+		return shutdownForSignal(sig)
+	default:
+	}
+
+	select {
+	case sig := <-sigChan:
+		return shutdownForSignal(sig)
 	case err := <-errChan:
 		return err
 	case <-ctx.Done():
