@@ -273,6 +273,16 @@ func NewRecallMemory(
 	if cacheSize <= 0 {
 		cacheSize = 1000
 	}
+	rerankerTopK := config.RerankerTopK
+	if rerankerTopK <= 0 {
+		// Keep direct constructor callers safe even when Config.Validate was skipped.
+		rerankerTopK = DefaultRecallMemoryConfig().RerankerTopK
+	}
+	reranker := config.Reranker
+	if config.RerankerEnabled && reranker == nil {
+		// Initialize the shared, stateless default before the interactor is published.
+		reranker = NewHeuristicReranker()
+	}
 
 	decayRates := config.DecayRates
 	if decayRates == nil {
@@ -309,12 +319,12 @@ func NewRecallMemory(
 		searchTimeClusteringEnabled:   config.SearchTimeClusteringEnabled,
 		searchTimeClusteringThreshold: config.SearchTimeClusteringThreshold,
 		rerankerEnabled:               config.RerankerEnabled,
-		rerankerTopK:                  config.RerankerTopK,
+		rerankerTopK:                  rerankerTopK,
 		sessionMemoryBoost:            config.SessionMemoryBoost,
 		sessionCacheTTLSeconds:        config.SessionCacheTTLSeconds,
 		sessionCacheStore:             config.SessionCacheStore,
 		tagRepo:                       config.TagRepo,
-		reranker:                      config.Reranker,
+		reranker:                      reranker,
 		decayRates:                    decayRates,
 		beliefCalibration:             config.BeliefCalibration,
 		sessionCache:                  make(map[string]sessionCacheEntry),
@@ -463,9 +473,6 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 
 	// 5. Heuristic reranking on top-k candidates
 	if uc.rerankerEnabled && len(pruned) > 0 {
-		if uc.reranker == nil {
-			uc.reranker = NewHeuristicReranker()
-		}
 		pruned = uc.applyReranker(ctx, input.Query, pruned)
 	}
 

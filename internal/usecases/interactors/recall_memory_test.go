@@ -3,7 +3,9 @@ package interactors
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
+	"sync"
 	"testing"
 	"time"
 
@@ -1277,6 +1279,70 @@ func TestApplyReranker_TopKLimitsInput(t *testing.T) {
 	if receivedCount != 2 {
 		t.Errorf("expected reranker to receive 2 candidates (topK=2), got %d", receivedCount)
 	}
+}
+
+func TestNewRecallMemoryDefaultsInvalidRerankerTopK(t *testing.T) {
+	for _, topK := range []int{0, -1} {
+		t.Run(fmt.Sprintf("top_k_%d", topK), func(t *testing.T) {
+			config := DefaultRecallMemoryConfig()
+			config.RerankerEnabled = true
+			config.RerankerTopK = topK
+			var receivedCount int
+			config.Reranker = &mockRecallReranker{
+				rerankFunc: func(_ context.Context, _ string, candidates []string) ([]float64, error) {
+					receivedCount = len(candidates)
+					return make([]float64, len(candidates)), nil
+				},
+			}
+
+			uc := NewRecallMemory(
+				&mockRecallVectorStore{}, &mockRecallOverlapCache{}, &mockRecallCausalGraph{},
+				&mockRecallEmbedder{}, &mockRecallRenderer{}, config, &mockRecallMetricsCollector{}, nil,
+			)
+			candidates := []*entities.Candidate{
+				createTestCandidateWithRelevance("c0", time.Now(), 0.9),
+				createTestCandidateWithRelevance("c1", time.Now(), 0.8),
+			}
+
+			out := uc.applyReranker(context.Background(), "query", candidates)
+			if len(out) != 2 {
+				t.Fatalf("expected 2 results, got %d", len(out))
+			}
+			if receivedCount != 2 {
+				t.Fatalf("invalid topK %d should default to 30 and rerank both candidates; got %d", topK, receivedCount)
+			}
+			if uc.rerankerTopK != 30 {
+				t.Fatalf("reranker topK = %d, want local default 30", uc.rerankerTopK)
+			}
+		})
+	}
+}
+
+func TestNewRecallMemoryInitializesDefaultRerankerBeforeConcurrentUse(t *testing.T) {
+	config := DefaultRecallMemoryConfig()
+	config.RerankerEnabled = true
+	config.Reranker = nil
+	uc := NewRecallMemory(
+		&mockRecallVectorStore{}, &mockRecallOverlapCache{}, &mockRecallCausalGraph{},
+		&mockRecallEmbedder{}, &mockRecallRenderer{}, config, &mockRecallMetricsCollector{}, nil,
+	)
+	if uc.reranker == nil {
+		t.Fatal("enabled reranker should be initialized by the constructor")
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			candidate := createTestCandidateWithRelevance(fmt.Sprintf("c%d", i), time.Now(), 0.8)
+			out := uc.applyReranker(context.Background(), "query", []*entities.Candidate{candidate})
+			if len(out) != 1 {
+				t.Errorf("concurrent rerank returned %d candidates, want 1", len(out))
+			}
+		}(i)
+	}
+	wg.Wait()
 }
 
 func TestFilterCandidatesValidAt(t *testing.T) {
