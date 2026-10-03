@@ -1001,17 +1001,35 @@ func (r *PostgreSQLRepository) ClearByIDs(ctx context.Context, ids []uuid.UUID) 
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	args := postgresUUIDArguments(ids)
-	query := `DELETE FROM verbatim WHERE id IN (` + postgresPlaceholders(1, len(args)) + `)` //nolint:gosec // placeholders are generated, IDs are bound
-	result, err := r.db.ExecContext(ctx, query, args...)
+	ids = uniqueUUIDsStable(ids)
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("failed to begin clear transaction: %w", err)
 	}
-	deleted, err := result.RowsAffected()
-	if err != nil {
-		return 0, err
+	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
+
+	var count int64
+	for start := 0; start < len(ids); start += clearByIDsBatchSize {
+		if err := ctx.Err(); err != nil {
+			return 0, fmt.Errorf("clear canceled: %w", err)
+		}
+		end := min(start+clearByIDsBatchSize, len(ids))
+		args := postgresUUIDArguments(ids[start:end])
+		query := `DELETE FROM verbatim WHERE id IN (` + postgresPlaceholders(1, len(args)) + `)` //nolint:gosec // placeholders are generated, IDs are bound
+		result, err := tx.ExecContext(ctx, query, args...)
+		if err != nil {
+			return 0, fmt.Errorf("failed to clear verbatim IDs: %w", err)
+		}
+		deleted, err := result.RowsAffected()
+		if err != nil {
+			return 0, fmt.Errorf("failed to count cleared verbatims: %w", err)
+		}
+		count += deleted
 	}
-	return int(deleted), nil
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("failed to commit clear transaction: %w", err)
+	}
+	return int(count), nil
 }
 
 // StoreTags implements TagRepository

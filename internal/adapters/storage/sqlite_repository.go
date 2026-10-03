@@ -1062,6 +1062,7 @@ func (r *SQLiteRepository) ClearByIDs(ctx context.Context, ids []uuid.UUID) (int
 	if len(ids) == 0 {
 		return 0, nil
 	}
+	ids = uniqueUUIDsStable(ids)
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1069,70 +1070,84 @@ func (r *SQLiteRepository) ClearByIDs(ctx context.Context, ids []uuid.UUID) (int
 	}
 	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
 
-	count := len(ids)
+	// The causal-edge statement repeats the ID list, so 400 IDs keep its total
+	// bind count below SQLite's conservative 999-variable limit.
+	for start := 0; start < len(ids); start += clearByIDsBatchSize {
+		if err := ctx.Err(); err != nil {
+			return 0, fmt.Errorf("clear canceled: %w", err)
+		}
+		end := min(start+clearByIDsBatchSize, len(ids))
+		batch := ids[start:end]
+		placeholders := make([]string, len(batch))
+		args := make([]interface{}, 0, len(batch))
+		for i, id := range batch {
+			placeholders[i] = "?"
+			args = append(args, id[:])
+		}
+		idList := strings.Join(placeholders, ", ")
+		causalArgs := make([]interface{}, 0, len(args)*2)
+		causalArgs = append(causalArgs, args...)
+		causalArgs = append(causalArgs, args...)
 
-	placeholders := make([]string, len(ids))
-	args := make([]interface{}, 0, len(ids))
-	for i, id := range ids {
-		placeholders[i] = "?"
-		args = append(args, id[:])
-	}
-	idList := strings.Join(placeholders, ", ")
-
-	// idList contains only generated '?' placeholders; IDs remain bound parameters.
-	//nolint:gosec // query structure is generated from placeholders, values are bound
-	_, _ = tx.ExecContext(ctx,
-		`DELETE FROM causal_edges WHERE from_id IN (
+		// idList contains only generated '?' placeholders; IDs remain bound parameters.
+		//nolint:gosec // query structure is generated from placeholders, values are bound
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM causal_edges WHERE from_id IN (
+				SELECT id FROM fingerprints WHERE verbatim_id IN (`+idList+`)
+			) OR to_id IN (
+				SELECT id FROM fingerprints WHERE verbatim_id IN (`+idList+`)
+			)`, causalArgs...); err != nil {
+			return 0, fmt.Errorf("failed to clear causal edges: %w", err)
+		}
+		//nolint:gosec // query structure is generated from placeholders, values are bound
+		if _, err := tx.ExecContext(ctx, `DELETE FROM causal_nodes WHERE id IN (
 			SELECT id FROM fingerprints WHERE verbatim_id IN (`+idList+`)
-		) OR to_id IN (
-			SELECT id FROM fingerprints WHERE verbatim_id IN (`+idList+`)
-		)`,
-		append(args, args...)...,
-	)
-
-	//nolint:gosec // query structure is generated from placeholders, values are bound
-	_, _ = tx.ExecContext(ctx,
-		`DELETE FROM causal_nodes WHERE id IN (
-			SELECT id FROM fingerprints WHERE verbatim_id IN (`+idList+`)
-		)`,
-		args...,
-	)
-
-	//nolint:gosec // query structure is generated from placeholders, values are bound
-	_, _ = tx.ExecContext(ctx,
-		`DELETE FROM embeddings WHERE id IN (`+idList+`)`,
-		args...,
-	)
-
-	//nolint:gosec // idList contains only generated '?' placeholders; IDs are bound.
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM memory_tags WHERE verbatim_id IN (`+idList+`)`,
-		args...,
-	); err != nil {
-		return 0, fmt.Errorf("failed to clear memory tags: %w", err)
-	}
-
-	//nolint:gosec // query structure is generated from placeholders, values are bound
-	_, _ = tx.ExecContext(ctx,
-		`DELETE FROM fingerprints WHERE verbatim_id IN (`+idList+`)`,
-		args...,
-	)
-
-	//nolint:gosec // query structure is generated from placeholders, values are bound
-	_, err = tx.ExecContext(ctx,
-		`DELETE FROM verbatim WHERE id IN (`+idList+`)`,
-		args...,
-	)
-	if err != nil {
-		return 0, err
+		)`, args...); err != nil {
+			return 0, fmt.Errorf("failed to clear causal nodes: %w", err)
+		}
+		//nolint:gosec // query structure is generated from placeholders, values are bound
+		if _, err := tx.ExecContext(ctx, `DELETE FROM embeddings WHERE id IN (`+idList+`)`, args...); err != nil {
+			return 0, fmt.Errorf("failed to clear embeddings: %w", err)
+		}
+		//nolint:gosec // idList contains only generated '?' placeholders; IDs are bound.
+		if _, err := tx.ExecContext(ctx, `DELETE FROM memory_tags WHERE verbatim_id IN (`+idList+`)`, args...); err != nil {
+			return 0, fmt.Errorf("failed to clear memory tags: %w", err)
+		}
+		//nolint:gosec // query structure is generated from placeholders, values are bound
+		if _, err := tx.ExecContext(ctx, `DELETE FROM fingerprints WHERE verbatim_id IN (`+idList+`)`, args...); err != nil {
+			return 0, fmt.Errorf("failed to clear fingerprints: %w", err)
+		}
+		//nolint:gosec // query structure is generated from placeholders, values are bound
+		if _, err := tx.ExecContext(ctx, `DELETE FROM verbatim WHERE id IN (`+idList+`)`, args...); err != nil {
+			return 0, fmt.Errorf("failed to clear verbatim: %w", err)
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("failed to commit clear transaction: %w", err)
 	}
 
-	return count, nil
+	return len(ids), nil
 }
+
+func uniqueUUIDsStable(ids []uuid.UUID) []uuid.UUID {
+	// This stable O(n) materialization removes duplicate work while preserving
+	// caller order; SQL statements remain bounded by clearByIDsBatchSize.
+	seen := make(map[uuid.UUID]struct{}, len(ids))
+	unique := make([]uuid.UUID, 0, len(ids))
+	for _, id := range ids {
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	return unique
+}
+
+// Keep the repeated SQLite causal-edge bind list below the conservative
+// 999-variable limit (2 * 400 parameters).
+const clearByIDsBatchSize = 400
 
 // ClearByRoom removes all memories and related data for a specific wing/room.
 func (r *SQLiteRepository) ClearByRoom(ctx context.Context, wing string, room *string) (int, error) {

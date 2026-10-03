@@ -1562,6 +1562,123 @@ func TestClearByIDs(t *testing.T) {
 	}
 }
 
+func TestClearByIDsBatchesLargeDeduplicatedIDList(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	const count = 1000 // Exceeds SQLite's conservative 999 bind-parameter limit.
+	ids := make([]uuid.UUID, 0, count+1)
+	for i := 0; i < count; i++ {
+		memory := storeFullMemory(t, repo, fmt.Sprintf("bulk clear memory %d", i), "bulk")
+		if err := repo.StoreTags(ctx, memory.ID, []string{"bulk-clear"}, "keyword"); err != nil {
+			t.Fatalf("StoreTags(%s): %v", memory.ID, err)
+		}
+		ids = append(ids, memory.ID)
+	}
+	keep := storeFullMemory(t, repo, "keep outside batch", "keep")
+	ids = append(ids, ids[0]) // Duplicate IDs must not inflate work or the count.
+
+	cleared, err := repo.ClearByIDs(ctx, ids)
+	if err != nil {
+		t.Fatalf("ClearByIDs(%d IDs): %v", len(ids), err)
+	}
+	if cleared != count {
+		t.Fatalf("ClearByIDs count = %d, want %d unique IDs", cleared, count)
+	}
+
+	for _, table := range []string{"verbatim", "fingerprints", "embeddings", "memory_tags"} {
+		var got int
+		if err := repo.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table).Scan(&got); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		want := 1
+		if table == "memory_tags" {
+			want = 0
+		}
+		if got != want {
+			t.Errorf("remaining %s rows = %d; want %d", table, got, want)
+		}
+	}
+	if _, err := repo.GetVerbatimByID(ctx, keep.ID); err != nil {
+		t.Errorf("unrequested memory was removed: %v", err)
+	}
+}
+
+func TestClearByIDsPropagatesCancellationWithoutDeleting(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+	memory := storeFullMemory(t, repo, "cancel clear", "wing")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := repo.ClearByIDs(ctx, []uuid.UUID{memory.ID}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ClearByIDs canceled error = %v, want context.Canceled", err)
+	}
+	if _, err := repo.GetVerbatimByID(context.Background(), memory.ID); err != nil {
+		t.Fatalf("canceled ClearByIDs removed memory: %v", err)
+	}
+}
+
+func TestClearByIDsChunksPastSQLiteVariableLimit(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// This is larger than SQLite's common 32766-variable build limit and much
+	// larger than the conservative 999-variable batch budget used by adapters.
+	ids := make([]uuid.UUID, 33000)
+	for i := range ids {
+		ids[i] = uuid.New()
+	}
+
+	cleared, err := repo.ClearByIDs(context.Background(), ids)
+	if err != nil {
+		t.Fatalf("ClearByIDs(%d IDs): %v", len(ids), err)
+	}
+	if cleared != len(ids) {
+		t.Fatalf("ClearByIDs count = %d, want %d unique IDs", cleared, len(ids))
+	}
+}
+
+func TestClearByIDsRollsBackAllBatchesOnDerivedCleanupError(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	ids := make([]uuid.UUID, 401)
+	for i := range ids {
+		memory := entities.NewVerbatim(fmt.Sprintf("rollback clear %d", i), "bulk", nil)
+		if err := repo.StoreVerbatim(ctx, memory); err != nil {
+			t.Fatalf("StoreVerbatim(%d): %v", i, err)
+		}
+		tag := "regular"
+		if i == len(ids)-1 {
+			tag = "fail-clear"
+		}
+		if err := repo.StoreTags(ctx, memory.ID, []string{tag}, "test"); err != nil {
+			t.Fatalf("StoreTags(%d): %v", i, err)
+		}
+		ids[i] = memory.ID
+	}
+	if _, err := repo.DB().ExecContext(ctx, `CREATE TRIGGER fail_late_tag_clear BEFORE DELETE ON memory_tags
+		WHEN OLD.tag = 'fail-clear' BEGIN SELECT RAISE(ABORT, 'injected cleanup failure'); END`); err != nil {
+		t.Fatalf("create cleanup failure trigger: %v", err)
+	}
+
+	if _, err := repo.ClearByIDs(ctx, ids); err == nil {
+		t.Fatal("ClearByIDs succeeded despite a derived-data cleanup failure")
+	}
+	for _, table := range []string{"verbatim", "memory_tags"} {
+		var got int
+		if err := repo.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table).Scan(&got); err != nil {
+			t.Fatalf("count %s after rollback: %v", table, err)
+		}
+		if got != len(ids) {
+			t.Errorf("remaining %s rows after rollback = %d, want %d", table, got, len(ids))
+		}
+	}
+}
+
 func TestClearByRoom(t *testing.T) {
 	repo, cleanup := setupTestDB(t)
 	defer cleanup()
