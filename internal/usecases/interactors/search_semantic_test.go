@@ -133,6 +133,34 @@ func TestSearchSemantic_ReturnsMatchesAboveThreshold(t *testing.T) {
 	}
 }
 
+func TestSearchSemantic_RanksBySimilarityAndPreservesTies(t *testing.T) {
+	queryVec := []float32{1, 0, 0, 0}
+	idMid, idHighFirst, idHighSecond := uuid.New(), uuid.New(), uuid.New()
+	candidates := []*entities.Candidate{
+		buildSemanticCandidate(idMid, "mid", valueobjects.TypeFact, []float32{0.6, 0.8, 0, 0}),
+		buildSemanticCandidate(uuid.New(), "below threshold", valueobjects.TypeFact, []float32{0.2, 0.9797959, 0, 0}),
+		buildSemanticCandidate(idHighFirst, "high first", valueobjects.TypeFact, []float32{0.8, 0.6, 0, 0}),
+		buildSemanticCandidate(idHighSecond, "high second", valueobjects.TypeFact, []float32{0.8, 0.6, 0, 0}),
+	}
+	vs := &mockSemanticVectorStore{searchFunc: func(context.Context, []float32, int, *string, *string) ([]*entities.Candidate, error) {
+		return candidates, nil
+	}}
+	embedder := &mockSemanticEmbedder{encodeFunc: func(context.Context, string) ([]float32, error) { return queryVec, nil }}
+
+	results, err := NewSearchSemantic(vs, embedder).Execute(context.Background(), SearchSemanticInput{
+		Query: "query", TopK: 2, Threshold: 0.5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected top 2 results, got %d", len(results))
+	}
+	if results[0].ID != idHighFirst || results[1].ID != idHighSecond {
+		t.Fatalf("expected highest-similarity candidates in stable input order, got IDs %s, %s", results[0].ID, results[1].ID)
+	}
+}
+
 // TestSearchSemantic_DefaultTopK verifies TopK defaults to 10 when not set.
 func TestSearchSemantic_DefaultTopK(t *testing.T) {
 	ctx := context.Background()

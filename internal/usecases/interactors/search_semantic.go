@@ -4,6 +4,7 @@ package interactors
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
@@ -89,10 +90,16 @@ func (uc *SearchSemantic) Execute(ctx context.Context, input SearchSemanticInput
 				Wing:          c.Verbatim.Wing,
 				Room:          c.Verbatim.Room,
 			})
-			if len(results) >= input.TopK {
-				break
-			}
 		}
+	}
+
+	// The vector store's candidate order is not a substitute for ranking by the
+	// cosine score computed here. Stable sorting retains retrieval order for ties.
+	sort.SliceStable(results, func(i, j int) bool {
+		return results[i].Similarity > results[j].Similarity
+	})
+	if len(results) > input.TopK {
+		results = results[:input.TopK]
 	}
 
 	return results, nil
