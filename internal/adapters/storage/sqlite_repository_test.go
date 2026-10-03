@@ -10,6 +10,7 @@ import (
 
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
+	"github.com/benoitpetit/mira/internal/usecases/interactors"
 	"github.com/google/uuid"
 )
 
@@ -1611,6 +1612,125 @@ func TestGetTimelineFilters(t *testing.T) {
 		t.Errorf("GetTimeline(unknown wing) = %d, want 0", len(items))
 	}
 }
+
+func TestGetTimeline_DateBoundsParseISOAndTimezone(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	instant := time.Date(2026, 10, 3, 14, 15, 16, 0, time.UTC)
+	storeTimelineAt(t, repo, "inside day", "date-bounds", instant)
+	storeTimelineAt(t, repo, "outside day", "date-bounds", instant.Add(24*time.Hour))
+
+	since := "2026-10-03"
+	until := "2026-10-03"
+	items, err := repo.GetTimeline(ctx, "date-bounds", nil, nil, &since, &until, 10, nil)
+	if err != nil {
+		t.Fatalf("GetTimeline(date bounds): %v", err)
+	}
+	if len(items) != 1 || items[0].Summary != "inside day" {
+		t.Fatalf("date-only bounds returned %+v, want only item within UTC day", items)
+	}
+
+	// RFC3339 offsets must be converted to the same epoch as UTC before querying.
+	zoneBound := "2026-10-03T16:15:16+02:00"
+	items, err = repo.GetTimeline(ctx, "date-bounds", nil, nil, &zoneBound, &zoneBound, 10, nil)
+	if err != nil {
+		t.Fatalf("GetTimeline(timezone bounds): %v", err)
+	}
+	if len(items) != 1 || items[0].Summary != "inside day" {
+		t.Fatalf("equivalent timezone bounds returned %+v, want item at exact instant", items)
+	}
+
+	fractionalSince := "2026-10-03T14:15:16.5Z"
+	dayEnd := "2026-10-03"
+	items, err = repo.GetTimeline(ctx, "date-bounds", nil, nil, &fractionalSince, &dayEnd, 10, nil)
+	if err != nil {
+		t.Fatalf("GetTimeline(fractional since): %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("fractional since returned %+v, want no whole-second row before the bound", items)
+	}
+}
+
+func TestGetTimeline_PaginatesEqualTimestampsWithoutGaps(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	instant := time.Date(2026, 10, 3, 14, 15, 16, 0, time.UTC)
+	var ids []string
+	for i := 0; i < 3; i++ {
+		ids = append(ids, storeTimelineAt(t, repo, "same instant", "tie-page", instant).ID.String())
+	}
+
+	uc := interactors.NewGetTimeline(repo)
+	first, err := uc.Execute(ctx, interactors.GetTimelineInput{Wing: "tie-page", Limit: 2})
+	if err != nil {
+		t.Fatalf("first page: %v", err)
+	}
+	if len(first.Items) != 2 || first.NextCursor == nil {
+		t.Fatalf("first page = %+v, want 2 items and cursor", first)
+	}
+	second, err := uc.Execute(ctx, interactors.GetTimelineInput{Wing: "tie-page", Limit: 2, Cursor: first.NextCursor})
+	if err != nil {
+		t.Fatalf("second page: %v", err)
+	}
+	if len(second.Items) != 1 {
+		t.Fatalf("second page returned %d items, want 1 (no tied timestamp skipped)", len(second.Items))
+	}
+	seen := map[string]bool{}
+	for _, item := range append(first.Items, second.Items...) {
+		if seen[item.ID] {
+			t.Fatalf("duplicate timeline item %s across pages", item.ID)
+		}
+		seen[item.ID] = true
+	}
+	if len(seen) != len(ids) {
+		t.Fatalf("paginated IDs = %v, want all %v", seen, ids)
+	}
+}
+
+func TestGetTimeline_MalformedBoundsAndCursorReturnErrors(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+	for _, tc := range []struct {
+		name          string
+		since, cursor *string
+	}{
+		{name: "bound", since: ptrStorageTimeline("not-a-date")},
+		{name: "cursor", cursor: ptrStorageTimeline("not-a-cursor")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := repo.GetTimeline(context.Background(), "", nil, nil, tc.since, nil, 10, tc.cursor); err == nil {
+				t.Fatal("expected explicit parse error")
+			}
+		})
+	}
+
+	legacyCursor := "2026-10-03T14:15:16Z"
+	if _, err := repo.GetTimeline(context.Background(), "", nil, nil, nil, nil, 10, &legacyCursor); err != nil {
+		t.Fatalf("legacy RFC3339 cursor should remain accepted: %v", err)
+	}
+}
+
+func storeTimelineAt(t *testing.T, repo *SQLiteRepository, content, wing string, at time.Time) *entities.Verbatim {
+	t.Helper()
+	ctx := context.Background()
+	v := entities.NewVerbatim(content, wing, nil)
+	if err := repo.StoreVerbatim(ctx, v); err != nil {
+		t.Fatalf("StoreVerbatim: %v", err)
+	}
+	fp := entities.NewFingerprint(v.ID, valueobjects.TypeFact, "timeline-test")
+	fp.WithData(valueobjects.FingerprintData{Subject: []string{content}})
+	if err := repo.StoreFingerprint(ctx, fp); err != nil {
+		t.Fatalf("StoreFingerprint: %v", err)
+	}
+	if _, err := repo.db.ExecContext(ctx, `UPDATE fingerprints SET extracted_at = ? WHERE verbatim_id = ?`, float64(at.Unix()), v.ID[:]); err != nil {
+		t.Fatalf("set deterministic extracted_at: %v", err)
+	}
+	return v
+}
+
+func ptrStorageTimeline(value string) *string { return &value }
 
 func TestSQLiteRepository_UpdateVerbatimSummary(t *testing.T) {
 	repo, cleanup := setupTestDB(t)

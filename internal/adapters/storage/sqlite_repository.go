@@ -869,18 +869,32 @@ func (r *SQLiteRepository) GetTimeline(ctx context.Context, wing string, room *s
 	}
 	if since != nil {
 		query += " AND f.extracted_at >= ?"
-		args = append(args, *since)
+		timestamp, err := valueobjects.ParseTimelineBound(*since, false)
+		if err != nil {
+			return nil, fmt.Errorf("invalid since value %q: %w", *since, err)
+		}
+		args = append(args, valueobjects.TimelineBoundUnixSeconds(timestamp, false))
 	}
 	if until != nil {
 		query += " AND f.extracted_at <= ?"
-		args = append(args, *until)
+		timestamp, err := valueobjects.ParseTimelineBound(*until, true)
+		if err != nil {
+			return nil, fmt.Errorf("invalid until value %q: %w", *until, err)
+		}
+		args = append(args, valueobjects.TimelineBoundUnixSeconds(timestamp, true))
 	}
 	if cursor != nil && *cursor != "" {
-		// Cursor is an RFC3339 timestamp used for pagination
-		t, err := time.Parse(time.RFC3339, *cursor)
-		if err == nil {
+		timestamp, cursorID, legacy, err := valueobjects.ParseTimelineCursor(*cursor)
+		if err != nil {
+			return nil, fmt.Errorf("invalid timeline cursor: %w", err)
+		}
+		if legacy {
 			query += " AND f.extracted_at < ?"
-			args = append(args, float64(t.Unix()))
+			args = append(args, float64(timestamp.Unix()))
+		} else {
+			id, _ := uuid.Parse(cursorID) // ParseTimelineCursor validates the UUID.
+			query += " AND (f.extracted_at < ? OR (f.extracted_at = ? AND v.id < ?))"
+			args = append(args, float64(timestamp.Unix()), float64(timestamp.Unix()), id[:])
 		}
 	}
 
@@ -889,7 +903,7 @@ func (r *SQLiteRepository) GetTimeline(ctx context.Context, wing string, room *s
 	}
 	// No upper cap here: callers (REST handler, MCP controller) enforce their own limits.
 	// The export command legitimately needs to retrieve all records.
-	query += fmt.Sprintf(" ORDER BY f.extracted_at DESC LIMIT %d", limit)
+	query += fmt.Sprintf(" ORDER BY f.extracted_at DESC, v.id DESC LIMIT %d", limit)
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -929,11 +943,12 @@ func (r *SQLiteRepository) GetTimeline(ctx context.Context, wing string, room *s
 		}
 
 		items = append(items, &valueobjects.TimelineItem{
-			ID:        uid.String(),
-			Timestamp: time.Unix(int64(extractedAt), 0).Format("2006-01-02 15:04"),
-			Type:      valueobjects.MemoryType(memTypeStr),
-			Summary:   summary,
-			Wing:      wingStr,
+			ID:              uid.String(),
+			Timestamp:       time.Unix(int64(extractedAt), 0).Format("2006-01-02 15:04"),
+			CursorTimestamp: time.Unix(int64(extractedAt), 0).UTC().Format(time.RFC3339Nano),
+			Type:            valueobjects.MemoryType(memTypeStr),
+			Summary:         summary,
+			Wing:            wingStr,
 		})
 	}
 

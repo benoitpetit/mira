@@ -740,52 +740,10 @@ func (r *PostgreSQLRepository) GetStats(ctx context.Context) (*valueobjects.Stat
 
 // GetTimeline implements StatsRepository
 func (r *PostgreSQLRepository) GetTimeline(ctx context.Context, wing string, room *string, memType *valueobjects.MemoryType, since, until *string, limit int, cursor *string) ([]*valueobjects.TimelineItem, error) {
-	query := `
-		SELECT v.id, f.ftype, f.extracted_at, f.data, v.wing
-		FROM fingerprints f
-		JOIN verbatim v ON f.verbatim_id = v.id
-		WHERE 1=1`
-	args := []interface{}{}
-	argIdx := 1
-
-	if wing != "" {
-		query += fmt.Sprintf(" AND v.wing = $%d", argIdx)
-		args = append(args, wing)
-		argIdx++
+	query, args, err := buildPostgreSQLTimelineQuery(wing, room, memType, since, until, limit, cursor)
+	if err != nil {
+		return nil, err
 	}
-
-	if room != nil {
-		query += fmt.Sprintf(" AND v.room = $%d", argIdx)
-		args = append(args, *room)
-		argIdx++
-	}
-	if memType != nil {
-		query += fmt.Sprintf(" AND f.ftype = $%d", argIdx)
-		args = append(args, string(*memType))
-		argIdx++
-	}
-	if since != nil {
-		query += fmt.Sprintf(" AND f.extracted_at >= $%d", argIdx)
-		args = append(args, *since)
-		argIdx++
-	}
-	if until != nil {
-		query += fmt.Sprintf(" AND f.extracted_at <= $%d", argIdx)
-		args = append(args, *until)
-		argIdx++
-	}
-	if cursor != nil && *cursor != "" {
-		t, err := time.Parse(time.RFC3339, *cursor)
-		if err == nil {
-			query += fmt.Sprintf(" AND f.extracted_at < $%d", argIdx)
-			args = append(args, float64(t.Unix()))
-		}
-	}
-
-	if limit <= 0 {
-		limit = 100
-	}
-	query += fmt.Sprintf(" ORDER BY f.extracted_at DESC LIMIT %d", limit)
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -820,15 +778,83 @@ func (r *PostgreSQLRepository) GetTimeline(ctx context.Context, wing string, roo
 		}
 
 		items = append(items, &valueobjects.TimelineItem{
-			ID:        uid.String(),
-			Timestamp: time.Unix(int64(extractedAt), 0).Format("2006-01-02 15:04"),
-			Type:      valueobjects.MemoryType(memTypeStr),
-			Summary:   summary,
-			Wing:      wingStr,
+			ID:              uid.String(),
+			Timestamp:       time.Unix(int64(extractedAt), 0).Format("2006-01-02 15:04"),
+			CursorTimestamp: time.Unix(int64(extractedAt), 0).UTC().Format(time.RFC3339Nano),
+			Type:            valueobjects.MemoryType(memTypeStr),
+			Summary:         summary,
+			Wing:            wingStr,
 		})
 	}
 
 	return items, nil
+}
+
+func buildPostgreSQLTimelineQuery(wing string, room *string, memType *valueobjects.MemoryType, since, until *string, limit int, cursor *string) (string, []interface{}, error) {
+	query := `
+		SELECT v.id, f.ftype, f.extracted_at, f.data, v.wing
+		FROM fingerprints f
+		JOIN verbatim v ON f.verbatim_id = v.id
+		WHERE 1=1`
+	args := []interface{}{}
+	argIdx := 1
+
+	if wing != "" {
+		query += fmt.Sprintf(" AND v.wing = $%d", argIdx)
+		args = append(args, wing)
+		argIdx++
+	}
+
+	if room != nil {
+		query += fmt.Sprintf(" AND v.room = $%d", argIdx)
+		args = append(args, *room)
+		argIdx++
+	}
+	if memType != nil {
+		query += fmt.Sprintf(" AND f.ftype = $%d", argIdx)
+		args = append(args, string(*memType))
+		argIdx++
+	}
+	if since != nil {
+		timestamp, err := valueobjects.ParseTimelineBound(*since, false)
+		if err != nil {
+			return "", nil, fmt.Errorf("invalid since value %q: %w", *since, err)
+		}
+		query += fmt.Sprintf(" AND f.extracted_at >= $%d", argIdx)
+		args = append(args, valueobjects.TimelineBoundUnixSeconds(timestamp, false))
+		argIdx++
+	}
+	if until != nil {
+		timestamp, err := valueobjects.ParseTimelineBound(*until, true)
+		if err != nil {
+			return "", nil, fmt.Errorf("invalid until value %q: %w", *until, err)
+		}
+		query += fmt.Sprintf(" AND f.extracted_at <= $%d", argIdx)
+		args = append(args, valueobjects.TimelineBoundUnixSeconds(timestamp, true))
+		argIdx++
+	}
+	if cursor != nil && *cursor != "" {
+		timestamp, cursorID, legacy, err := valueobjects.ParseTimelineCursor(*cursor)
+		if err != nil {
+			return "", nil, fmt.Errorf("invalid timeline cursor: %w", err)
+		}
+		if legacy {
+			query += fmt.Sprintf(" AND f.extracted_at < $%d", argIdx)
+			args = append(args, float64(timestamp.Unix()))
+			argIdx++
+		} else {
+			id, _ := uuid.Parse(cursorID) // ParseTimelineCursor validates the UUID.
+			query += fmt.Sprintf(" AND (f.extracted_at < $%d OR (f.extracted_at = $%d AND v.id < $%d))", argIdx, argIdx+1, argIdx+2)
+			args = append(args, float64(timestamp.Unix()), float64(timestamp.Unix()), id)
+			argIdx += 3
+		}
+	}
+
+	if limit <= 0 {
+		limit = 100
+	}
+	query += fmt.Sprintf(" ORDER BY f.extracted_at DESC, v.id DESC LIMIT %d", limit)
+	return query, args, nil
 }
 
 // ArchiveOldMemories implements StatsRepository

@@ -3,6 +3,7 @@ package interactors
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -247,6 +248,52 @@ func TestGetTimeline_DateRange(t *testing.T) {
 		t.Errorf("Expected 1 item, got %d", len(output.Items))
 	}
 }
+
+func TestGetTimeline_CursorIncludesFullTimestampAndID(t *testing.T) {
+	id := uuid.MustParse("123e4567-e89b-12d3-a456-426614174000")
+	timestamp := "2026-10-03T14:15:16.123456789Z"
+	repo := &mockStatsRepositoryForTimeline{
+		getTimelineFunc: func(context.Context, string, *string, *valueobjects.MemoryType, *string, *string) ([]*valueobjects.TimelineItem, error) {
+			return []*valueobjects.TimelineItem{{ID: id.String(), Timestamp: timestamp}}, nil
+		},
+	}
+
+	output, err := NewGetTimeline(repo).Execute(context.Background(), GetTimelineInput{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output.NextCursor == nil || *output.NextCursor != "v1:"+timestamp+"|"+id.String() {
+		t.Fatalf("NextCursor = %v, want full precision timestamp and ID", output.NextCursor)
+	}
+}
+
+func TestGetTimeline_InvalidDateBoundsReturnExplicitErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   GetTimelineInput
+		want string
+	}{
+		{name: "since", in: GetTimelineInput{Since: ptrTimeline("not-a-date")}, want: "since"},
+		{name: "until", in: GetTimelineInput{Until: ptrTimeline("2026-99-99")}, want: "until"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoCalled := false
+			repo := &mockStatsRepositoryForTimeline{getTimelineFunc: func(context.Context, string, *string, *valueobjects.MemoryType, *string, *string) ([]*valueobjects.TimelineItem, error) {
+				repoCalled = true
+				return nil, nil
+			}}
+			_, err := NewGetTimeline(repo).Execute(context.Background(), tc.in)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want explicit %s parse error", err, tc.want)
+			}
+			if repoCalled {
+				t.Fatal("repository called with an invalid date bound")
+			}
+		})
+	}
+}
+
+func ptrTimeline(value string) *string { return &value }
 
 // TestGetTimeline_EmptyResult test when no results
 func TestGetTimeline_EmptyResult(t *testing.T) {

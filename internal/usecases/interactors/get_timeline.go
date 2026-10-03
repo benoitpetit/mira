@@ -41,6 +41,22 @@ func NewGetTimeline(statsRepo ports.StatsRepository) *GetTimeline {
 
 // Execute retrieves the timeline
 func (uc *GetTimeline) Execute(ctx context.Context, input GetTimelineInput) (*GetTimelineOutput, error) {
+	if input.Since != nil {
+		if _, err := valueobjects.ParseTimelineBound(*input.Since, false); err != nil {
+			return nil, fmt.Errorf("invalid since value %q: %w", *input.Since, err)
+		}
+	}
+	if input.Until != nil {
+		if _, err := valueobjects.ParseTimelineBound(*input.Until, true); err != nil {
+			return nil, fmt.Errorf("invalid until value %q: %w", *input.Until, err)
+		}
+	}
+	if input.Cursor != nil && *input.Cursor != "" {
+		if _, _, _, err := valueobjects.ParseTimelineCursor(*input.Cursor); err != nil {
+			return nil, fmt.Errorf("invalid timeline cursor: %w", err)
+		}
+	}
+
 	items, err := uc.statsRepo.GetTimeline(ctx, input.Wing, input.Room, input.Type, input.Since, input.Until, input.Limit, input.Cursor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get timeline: %w", err)
@@ -48,11 +64,16 @@ func (uc *GetTimeline) Execute(ctx context.Context, input GetTimelineInput) (*Ge
 
 	output := &GetTimelineOutput{Items: items}
 	if len(items) > 0 {
-		// Use the timestamp of the last item as the next cursor
 		lastItem := items[len(items)-1]
-		t, err := time.Parse("2006-01-02 15:04", lastItem.Timestamp)
+		timestamp, err := time.Parse(time.RFC3339Nano, lastItem.CursorTimestamp)
+		if err != nil {
+			timestamp, err = time.Parse(time.RFC3339Nano, lastItem.Timestamp)
+		}
+		if err != nil {
+			timestamp, err = time.Parse("2006-01-02 15:04", lastItem.Timestamp)
+		}
 		if err == nil {
-			cursor := t.Format(time.RFC3339)
+			cursor := valueobjects.FormatTimelineCursor(timestamp, lastItem.ID)
 			output.NextCursor = &cursor
 		}
 	}

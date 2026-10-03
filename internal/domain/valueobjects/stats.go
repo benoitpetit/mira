@@ -30,9 +30,10 @@ type ArchiveResult struct {
 
 // TimelineItem represents an item in the timeline
 type TimelineItem struct {
-	ID        string     `json:"id"`
-	Timestamp string     `json:"timestamp"`
-	Type      MemoryType `json:"type"`
-	Summary   string     `json:"summary"`
-	Wing      string     `json:"wing"`
+	ID              string     `json:"id"`
+	Timestamp       string     `json:"timestamp"`
+	CursorTimestamp string     `json:"-"`
+	Type            MemoryType `json:"type"`
+	Summary         string     `json:"summary"`
+	Wing            string     `json:"wing"`
 }
