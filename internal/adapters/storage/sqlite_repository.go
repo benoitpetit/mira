@@ -156,6 +156,9 @@ func (r *SQLiteRepository) DeleteVerbatimByID(ctx context.Context, id uuid.UUID)
 // can be made atomic with a subsequent re-insert of the same ID.
 func (r *SQLiteRepository) DeleteVerbatimByIDTx(ctx context.Context, tx *sql.Tx, id uuid.UUID) error {
 	idBytes := id[:]
+	if err := syncBeliefSource(ctx, tx, id, nil, false); err != nil {
+		return fmt.Errorf("failed to remove belief support: %w", err)
+	}
 
 	// Delete causal relations for fingerprints associated with this verbatim
 	_, _ = tx.ExecContext(ctx, `
@@ -882,7 +885,7 @@ func (r *SQLiteRepository) GetStats(ctx context.Context) (*valueobjects.Stats, e
 // GetTimeline implements StatsRepository
 func (r *SQLiteRepository) GetTimeline(ctx context.Context, wing string, room *string, memType *valueobjects.MemoryType, since, until *string, limit int, cursor *string) ([]*valueobjects.TimelineItem, error) {
 	query := `
-		SELECT v.id, f.id, f.ftype, f.extracted_at, f.data, v.wing
+		SELECT v.id, f.id, f.ftype, f.extracted_at, f.data, v.wing, COALESCE(v.lifecycle_state, 'active')
 		FROM fingerprints f
 		JOIN verbatim v ON f.verbatim_id = v.id
 		WHERE 1=1`
@@ -953,8 +956,9 @@ func (r *SQLiteRepository) GetTimeline(ctx context.Context, wing string, room *s
 		var extractedAt float64
 		var dataJSON []byte
 		var wingStr string
+		var lifecycleState string
 
-		if err := rows.Scan(&id, &cursorID, &memTypeStr, &extractedAt, &dataJSON, &wingStr); err != nil {
+		if err := rows.Scan(&id, &cursorID, &memTypeStr, &extractedAt, &dataJSON, &wingStr, &lifecycleState); err != nil {
 			continue
 		}
 
@@ -987,6 +991,7 @@ func (r *SQLiteRepository) GetTimeline(ctx context.Context, wing string, room *s
 			Timestamp:       time.Unix(int64(extractedAt), 0).Format("2006-01-02 15:04"),
 			CursorTimestamp: time.Unix(int64(extractedAt), 0).UTC().Format(time.RFC3339Nano),
 			Type:            valueobjects.MemoryType(memTypeStr),
+			LifecycleState:  lifecycleState,
 			Summary:         summary,
 			Wing:            wingStr,
 		})
@@ -1013,7 +1018,7 @@ func (r *SQLiteRepository) ArchiveOldMemories(ctx context.Context) (*valueobject
 		return nil, err
 	}
 	result.SessionNotes = len(sessionIDs)
-	result.TokensFreed += sessionTokens
+	result.TokensArchived += sessionTokens
 
 	// Archive debug logs
 	debugThreshold := now - float64(r.opts.DebugLogArchiveDays*24*60*60)
@@ -1022,7 +1027,7 @@ func (r *SQLiteRepository) ArchiveOldMemories(ctx context.Context) (*valueobject
 		return nil, err
 	}
 	result.DebugLogs = len(debugIDs)
-	result.TokensFreed += debugTokens
+	result.TokensArchived += debugTokens
 
 	// Keep all T0/T1/T2 rows and transition only the authoritative lifecycle.
 	allIDs := append(append([]uuid.UUID(nil), sessionIDs...), debugIDs...)
@@ -1039,6 +1044,7 @@ func (r *SQLiteRepository) ArchiveOldMemories(ctx context.Context) (*valueobject
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("failed to commit archive transaction: %w", err)
 	}
+	result.TokensFreed = result.TokensArchived
 
 	return result, nil
 }
@@ -1056,6 +1062,15 @@ func (r *SQLiteRepository) ClearAll(ctx context.Context) error {
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM causal_nodes`); err != nil {
 		return fmt.Errorf("failed to clear causal nodes: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM belief_sources`); err != nil {
+		return fmt.Errorf("failed to clear belief supports: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM belief_feedback`); err != nil {
+		return fmt.Errorf("failed to clear belief feedback: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM beliefs`); err != nil {
+		return fmt.Errorf("failed to clear beliefs: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM embeddings`); err != nil {
 		return fmt.Errorf("failed to clear embeddings: %w", err)
@@ -1100,6 +1115,11 @@ func (r *SQLiteRepository) ClearByIDs(ctx context.Context, ids []uuid.UUID) (int
 		}
 		end := min(start+clearByIDsBatchSize, len(ids))
 		batch := ids[start:end]
+		for _, id := range batch {
+			if err := syncBeliefSource(ctx, tx, id, nil, false); err != nil {
+				return 0, fmt.Errorf("failed to remove belief support for %s: %w", id, err)
+			}
+		}
 		placeholders := make([]string, len(batch))
 		args := make([]interface{}, 0, len(batch))
 		for i, id := range batch {
@@ -1201,6 +1221,34 @@ func (r *SQLiteRepository) ClearByRoom(ctx context.Context, wing string, room *s
 			return 0, fmt.Errorf("failed to commit clear transaction: %w", err)
 		}
 		return 0, nil
+	}
+	sourceRows, err := tx.QueryContext(ctx, "SELECT id FROM verbatim WHERE wing = ? "+roomCondition, args...)
+	if err != nil {
+		return 0, fmt.Errorf("failed to select belief support sources for clear: %w", err)
+	}
+	var sourceIDs []uuid.UUID
+	for sourceRows.Next() {
+		var raw []byte
+		if err := sourceRows.Scan(&raw); err != nil {
+			_ = sourceRows.Close()
+			return 0, err
+		}
+		id, err := uuid.FromBytes(raw)
+		if err != nil {
+			_ = sourceRows.Close()
+			return 0, err
+		}
+		sourceIDs = append(sourceIDs, id)
+	}
+	if err := sourceRows.Err(); err != nil {
+		_ = sourceRows.Close()
+		return 0, err
+	}
+	_ = sourceRows.Close()
+	for _, id := range sourceIDs {
+		if err := syncBeliefSource(ctx, tx, id, nil, false); err != nil {
+			return 0, fmt.Errorf("failed to remove belief support for %s: %w", id, err)
+		}
 	}
 
 	//nolint:gosec // roomCondition is a fixed SQL fragment; all values are bound

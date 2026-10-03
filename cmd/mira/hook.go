@@ -89,7 +89,7 @@ func newWindsurfHookCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&wing, "wing", "w", "", "wing to store automatic prompt memories in (required)")
 	cmd.Flags().StringVarP(&room, "room", "r", "", "optional room for automatic prompt memories")
-	cmd.Flags().IntVar(&minChars, "min-chars", 20, "minimum Unicode character count for a captured message")
+	cmd.Flags().IntVar(&minChars, "min-chars", 20, "minimum Unicode character count; 0 disables only the length threshold")
 	return cmd
 }
 
@@ -119,7 +119,7 @@ func newPromptHookCmd(client, source string) *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&wing, "wing", "w", "", "wing to store automatic hook memories in (required)")
 	cmd.Flags().StringVarP(&room, "room", "r", "", "optional room for automatic hook memories")
-	cmd.Flags().IntVar(&minChars, "min-chars", 20, "minimum Unicode character count for a captured message")
+	cmd.Flags().IntVar(&minChars, "min-chars", 20, "minimum Unicode character count; 0 disables only the length threshold")
 	return cmd
 }
 

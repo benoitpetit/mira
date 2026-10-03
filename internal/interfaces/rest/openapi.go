@@ -86,16 +86,18 @@ type oaResponse struct {
 }
 
 type oaSchema struct {
-	Ref        string              `json:"$ref,omitempty"`
-	Type       string              `json:"type,omitempty"`
-	Format     string              `json:"format,omitempty"`
-	Minimum    *int                `json:"minimum,omitempty"`
-	Maximum    *int                `json:"maximum,omitempty"`
-	Default    *int                `json:"default,omitempty"`
-	MaxItems   *int                `json:"maxItems,omitempty"`
-	Properties map[string]oaSchema `json:"properties,omitempty"`
-	Items      *oaSchema           `json:"items,omitempty"`
-	Required   []string            `json:"required,omitempty"`
+	Ref         string              `json:"$ref,omitempty"`
+	Type        string              `json:"type,omitempty"`
+	Description string              `json:"description,omitempty"`
+	Deprecated  bool                `json:"deprecated,omitempty"`
+	Format      string              `json:"format,omitempty"`
+	Minimum     *int                `json:"minimum,omitempty"`
+	Maximum     *int                `json:"maximum,omitempty"`
+	Default     *int                `json:"default,omitempty"`
+	MaxItems    *int                `json:"maxItems,omitempty"`
+	Properties  map[string]oaSchema `json:"properties,omitempty"`
+	Items       *oaSchema           `json:"items,omitempty"`
+	Required    []string            `json:"required,omitempty"`
 }
 
 type oaComponents struct {
@@ -340,6 +342,7 @@ func buildSpec() oaDocument {
 }
 
 func buildSchemas() map[string]oaSchema {
+	defaultMinChars := 20
 	str := func() oaSchema { return oaSchema{Type: "string"} }
 	integer := func() oaSchema { return oaSchema{Type: "integer"} }
 	number := func() oaSchema { return oaSchema{Type: "number"} }
@@ -417,7 +420,7 @@ func buildSchemas() map[string]oaSchema {
 				"wing":              str(),
 				"room":              str(),
 				"include_assistant": boolean(),
-				"min_chars":         integer(),
+				"min_chars":         {Type: "integer", Default: &defaultMinChars, Description: "Minimum Unicode character count; omitted defaults to 20, while 0 disables only this threshold."},
 				"dry_run":           boolean(),
 			},
 			Required: []string{"messages", "wing"},
@@ -478,6 +481,9 @@ func buildSchemas() map[string]oaSchema {
 				"top_k":     integer(),
 				"threshold": number(),
 				"kind":      str(),
+				"wing":      {Type: "string", Description: "Required unless global is true; scopes results to this wing."},
+				"room":      {Type: "string", Description: "Optional room within the selected wing."},
+				"global":    {Type: "boolean", Description: "Explicitly search across all wings; defaults to false."},
 			},
 			Required: []string{"query"},
 		},
@@ -516,10 +522,11 @@ func buildSchemas() map[string]oaSchema {
 		"ClearMemoriesRequest": {
 			Type: "object",
 			Properties: map[string]oaSchema{
-				"mode": str(),
-				"wing": str(),
-				"room": str(),
+				"mode": {Type: "string", Description: "Required. Use global to delete all memories, or room to clear one wing and optional room. The old all value is accepted as a deprecated global alias."},
+				"wing": {Type: "string", Description: "Required when mode is room."},
+				"room": {Type: "string", Description: "Optional room when mode is room."},
 			},
+			Required: []string{"mode"},
 		},
 		"ClearMemoriesResponse": {
 			Type: "object",
@@ -553,9 +560,10 @@ func buildSchemas() map[string]oaSchema {
 		"ArchiveResult": {
 			Type: "object",
 			Properties: map[string]oaSchema{
-				"session_notes": integer(),
-				"debug_logs":    integer(),
-				"tokens_freed":  integer(),
+				"session_notes":   integer(),
+				"debug_logs":      integer(),
+				"tokens_archived": integer(),
+				"tokens_freed":    {Type: "integer", Deprecated: true, Description: "Deprecated alias for tokens_archived; archived records remain stored."},
 			},
 		},
 		"CausalChainResponse": {

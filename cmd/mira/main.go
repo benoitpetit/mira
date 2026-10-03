@@ -2118,7 +2118,7 @@ Examples:
 	cmd.Flags().StringVarP(&wing, "wing", "w", "", "wing to store extracted memories in (required)")
 	cmd.Flags().StringVarP(&room, "room", "r", "", "optional room for extracted memories")
 	cmd.Flags().BoolVar(&includeAssistant, "include-assistant", false, "also extract substantive assistant messages")
-	cmd.Flags().IntVar(&minChars, "min-chars", 20, "minimum Unicode character count for a captured message")
+	cmd.Flags().IntVar(&minChars, "min-chars", 20, "minimum Unicode character count; 0 disables only the length threshold")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview selected conversation messages without storing them")
 	cmd.Flags().BoolVar(&stream, "stream", false, "read portable JSONL or Cursor CLI stream-json events from standard input")
 	return cmd

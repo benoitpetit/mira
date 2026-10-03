@@ -23,33 +23,47 @@ func reciprocalRankFusion(dense, lexical []*entities.Candidate, k int) []*entiti
 
 	// Assign dense ranks
 	denseSeen := make(map[uuid.UUID]bool, len(dense))
-	for i, c := range dense {
+	denseRank := 0
+	for _, c := range dense {
+		if c == nil || c.Memory == nil {
+			continue
+		}
 		id := c.ID()
 		if denseSeen[id] {
 			continue
 		}
 		denseSeen[id] = true
-		scores[id] += 1.0 / (float64(k) + float64(i+1))
+		addRetrievalSource(c, "dense")
+		denseRank++
+		scores[id] += 1.0 / (float64(k) + float64(denseRank))
 		r := ranks[id]
-		r.dense = i + 1
+		r.dense = denseRank
 		ranks[id] = r
 		candidatesByID[id] = c
 	}
 
 	// Assign lexical ranks
 	lexicalSeen := make(map[uuid.UUID]bool, len(lexical))
-	for i, c := range lexical {
+	lexicalRank := 0
+	for _, c := range lexical {
+		if c == nil || c.Memory == nil {
+			continue
+		}
 		id := c.ID()
 		if lexicalSeen[id] {
 			continue
 		}
 		lexicalSeen[id] = true
-		scores[id] += 1.0 / (float64(k) + float64(i+1))
+		lexicalRank++
+		scores[id] += 1.0 / (float64(k) + float64(lexicalRank))
 		r := ranks[id]
-		r.lexical = i + 1
+		r.lexical = lexicalRank
 		ranks[id] = r
-		if _, ok := candidatesByID[id]; !ok {
+		if canonical, ok := candidatesByID[id]; ok {
+			addRetrievalSource(canonical, "lexical")
+		} else {
 			candidatesByID[id] = c
+			addRetrievalSource(c, "lexical")
 		}
 	}
 
@@ -116,4 +130,16 @@ func reciprocalRankFusion(dense, lexical []*entities.Candidate, k int) []*entiti
 		fused = append(fused, r.candidate)
 	}
 	return fused
+}
+
+func addRetrievalSource(candidate *entities.Candidate, source string) {
+	if candidate == nil {
+		return
+	}
+	for _, existing := range candidate.RetrievalSources {
+		if existing == source {
+			return
+		}
+	}
+	candidate.RetrievalSources = append(candidate.RetrievalSources, source)
 }

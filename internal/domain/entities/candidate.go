@@ -9,6 +9,7 @@ type Candidate struct {
 	Memory               *Fingerprint
 	Verbatim             *Verbatim
 	Embedding            []float32
+	RetrievalSources     []string
 	Score                float64
 	Relevance            float64
 	Density              float64

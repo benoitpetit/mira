@@ -23,9 +23,12 @@ func NewStats() *Stats {
 
 // ArchiveResult represents the result of an archive operation
 type ArchiveResult struct {
-	SessionNotes int `json:"session_notes"`
-	DebugLogs    int `json:"debug_logs"`
-	TokensFreed  int `json:"tokens_freed"`
+	SessionNotes   int `json:"session_notes"`
+	DebugLogs      int `json:"debug_logs"`
+	TokensArchived int `json:"tokens_archived"`
+	// TokensFreed is retained as a deprecated compatibility alias. Archived
+	// content remains stored; the value is only an estimate removed from active recall.
+	TokensFreed int `json:"tokens_freed"`
 }
 
 // TimelineItem represents an item in the timeline
@@ -35,6 +38,7 @@ type TimelineItem struct {
 	Timestamp       string     `json:"timestamp"`
 	CursorTimestamp string     `json:"-"`
 	Type            MemoryType `json:"type"`
+	LifecycleState  string     `json:"lifecycle_state"`
 	Summary         string     `json:"summary"`
 	Wing            string     `json:"wing"`
 }

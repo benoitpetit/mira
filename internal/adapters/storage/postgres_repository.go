@@ -150,6 +150,9 @@ func (r *PostgreSQLRepository) DeleteVerbatimByID(ctx context.Context, id uuid.U
 
 // DeleteVerbatimByIDTx implements VerbatimRepository
 func (r *PostgreSQLRepository) DeleteVerbatimByIDTx(ctx context.Context, tx *sql.Tx, id uuid.UUID) error {
+	if err := syncBeliefSource(ctx, tx, id, nil, true); err != nil {
+		return fmt.Errorf("failed to remove belief support: %w", err)
+	}
 	// Delete causal relations for fingerprints associated with this verbatim
 	_, _ = tx.ExecContext(ctx, `
 		DELETE FROM causal_edges WHERE from_id IN (
@@ -785,8 +788,9 @@ func (r *PostgreSQLRepository) GetTimeline(ctx context.Context, wing string, roo
 		var extractedAt float64
 		var dataJSON []byte
 		var wingStr string
+		var lifecycleState string
 
-		if err := rows.Scan(&uid, &cursorID, &memTypeStr, &extractedAt, &dataJSON, &wingStr); err != nil {
+		if err := rows.Scan(&uid, &cursorID, &memTypeStr, &extractedAt, &dataJSON, &wingStr, &lifecycleState); err != nil {
 			continue
 		}
 
@@ -810,6 +814,7 @@ func (r *PostgreSQLRepository) GetTimeline(ctx context.Context, wing string, roo
 			Timestamp:       time.Unix(int64(extractedAt), 0).Format("2006-01-02 15:04"),
 			CursorTimestamp: time.Unix(int64(extractedAt), 0).UTC().Format(time.RFC3339Nano),
 			Type:            valueobjects.MemoryType(memTypeStr),
+			LifecycleState:  lifecycleState,
 			Summary:         summary,
 			Wing:            wingStr,
 		})
@@ -820,7 +825,7 @@ func (r *PostgreSQLRepository) GetTimeline(ctx context.Context, wing string, roo
 
 func buildPostgreSQLTimelineQuery(wing string, room *string, memType *valueobjects.MemoryType, since, until *string, limit int, cursor *string) (string, []interface{}, error) {
 	query := `
-		SELECT v.id, f.id, f.ftype, f.extracted_at, f.data, v.wing
+		SELECT v.id, f.id, f.ftype, f.extracted_at, f.data, v.wing, COALESCE(v.lifecycle_state, 'active')
 		FROM fingerprints f
 		JOIN verbatim v ON f.verbatim_id = v.id
 		WHERE 1=1`
@@ -906,7 +911,8 @@ func (r *PostgreSQLRepository) ArchiveOldMemories(ctx context.Context) (*valueob
 	}
 	result.SessionNotes = len(sessionIDs)
 	result.DebugLogs = len(debugIDs)
-	result.TokensFreed = sessionTokens + debugTokens
+	result.TokensArchived = sessionTokens + debugTokens
+	result.TokensFreed = result.TokensArchived
 
 	allIDs := append(append([]uuid.UUID(nil), sessionIDs...), debugIDs...)
 	for _, id := range allIDs {
@@ -953,6 +959,15 @@ func (r *PostgreSQLRepository) ClearAll(ctx context.Context) error {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck // intentional: no-op if commit succeeds
+	if _, err := tx.ExecContext(ctx, `DELETE FROM belief_sources`); err != nil {
+		return fmt.Errorf("failed to clear belief supports: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM belief_feedback`); err != nil {
+		return fmt.Errorf("failed to clear belief feedback: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM beliefs`); err != nil {
+		return fmt.Errorf("failed to clear beliefs: %w", err)
+	}
 
 	if _, err := tx.ExecContext(ctx, `TRUNCATE verbatim CASCADE`); err != nil {
 		return fmt.Errorf("failed to clear verbatim and related data: %w", err)
@@ -992,6 +1007,29 @@ func (r *PostgreSQLRepository) ClearByRoom(ctx context.Context, wing string, roo
 	if err != nil {
 		return 0, err
 	}
+	sourceRows, err := tx.QueryContext(ctx, "SELECT id FROM verbatim WHERE wing = $1 "+roomCondition, args...)
+	if err != nil {
+		return 0, fmt.Errorf("failed to select belief support sources for clear: %w", err)
+	}
+	var sourceIDs []uuid.UUID
+	for sourceRows.Next() {
+		var id uuid.UUID
+		if err := sourceRows.Scan(&id); err != nil {
+			_ = sourceRows.Close()
+			return 0, err
+		}
+		sourceIDs = append(sourceIDs, id)
+	}
+	if err := sourceRows.Err(); err != nil {
+		_ = sourceRows.Close()
+		return 0, err
+	}
+	_ = sourceRows.Close()
+	for _, id := range sourceIDs {
+		if err := syncBeliefSource(ctx, tx, id, nil, true); err != nil {
+			return 0, fmt.Errorf("failed to remove belief support for %s: %w", id, err)
+		}
+	}
 
 	// roomCondition is selected from fixed SQL fragments; values remain parameterized.
 	_, err = tx.ExecContext(ctx, "DELETE FROM verbatim WHERE wing = $1 "+roomCondition, args...) //nolint:gosec // roomCondition is a fixed SQL fragment
@@ -1020,6 +1058,11 @@ func (r *PostgreSQLRepository) ClearByIDs(ctx context.Context, ids []uuid.UUID) 
 			return 0, fmt.Errorf("clear canceled: %w", err)
 		}
 		end := min(start+clearByIDsBatchSize, len(ids))
+		for _, id := range ids[start:end] {
+			if err := syncBeliefSource(ctx, tx, id, nil, true); err != nil {
+				return 0, fmt.Errorf("failed to remove belief support for %s: %w", id, err)
+			}
+		}
 		args := postgresUUIDArguments(ids[start:end])
 		query := `DELETE FROM verbatim WHERE id IN (` + postgresPlaceholders(1, len(args)) + `)` //nolint:gosec // placeholders are generated, IDs are bound
 		result, err := tx.ExecContext(ctx, query, args...)

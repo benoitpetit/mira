@@ -34,9 +34,11 @@ type RecallMemoryInput struct {
 
 // RecallMemoryOutput contains the output of recalling memories
 type RecallMemoryOutput struct {
-	Memories    []*valueobjects.SelectedMemory `json:"memories"`
-	TotalTokens int                            `json:"total_tokens"`
-	BudgetUsed  float64                        `json:"budget_used"`
+	Memories []*valueobjects.SelectedMemory `json:"memories"`
+	// TotalTokens counts whitespace-delimited units in each rendered memory body;
+	// transport and caller-added framing are excluded.
+	TotalTokens int     `json:"total_tokens"`
+	BudgetUsed  float64 `json:"budget_used"`
 }
 
 // candidateHeap is a max-heap for O(log n) extraction instead of O(n) linear scan.
@@ -404,6 +406,10 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 	candidates := denseCandidates
 	if uc.enableFTS5 && len(lexicalCandidates) > 0 {
 		candidates = reciprocalRankFusion(denseCandidates, lexicalCandidates, uc.rrfK)
+	} else {
+		for _, candidate := range denseCandidates {
+			addRetrievalSource(candidate, "dense")
+		}
 	}
 	// Historical or scheduled facts are kept in storage, but never consume the
 	// current context budget outside their declared validity interval.
@@ -424,6 +430,9 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 	if len(pruned) < 3 {
 		broadCandidates, err := uc.vectorStore.Search(ctx, queryVec, uc.maxCandidates*3, input.Wing, input.Room)
 		if err == nil {
+			for _, candidate := range broadCandidates {
+				addRetrievalSource(candidate, "dense")
+			}
 			broadCandidates = filterCandidatesValidAt(broadCandidates, time.Now())
 			broadCandidates = filterCandidatesByKind(broadCandidates, input.Kind)
 			broadCandidates = uc.scoreCandidates(broadCandidates, queryVec, tagBoostIDs)
@@ -459,6 +468,9 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 			fbCandidates, err := uc.vectorStore.Search(ctx, queryVec, uc.maxCandidates, &fbWing, input.Room)
 			if err != nil {
 				continue
+			}
+			for _, candidate := range fbCandidates {
+				addRetrievalSource(candidate, "dense")
 			}
 			fbCandidates = filterCandidatesValidAt(fbCandidates, time.Now())
 			fbCandidates = filterCandidatesByKind(fbCandidates, input.Kind)
@@ -1122,7 +1134,7 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 				diversityBoost = 1.0 + uc.diversityBoostAlpha*float64(newSubjects)/float64(len(c.Memory.Subjects))
 			}
 
-			initialScore := c.Relevance * c.Density * c.Recency * c.ExtractionConfidence * c.ValidationFreshness * c.LifecycleFactor
+			initialScore := c.Relevance * c.Density * c.Recency * c.ExtractionConfidence * c.ValidationFreshness * c.LifecycleFactor * c.BeliefCalibration
 			if uc.sessionMemoryBoost > 0 && sessionMemoryIDs != nil && sessionMemoryIDs[c.ID()] {
 				initialScore *= uc.sessionMemoryBoost
 			}
@@ -1139,46 +1151,12 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 
 		// Determine render mode
 		remainingBudget := budget - tokensUsed
-		mode := uc.determineRenderMode(remainingBudget)
-		tokenCost := uc.calculateTokenCost(c, mode)
-
-		// Check budget and try downgrades
-		// Tier order: Verbatim → Compressed (if available) → Fingerprint → Header
-		if tokensUsed+tokenCost > budget {
-			if mode == valueobjects.ModeVerbatim {
-				if c.Verbatim.HasSummary() {
-					mode = valueobjects.ModeCompressed
-					tokenCost = uc.calculateTokenCost(c, mode)
-					if tokensUsed+tokenCost > budget {
-						mode = valueobjects.ModeFingerprint
-						tokenCost = c.Memory.TokenEstimate
-						if tokensUsed+tokenCost > budget {
-							mode = valueobjects.ModeHeader
-							tokenCost = 5
-						}
-					}
-				} else {
-					mode = valueobjects.ModeFingerprint
-					tokenCost = c.Memory.TokenEstimate
-					if tokensUsed+tokenCost > budget {
-						mode = valueobjects.ModeHeader
-						tokenCost = 5
-					}
-				}
-			} else if mode == valueobjects.ModeFingerprint {
-				mode = valueobjects.ModeHeader
-				tokenCost = 5
-			}
-
-			if tokensUsed+tokenCost > budget {
-				continue
-			}
+		mode, rendered, tokenCost, fits := uc.fitRenderedMode(c, uc.determineRenderMode(remainingBudget), remainingBudget)
+		if !fits {
+			continue
 		}
 
-		// Render
-		rendered := uc.render(c, mode)
-
-		sel := valueobjects.NewSelectedMemory(c.ID(), c.Verbatim.ID, mode, tokenCost, rendered, c.Score)
+		sel := valueobjects.NewSelectedMemory(c.ID(), c.Verbatim.ID, mode, tokenCost, rendered, c.Score).WithSources(c.RetrievalSources)
 		selected = append(selected, sel)
 		selectedEmbeddings = append(selectedEmbeddings, c.Embedding)
 		selectedIDs[c.ID()] = true
@@ -1206,23 +1184,47 @@ func (uc *RecallMemory) determineRenderMode(remainingBudget int) valueobjects.Re
 }
 
 func (uc *RecallMemory) calculateTokenCost(c *entities.Candidate, mode valueobjects.RenderMode) int {
-	switch mode {
-	case valueobjects.ModeHeader:
-		return 5
-	case valueobjects.ModeFingerprint:
-		return c.Memory.TokenEstimate
-	case valueobjects.ModeCompressed:
-		if c.Verbatim.SummaryTokenCount > 0 {
-			return c.Verbatim.SummaryTokenCount
-		}
-		// Fallback estimate: ~40% of verbatim
-		return c.Verbatim.TokenCount * 40 / 100
-	case valueobjects.ModeVerbatim:
-		return c.Verbatim.TokenCount
-	default:
-		return 0
-	}
+	return countRenderedTokens(uc.render(c, mode))
 }
+
+// fitRenderedMode starts at the preferred representation and tries each shorter
+// representation in order. It also accepts ModeCompressed as its starting point
+// so callers remain safe if their preferred mode is selected independently.
+func (uc *RecallMemory) fitRenderedMode(c *entities.Candidate, preferred valueobjects.RenderMode, budget int) (valueobjects.RenderMode, string, int, bool) {
+	var modes []valueobjects.RenderMode
+	switch preferred {
+	case valueobjects.ModeVerbatim:
+		modes = append(modes, valueobjects.ModeVerbatim)
+		if c.Verbatim.HasSummary() {
+			modes = append(modes, valueobjects.ModeCompressed)
+		}
+		modes = append(modes, valueobjects.ModeFingerprint, valueobjects.ModeHeader)
+	case valueobjects.ModeCompressed:
+		if c.Verbatim.HasSummary() {
+			modes = append(modes, valueobjects.ModeCompressed)
+		}
+		modes = append(modes, valueobjects.ModeFingerprint, valueobjects.ModeHeader)
+	case valueobjects.ModeFingerprint:
+		modes = append(modes, valueobjects.ModeFingerprint, valueobjects.ModeHeader)
+	case valueobjects.ModeHeader:
+		modes = append(modes, valueobjects.ModeHeader)
+	default:
+		return 0, "", 0, false
+	}
+
+	for _, mode := range modes {
+		rendered := uc.render(c, mode)
+		cost := countRenderedTokens(rendered)
+		if rendered != "" && cost <= budget {
+			return mode, rendered, cost, true
+		}
+	}
+	return 0, "", 0, false
+}
+
+// countRenderedTokens counts the whitespace-delimited units in the exact memory
+// body that is returned. API/JSON and caller-added framing are outside the budget.
+func countRenderedTokens(rendered string) int { return len(strings.Fields(rendered)) }
 
 func (uc *RecallMemory) render(c *entities.Candidate, mode valueobjects.RenderMode) string {
 	switch mode {

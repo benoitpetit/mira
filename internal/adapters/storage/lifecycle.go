@@ -58,6 +58,7 @@ func hydrateLifecycleColumns(v *entities.Verbatim, state string, supersededBy sq
 
 type lifecycleSQL interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }
 
@@ -100,22 +101,46 @@ func updateLifecycle(ctx context.Context, execer lifecycleSQL, id uuid.UUID, sta
 		query = `UPDATE verbatim SET metadata=?, lifecycle_state=?, superseded_by=? WHERE id=?`
 		args = []any{string(payload), state, supersededByValue, id[:]}
 	}
-	_, err = execer.ExecContext(ctx, query, args...)
-	return err
+	if _, err := execer.ExecContext(ctx, query, args...); err != nil {
+		return err
+	}
+	return setBeliefSourceActivity(ctx, execer, id, state == entities.LifecycleActive, postgres)
 }
 
 func (r *SQLiteRepository) SetVerbatimLifecycle(ctx context.Context, id uuid.UUID, state string, supersededBy *uuid.UUID) error {
-	return updateLifecycle(ctx, r.db, id, state, supersededBy, false)
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after commit
+	if err := r.SetVerbatimLifecycleTx(ctx, tx, id, state, supersededBy); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (r *SQLiteRepository) SetVerbatimLifecycleTx(ctx context.Context, tx *sql.Tx, id uuid.UUID, state string, supersededBy *uuid.UUID) error {
-	return updateLifecycle(ctx, tx, id, state, supersededBy, false)
+	if err := updateLifecycle(ctx, tx, id, state, supersededBy, false); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (r *PostgreSQLRepository) SetVerbatimLifecycle(ctx context.Context, id uuid.UUID, state string, supersededBy *uuid.UUID) error {
-	return updateLifecycle(ctx, r.db, id, state, supersededBy, true)
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after commit
+	if err := r.SetVerbatimLifecycleTx(ctx, tx, id, state, supersededBy); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (r *PostgreSQLRepository) SetVerbatimLifecycleTx(ctx context.Context, tx *sql.Tx, id uuid.UUID, state string, supersededBy *uuid.UUID) error {
-	return updateLifecycle(ctx, tx, id, state, supersededBy, true)
+	if err := updateLifecycle(ctx, tx, id, state, supersededBy, true); err != nil {
+		return err
+	}
+	return nil
 }

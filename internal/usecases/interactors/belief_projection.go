@@ -33,7 +33,13 @@ func deriveBeliefFromFingerprint(fp *entities.Fingerprint, verbatim *entities.Ve
 	if fp.Type == valueobjects.TypePreference {
 		predicate = "prefers"
 	}
-	key := verbatim.ID.String() + "|" + subject + "|" + predicate + "|" + value
+	key := strings.ToLower(subject) + "|" + predicate + "|" + strings.ToLower(value)
+	if verbatim.ValidFrom != nil {
+		key += "|from=" + verbatim.ValidFrom.UTC().Format(time.RFC3339Nano)
+	}
+	if verbatim.ValidUntil != nil {
+		key += "|until=" + verbatim.ValidUntil.UTC().Format(time.RFC3339Nano)
+	}
 	confidence := 0.5
 	if raw, ok := fp.Data.Custom["extraction_confidence"].(float64); ok {
 		confidence = raw

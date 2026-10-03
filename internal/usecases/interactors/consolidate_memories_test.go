@@ -44,6 +44,11 @@ func (m *mockConsolidateRepository) GetTimeline(ctx context.Context, wing string
 	return nil, nil
 }
 
+func (m *mockConsolidateRepository) ListActiveConsolidationCandidates(ctx context.Context, wing string) ([]*valueobjects.TimelineItem, error) {
+	memType := valueobjects.TypeSessionNote
+	return m.GetTimeline(ctx, wing, nil, &memType, nil, nil, 1000, nil)
+}
+
 func (m *mockConsolidateRepository) GetVerbatimByID(ctx context.Context, id uuid.UUID) (*entities.Verbatim, error) {
 	if m.getVerbatimFunc != nil {
 		return m.getVerbatimFunc(ctx, id)
@@ -76,6 +81,10 @@ func (m *mockConsolidateRepository) SetVerbatimLifecycle(_ context.Context, id u
 func (m *mockConsolidateRepository) SetVerbatimLifecycleTx(_ context.Context, _ *sql.Tx, id uuid.UUID, state string, supersededBy *uuid.UUID) error {
 	m.transactionalLifecycleCalls++
 	m.applyLifecycle(id, state, supersededBy)
+	return nil
+}
+
+func (m *mockConsolidateRepository) SyncBeliefSourceTx(context.Context, *sql.Tx, uuid.UUID, *entities.Belief) error {
 	return nil
 }
 
@@ -465,6 +474,7 @@ func TestRevokeConsolidationUsesAtomicLifecycleTransaction(t *testing.T) {
 	}
 	repo.verbatims[sourceID] = source
 	repo.verbatims[synthesisID] = synthesis
+	repo.fingerprints[uuid.New()] = entities.NewFingerprint(sourceID, valueobjects.TypeFact, "test-model")
 
 	if err := NewRevokeConsolidation(repo).Execute(ctx, synthesisID); err != nil {
 		t.Fatalf("first revoke failed: %v", err)

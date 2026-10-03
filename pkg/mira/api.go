@@ -169,12 +169,38 @@ func (a *Application) Delete(ctx context.Context, id uuid.UUID) error {
 	return a.inner.DeleteMemoryUC().Execute(ctx, interactors.DeleteMemoryInput{ID: id})
 }
 
-// Search performs a semantic vector search.
+// Search is deprecated because its original unscoped behavior could search
+// across every wing. It now fails closed until a caller chooses SearchInWing
+// or SearchGlobal explicitly.
+//
+// Deprecated: use SearchInWing or SearchGlobal.
 func (a *Application) Search(ctx context.Context, query string, topK int, threshold float64) ([]*SearchResult, error) {
 	return a.inner.SearchSemanticUC().Execute(ctx, interactors.SearchSemanticInput{
 		Query:     query,
 		TopK:      topK,
 		Threshold: threshold,
+	})
+}
+
+// SearchInWing performs semantic search within one wing and optional room.
+func (a *Application) SearchInWing(ctx context.Context, query string, topK int, threshold float64, wing string, room *string) ([]*SearchResult, error) {
+	return a.inner.SearchSemanticUC().Execute(ctx, interactors.SearchSemanticInput{
+		Query:     query,
+		TopK:      topK,
+		Threshold: threshold,
+		Wing:      wing,
+		Room:      room,
+	})
+}
+
+// SearchGlobal explicitly searches all wings. Callers should prefer
+// SearchInWing when they know the relevant project or namespace.
+func (a *Application) SearchGlobal(ctx context.Context, query string, topK int, threshold float64) ([]*SearchResult, error) {
+	return a.inner.SearchSemanticUC().Execute(ctx, interactors.SearchSemanticInput{
+		Query:     query,
+		TopK:      topK,
+		Threshold: threshold,
+		Global:    true,
 	})
 }
 

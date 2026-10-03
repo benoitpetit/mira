@@ -94,6 +94,12 @@ type BeliefRepository interface {
 	CalibrationForSource(sourceID uuid.UUID) float64
 }
 
+// BeliefSourceRepository keeps the active support relation for a belief in the
+// same transaction as the authoritative source memory.
+type BeliefSourceRepository interface {
+	SyncBeliefSourceTx(ctx context.Context, tx *sql.Tx, sourceID uuid.UUID, belief *entities.Belief) error
+}
+
 // CausalGraphRepository defines the interface for causal graph storage.
 // The causal graph tracks relationships between memories (causes, consequences, etc.).
 type CausalGraphRepository interface {

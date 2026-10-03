@@ -141,6 +141,9 @@ func validateConversationMessages(messages []ConversationMessage) ([]Conversatio
 // is always categorized as history while extraction still infers its technical
 // memory type.
 func ConversationMemoryInputs(messages []ConversationMessage, wing string, room *string, includeAssistant bool, minChars int) ([]StoreMemoryInput, error) {
+	if minChars < 0 {
+		return nil, fmt.Errorf("min_chars must be greater than or equal to 0")
+	}
 	if !WingRoomRe.MatchString(wing) {
 		return nil, fmt.Errorf("wing must be 1-100 alphanumeric characters, hyphens or underscores")
 	}
@@ -149,9 +152,6 @@ func ConversationMemoryInputs(messages []ConversationMessage, wing string, room 
 	}
 	if room != nil && (!WingRoomRe.MatchString(*room) || len([]rune(*room)) > 100) {
 		return nil, fmt.Errorf("room must be 1-100 alphanumeric characters, hyphens or underscores")
-	}
-	if minChars < 1 {
-		minChars = 1
 	}
 
 	kind := valueobjects.KindHistory
@@ -162,7 +162,7 @@ func ConversationMemoryInputs(messages []ConversationMessage, wing string, room 
 			continue
 		}
 		content := strings.TrimSpace(message.Content)
-		if len([]rune(content)) < minChars {
+		if content == "" || (minChars > 0 && len([]rune(content)) < minChars) {
 			continue
 		}
 		inputs = append(inputs, StoreMemoryInput{

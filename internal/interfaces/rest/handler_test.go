@@ -66,11 +66,13 @@ func (f *fakeDelete) Execute(_ context.Context, _ interactors.DeleteMemoryInput)
 }
 
 type fakeSearch struct {
-	out []*interactors.SearchSemanticResult
-	err error
+	out    []*interactors.SearchSemanticResult
+	err    error
+	inputs []interactors.SearchSemanticInput
 }
 
-func (f *fakeSearch) Execute(_ context.Context, _ interactors.SearchSemanticInput) ([]*interactors.SearchSemanticResult, error) {
+func (f *fakeSearch) Execute(_ context.Context, input interactors.SearchSemanticInput) ([]*interactors.SearchSemanticResult, error) {
+	f.inputs = append(f.inputs, input)
 	return f.out, f.err
 }
 
@@ -84,11 +86,13 @@ func (f *fakeConsolidate) Execute(_ context.Context, _ interactors.ConsolidateMe
 }
 
 type fakeClear struct {
-	out *interactors.ClearMemoryOutput
-	err error
+	out    *interactors.ClearMemoryOutput
+	err    error
+	inputs []interactors.ClearMemoryInput
 }
 
-func (f *fakeClear) Execute(_ context.Context, _ interactors.ClearMemoryInput) (*interactors.ClearMemoryOutput, error) {
+func (f *fakeClear) Execute(_ context.Context, input interactors.ClearMemoryInput) (*interactors.ClearMemoryOutput, error) {
+	f.inputs = append(f.inputs, input)
 	return f.out, f.err
 }
 
@@ -339,6 +343,34 @@ func TestHandleIngest_DryRunDoesNotStore(t *testing.T) {
 	}
 }
 
+func TestHandleIngest_ExplicitZeroDisablesMinimumLength(t *testing.T) {
+	s := newSuite(t)
+	resp := s.post("/api/v1/memories/ingest", map[string]any{
+		"wing": "test", "min_chars": 0,
+		"messages": []map[string]string{{"role": "user", "content": "short but valid"}},
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("explicit min_chars=0 should keep a non-empty message; got %d", resp.StatusCode)
+	}
+	if len(s.store.inputs) != 1 || s.store.inputs[0].Content != "short but valid" {
+		t.Fatalf("stored inputs = %#v", s.store.inputs)
+	}
+}
+
+func TestHandleIngest_ExplicitZeroStillRejectsEmptyMessage(t *testing.T) {
+	s := newSuite(t)
+	resp := s.post("/api/v1/memories/ingest", map[string]any{
+		"wing": "test", "min_chars": 0,
+		"messages": []map[string]string{{"role": "user", "content": ""}},
+	})
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("empty message should remain invalid at min_chars=0; got %d", resp.StatusCode)
+	}
+	if len(s.store.inputs) != 0 {
+		t.Fatalf("empty message reached storage: %#v", s.store.inputs)
+	}
+}
+
 func TestHandleIngest_DryRunReportsConfiguredContentLimitFailures(t *testing.T) {
 	s := newSuite(t)
 	s.handler.SetMaxContentLength(4)
@@ -455,7 +487,7 @@ func TestHandleSearch_Success(t *testing.T) {
 		{ID: uuid.New(), Content: "match", Similarity: 0.9},
 	}
 
-	resp := s.post("/api/v1/memories/search", map[string]any{"query": "find this", "top_k": 5})
+	resp := s.post("/api/v1/memories/search", map[string]any{"query": "find this", "top_k": 5, "wing": "project-a"})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("want 200, got %d", resp.StatusCode)
 	}
@@ -465,13 +497,38 @@ func TestHandleSearch_Success(t *testing.T) {
 	if !ok || len(results) != 1 {
 		t.Errorf("expected 1 result, got %v", body["results"])
 	}
+	if len(s.search.inputs) != 1 || s.search.inputs[0].Wing != "project-a" || s.search.inputs[0].Global {
+		t.Errorf("search input = %#v, want scoped to project-a", s.search.inputs)
+	}
+}
+
+func TestHandleSearch_RequiresExplicitWingOrGlobalOptIn(t *testing.T) {
+	s := newSuite(t)
+	resp := s.post("/api/v1/memories/search", map[string]any{"query": "find this"})
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("missing scope should be rejected; got %d", resp.StatusCode)
+	}
+	if len(s.search.inputs) != 0 {
+		t.Fatalf("unscoped search reached executor: %#v", s.search.inputs)
+	}
+}
+
+func TestHandleSearch_GlobalRequiresExplicitOptIn(t *testing.T) {
+	s := newSuite(t)
+	resp := s.post("/api/v1/memories/search", map[string]any{"query": "find this", "global": true})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("explicit global search status = %d", resp.StatusCode)
+	}
+	if len(s.search.inputs) != 1 || !s.search.inputs[0].Global || s.search.inputs[0].Wing != "" {
+		t.Fatalf("search input = %#v, want explicit global scope", s.search.inputs)
+	}
 }
 
 func TestHandleSearch_EmptyResults(t *testing.T) {
 	s := newSuite(t)
 	s.search.out = nil // no results
 
-	resp := s.post("/api/v1/memories/search", map[string]any{"query": "nothing"})
+	resp := s.post("/api/v1/memories/search", map[string]any{"query": "nothing", "wing": "test"})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("want 200, got %d", resp.StatusCode)
 	}
@@ -503,9 +560,9 @@ func TestHandleConsolidate_MissingWing(t *testing.T) {
 
 func TestHandleClear_Success(t *testing.T) {
 	s := newSuite(t)
-	s.clear.out = &interactors.ClearMemoryOutput{DeletedCount: 5, Mode: "all"}
+	s.clear.out = &interactors.ClearMemoryOutput{DeletedCount: 5, Mode: "global"}
 
-	resp := s.do(http.MethodDelete, "/api/v1/memories", map[string]any{"mode": "all"})
+	resp := s.do(http.MethodDelete, "/api/v1/memories", map[string]any{"mode": "global"})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("want 200, got %d", resp.StatusCode)
 	}
@@ -528,12 +585,19 @@ func TestHandleTimeline_Success(t *testing.T) {
 func TestHandleArchive_Success(t *testing.T) {
 	s := newSuite(t)
 	s.archive.out = &interactors.ArchiveMemoriesOutput{
-		Result: &valueobjects.ArchiveResult{SessionNotes: 2, DebugLogs: 1, TokensFreed: 500},
+		Result: &valueobjects.ArchiveResult{SessionNotes: 2, DebugLogs: 1, TokensArchived: 500, TokensFreed: 500},
 	}
 
 	resp := s.post("/api/v1/archive", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	var body struct {
+		Result map[string]any `json:"result"`
+	}
+	decodeJSON(t, resp, &body)
+	if body.Result["tokens_archived"] != float64(500) || body.Result["tokens_freed"] != float64(500) {
+		t.Errorf("archive compatibility fields = %#v", body.Result)
 	}
 }
 
@@ -639,6 +703,45 @@ func TestOpenAPIConversationIngestDeclaresMessageLimit(t *testing.T) {
 	validationProperties := validationItem["properties"].(map[string]any)
 	if validationProperties["message_index"].(map[string]any)["type"] != "integer" || validationProperties["error"].(map[string]any)["type"] != "string" {
 		t.Fatalf("ConversationIngestResponse.validation_errors item schema = %#v", validationItem)
+	}
+}
+
+func TestOpenAPITransportScopeAndMinCharsContracts(t *testing.T) {
+	response := httptest.NewRecorder()
+	rest.ServeSpec(response, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
+	var document struct {
+		Components struct {
+			Schemas map[string]struct {
+				Properties map[string]struct {
+					Description string `json:"description"`
+					Deprecated  bool   `json:"deprecated"`
+					Default     int    `json:"default"`
+				} `json:"properties"`
+				Required []string `json:"required"`
+			} `json:"schemas"`
+		} `json:"components"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&document); err != nil {
+		t.Fatalf("decode OpenAPI document: %v", err)
+	}
+	search := document.Components.Schemas["SearchRequest"].Properties
+	if !strings.Contains(search["wing"].Description, "Required unless global") || !strings.Contains(search["global"].Description, "Explicitly search") {
+		t.Errorf("search scope schema does not explain explicit wing/global scope: %#v", search)
+	}
+	clear := document.Components.Schemas["ClearMemoriesRequest"].Properties
+	if !strings.Contains(clear["mode"].Description, "Required") || !strings.Contains(clear["mode"].Description, "global") {
+		t.Errorf("clear scope schema does not require explicit global mode: %#v", clear["mode"])
+	}
+	if got := document.Components.Schemas["ClearMemoriesRequest"].Required; len(got) != 1 || got[0] != "mode" {
+		t.Errorf("clear schema required fields = %#v, want [mode]", got)
+	}
+	minChars := document.Components.Schemas["ConversationIngestRequest"].Properties["min_chars"].Description
+	if !strings.Contains(minChars, "omitted defaults to 20") || !strings.Contains(minChars, "0 disables") || document.Components.Schemas["ConversationIngestRequest"].Properties["min_chars"].Default != 20 {
+		t.Errorf("min_chars schema is missing default/zero semantics: %q", minChars)
+	}
+	archive := document.Components.Schemas["ArchiveResult"].Properties
+	if _, ok := archive["tokens_archived"]; !ok || !archive["tokens_freed"].Deprecated {
+		t.Errorf("archive schema must expose tokens_archived and mark tokens_freed deprecated: %#v", archive)
 	}
 }
 
@@ -1043,7 +1146,7 @@ func TestHandleSearch_MissingQuery(t *testing.T) {
 func TestHandleSearch_InternalError(t *testing.T) {
 	s := newSuite(t)
 	s.search.err = errors.New("search failed")
-	resp := s.post("/api/v1/memories/search", map[string]any{"query": "test"})
+	resp := s.post("/api/v1/memories/search", map[string]any{"query": "test", "wing": "test"})
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("want 500, got %d", resp.StatusCode)
 	}
@@ -1075,7 +1178,7 @@ func TestHandleConsolidate_InternalError(t *testing.T) {
 func TestHandleClear_InternalError(t *testing.T) {
 	s := newSuite(t)
 	s.clear.err = errors.New("clear failed")
-	resp := s.do(http.MethodDelete, "/api/v1/memories", map[string]any{"mode": "all"})
+	resp := s.do(http.MethodDelete, "/api/v1/memories", map[string]any{"mode": "global"})
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("want 500, got %d", resp.StatusCode)
 	}
@@ -1083,10 +1186,12 @@ func TestHandleClear_InternalError(t *testing.T) {
 
 func TestHandleClear_EmptyBody(t *testing.T) {
 	s := newSuite(t)
-	s.clear.out = &interactors.ClearMemoryOutput{DeletedCount: 0, Mode: "all"}
 	resp := s.do(http.MethodDelete, "/api/v1/memories", nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("want 200, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("empty clear body must not mean global delete; want 422, got %d", resp.StatusCode)
+	}
+	if len(s.clear.inputs) != 0 {
+		t.Fatalf("unscoped clear reached executor: %#v", s.clear.inputs)
 	}
 }
 
