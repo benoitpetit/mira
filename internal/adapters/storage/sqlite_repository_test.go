@@ -1877,3 +1877,56 @@ func TestSQLiteRepository_UpdateVerbatimSummary(t *testing.T) {
 		t.Errorf("SummaryTokenCount = %d, want 6", got.SummaryTokenCount)
 	}
 }
+
+func TestSQLiteRepositoryDeleteAndClearRemoveTags(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	storeTagged := func(wing string, room *string) *entities.Verbatim {
+		t.Helper()
+		verbatim := entities.NewVerbatim("tagged memory", wing, room)
+		if err := repo.StoreVerbatim(ctx, verbatim); err != nil {
+			t.Fatalf("StoreVerbatim: %v", err)
+		}
+		if err := repo.StoreTags(ctx, verbatim.ID, []string{"cascade-test"}, "entity"); err != nil {
+			t.Fatalf("StoreTags: %v", err)
+		}
+		return verbatim
+	}
+	assertNoTags := func(id uuid.UUID, operation string) {
+		t.Helper()
+		tags, err := repo.GetTagsForVerbatim(ctx, id)
+		if err != nil {
+			t.Fatalf("GetTagsForVerbatim after %s: %v", operation, err)
+		}
+		if len(tags) != 0 {
+			t.Fatalf("tags after %s = %v, want none", operation, tags)
+		}
+	}
+
+	deleted := storeTagged("delete-fk-test", nil)
+	if err := repo.DeleteVerbatimByID(ctx, deleted.ID); err != nil {
+		t.Fatalf("DeleteVerbatimByID: %v", err)
+	}
+	assertNoTags(deleted.ID, "delete")
+
+	room := "room-a"
+	roomMemory := storeTagged("clear-fk-test", &room)
+	if _, err := repo.ClearByRoom(ctx, "clear-fk-test", &room); err != nil {
+		t.Fatalf("ClearByRoom: %v", err)
+	}
+	assertNoTags(roomMemory.ID, "clear by room")
+
+	idsMemory := storeTagged("clear-ids-test", nil)
+	if _, err := repo.ClearByIDs(ctx, []uuid.UUID{idsMemory.ID}); err != nil {
+		t.Fatalf("ClearByIDs: %v", err)
+	}
+	assertNoTags(idsMemory.ID, "clear by IDs")
+
+	allMemory := storeTagged("clear-all-fk-test", nil)
+	if err := repo.ClearAll(ctx); err != nil {
+		t.Fatalf("ClearAll: %v", err)
+	}
+	assertNoTags(allMemory.ID, "clear all")
+}

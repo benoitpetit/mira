@@ -177,6 +177,12 @@ func (r *SQLiteRepository) DeleteVerbatimByIDTx(ctx context.Context, tx *sql.Tx,
 	// Delete fingerprints
 	_, _ = tx.ExecContext(ctx, `DELETE FROM fingerprints WHERE verbatim_id = ?`, idBytes)
 
+	// SQLite foreign keys are not enabled on existing repository connections.
+	// Remove dependent tags explicitly so deleted memories cannot retain boosts.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM memory_tags WHERE verbatim_id = ?`, idBytes); err != nil {
+		return fmt.Errorf("failed to delete memory tags: %w", err)
+	}
+
 	// Delete verbatim
 	_, err := tx.ExecContext(ctx, `DELETE FROM verbatim WHERE id = ?`, idBytes)
 	if err != nil {
@@ -1032,6 +1038,9 @@ func (r *SQLiteRepository) ClearAll(ctx context.Context) error {
 	_, _ = tx.ExecContext(ctx, `DELETE FROM causal_nodes`)
 	_, _ = tx.ExecContext(ctx, `DELETE FROM embeddings`)
 	_, _ = tx.ExecContext(ctx, `DELETE FROM fingerprints`)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM memory_tags`); err != nil {
+		return fmt.Errorf("failed to clear memory tags: %w", err)
+	}
 	_, _ = tx.ExecContext(ctx, `DELETE FROM verbatim`)
 	_, _ = tx.ExecContext(ctx, `DELETE FROM overlap_cache`)
 
@@ -1084,6 +1093,14 @@ func (r *SQLiteRepository) ClearByIDs(ctx context.Context, ids []uuid.UUID) (int
 		`DELETE FROM embeddings WHERE id IN (`+idList+`)`,
 		args...,
 	)
+
+	//nolint:gosec // idList contains only generated '?' placeholders; IDs are bound.
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM memory_tags WHERE verbatim_id IN (`+idList+`)`,
+		args...,
+	); err != nil {
+		return 0, fmt.Errorf("failed to clear memory tags: %w", err)
+	}
 
 	//nolint:gosec // query structure is generated from placeholders, values are bound
 	_, _ = tx.ExecContext(ctx,
@@ -1176,6 +1193,16 @@ func (r *SQLiteRepository) ClearByRoom(ctx context.Context, wing string, room *s
 		)`,
 		args...,
 	)
+
+	//nolint:gosec // roomCondition is a fixed SQL fragment; all values are bound.
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM memory_tags WHERE verbatim_id IN (
+			SELECT id FROM verbatim WHERE wing = ? `+roomCondition+`
+		)`,
+		args...,
+	); err != nil {
+		return 0, fmt.Errorf("failed to clear memory tags by room: %w", err)
+	}
 
 	//nolint:gosec // roomCondition is a fixed SQL fragment; all values are bound
 	_, err = tx.ExecContext(ctx,
