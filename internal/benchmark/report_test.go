@@ -82,6 +82,17 @@ func TestValidateOfficialRun(t *testing.T) {
 	}
 }
 
+func TestValidateOfficialRunAllowsSingleSampleSetupCases(t *testing.T) {
+	r := validReport()
+	r.Performance.Cases = append(r.Performance.Cases, LatencyCase{
+		Name: "sqlite_fixture_setup_100", Status: TrackAvailable, Unit: "ms",
+		Repetitions: 1, Samples: []float64{12}, Summary: summarizeLatency([]float64{12}),
+	})
+	if err := ValidateOfficialRun(r); err != nil {
+		t.Fatalf("valid single-sample setup case rejected: %v", err)
+	}
+}
+
 func TestWriteReportRoundTripAndStableFormatting(t *testing.T) {
 	r := validReport()
 	var first, second bytes.Buffer

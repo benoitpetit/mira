@@ -194,6 +194,12 @@ func ValidateOfficialRun(r Report) error {
 			if c.Status == TrackUnavailable {
 				continue
 			}
+			if strings.Contains(c.Name, "_fixture_setup_") {
+				if c.Repetitions != 1 || len(c.Samples) != 1 {
+					return fmt.Errorf("official setup case %q requires exactly one sample because setup is excluded from repeated latency measurements", c.Name)
+				}
+				continue
+			}
 			if c.Repetitions < 5 || len(c.Samples) < 5 {
 				return fmt.Errorf("official case %q requires at least five measured repetitions", c.Name)
 			}
