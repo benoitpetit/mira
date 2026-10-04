@@ -1,0 +1,8 @@
+{
+  "model_dir": "",
+  "model_lock": "benchmarks/models/all-MiniLM-L6-v2.lock.json",
+  "corpus_sizes": [100, 1000, 10000],
+  "dimension": 384,
+  "seed": 42,
+  "backend": "sqlite"
+}

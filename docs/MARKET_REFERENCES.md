@@ -6,8 +6,11 @@ benchmark and are never embedded in a MIRA benchmark report.
 
 ## Why there is no leaderboard
 
-MIRA's built-in benchmark is deterministic CBA retrieval over a synthetic
-4,000-candidate corpus, with no LLM call. Published competitors commonly
+MIRA's legacy `make bench-locomo` command is a CBA selector microbenchmark; it
+does not run LoCoMo or represent full-system recall. The versioned public
+protocol uses a separate synthetic fixture of 20 memories, 6 queries, and 8
+judgments, with no LLM call. No official MIRA result has been published yet.
+Published competitors commonly
 measure end-to-end answer quality using a particular hosted model, prompt,
 judge, managed service, data split, and retrieval budget. Comparing their
 seconds or accuracy percentages directly would be misleading.
@@ -16,7 +19,7 @@ seconds or accuracy percentages directly would be misleading.
 
 | System | Source protocol | Published result | Interpretation |
 |---|---|---|---|
-| MIRA | Local synthetic long-conversation recall; 200 sessions, 4,000 candidates, 2K-token budget, no LLM | Generated locally with `make bench-locomo` | Local retrieval latency only; not an answer-accuracy score. |
+| MIRA | Versioned synthetic retrieval-quality and component-performance protocol; 20 memories, 6 queries, 8 judgments | No official result published | The fixture checks protocol and regressions; it is not LoCoMo, general answer-quality evidence, or a competitor score. |
 | Mem0 managed platform | LoCoMo, single-pass retrieval, top-200 budget | Score 92.5; mean 6,956 tokens; p50 0.88 s | Vendor-managed, end-to-end score. The authors state that managed optimizations are not identical to the open-source SDK. |
 | Mem0 managed platform | LongMemEval, same managed stack | Score 94.4; mean 6,800 tokens; p50 1.09 s | Same caveat: not a local SDK or retrieval-only measurement. |
 | Zep | LongMemEval, GPT-4o, hosted Zep service | 71.2% score; 2.58 s; 1.6K average context tokens | The paper reports a remote service and GPT-4o answer evaluation, unlike MIRA's local retrieval measurement. |
@@ -32,7 +35,7 @@ and [Letta's archived leaderboard](https://github.com/letta-ai/letta-leaderboard
 1. Pin each product version and record the exact commit or container digest.
 2. Use the same dataset split, answer model, embedding model, prompt, token
    budget, machine, and warm-up policy for every system.
-3. Run at least three repetitions and publish raw outputs, percentiles, token
+3. Run at least five repetitions for each published latency and publish raw outputs, percentiles, token
    accounting, failures, and confidence intervals.
 4. Report retrieval-only latency separately from ingestion, LLM answer latency,
    and LLM-as-a-judge accuracy.

@@ -67,6 +67,9 @@ debug_*.go
 test_mcp_*.go
 benchmark_results.json
 
+# Public benchmark run reports are generated locally and attached to releases.
+/benchmarks/results/*.json
+
 # Development task lists
 TODO.md
 

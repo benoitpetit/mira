@@ -1,9 +1,14 @@
-.PHONY: build test clean run deps lint install bench bench-full bench-locomo
+.PHONY: build test clean run deps lint install bench bench-full bench-locomo bench-public bench-public-validate bench-release
 
 BINARY=mira
 GO=go
 GOFLAGS=-ldflags="-s -w"
 GOTAGS=fts5
+BENCH_CONFIG?=benchmarks/config.example.json
+MIRA_BENCH_REPORT?=benchmarks/results/local.json
+BENCH_WARMUPS?=2
+BENCH_REPETITIONS?=5
+MIRA_SITE_DIR?=../mira-landing
 
 build:
 	mkdir -p bin
@@ -23,6 +28,15 @@ bench-full:
 
 bench-locomo:
 	./scripts/locomo_benchmark.sh
+
+bench-public:
+	$(GO) run -tags $(GOTAGS) ./cmd/mira-benchmark run --track all --config "$(BENCH_CONFIG)" --output "$(MIRA_BENCH_REPORT)" --warmups "$(BENCH_WARMUPS)" --repetitions "$(BENCH_REPETITIONS)"
+
+bench-public-validate:
+	$(GO) run -tags $(GOTAGS) ./cmd/mira-benchmark validate --report "$(MIRA_BENCH_REPORT)"
+
+bench-release:
+	./scripts/release-benchmark.sh "$(VERSION)" "$(MIRA_SITE_DIR)"
 
 clean:
 	rm -rf bin/ ./.mira/

@@ -59,13 +59,8 @@ sed -i "s/^version: \"[0-9.]*\"$/version: \"${VERSION}\"/" SKILL.md
 sed -i "s/\*Version: [0-9.]*\*/\\*Version: ${VERSION}\\*/g" docs/API_REFERENCES.md docs/FEATURES.md
 sed -i "s/Version documented: [0-9.]*/Version documented: ${VERSION}/g" docs/INDEX.md
 
-# Update changelog headers (only if not already updated)
-if ! grep -q "### v${VERSION}" README.md 2>/dev/null; then
-    # Add new version section in changelog
-    TODAY=$(date +%Y-%m-%d)
-    sed -i "s/## Changelog/## Changelog\n\n### v${VERSION} (${TODAY})\n\n- 🚀 New version ${VERSION}/" README.md
-    sed -i "s/## Changelog/## Changelog\n\n### v${VERSION} (${TODAY})\n\n- 🚀 Nouvelle version ${VERSION}/" README_FR.md
-fi
+# Release notes are maintained once in CHANGELOG.md. Keep README files as
+# product documentation and links; do not generate duplicate release sections.
 
 echo -e "${GREEN}✓ Version updated to ${VERSION}${NC}\n"
 
@@ -89,7 +84,7 @@ else
     exit 1
 fi
 
-echo -e "${YELLOW}Step 4/6: Running benchmarks...${NC}"
+echo -e "${YELLOW}Step 4/6: Running core microbenchmarks...${NC}"
 echo -e "${BLUE}This may take a minute...${NC}"
 go test -tags fts5 -bench=. -benchmem -benchtime=100ms -count=1 ./... > /tmp/bench.log 2>&1
 if [ $? -eq 0 ]; then
@@ -135,14 +130,14 @@ echo -e "Summary:"
 echo -e "  - Version: ${GREEN}${VERSION}${NC}"
 echo -e "  - Build: ${GREEN}OK${NC}"
 echo -e "  - Tests: ${GREEN}PASS${NC}"
-echo -e "  - Benchmarks: ${GREEN}OK${NC}"
+echo -e "  - Core microbenchmarks: ${GREEN}OK${NC}"
 echo -e "  - Binary: ${GREEN}OK${NC}\n"
 
 echo -e "Next steps:"
-echo -e "  1. Review changes: ${YELLOW}git diff${NC}"
-echo -e "  2. Stage changes: ${YELLOW}git add -A${NC}"
-echo -e "  3. Commit: ${YELLOW}git commit -m \"release: Version ${VERSION}\"${NC}"
-echo -e "  4. Tag: ${YELLOW}git tag v${VERSION}${NC}"
-echo -e "  5. Push: ${YELLOW}git push origin main --tags${NC}\n"
+echo -e "  1. Update the ${YELLOW}CHANGELOG.md${NC} release notes and review all version references."
+echo -e "  2. Review changes: ${YELLOW}git diff${NC}"
+echo -e "  3. Stage and commit the reviewed release changes."
+echo -e "  4. Run and validate the versioned public benchmark on the clean release commit."
+echo -e "  5. Tag and push the release; attach the validated benchmark report to GitHub Releases."
 
 echo -e "${YELLOW}Ready to publish!${NC}"

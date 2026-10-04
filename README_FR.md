@@ -12,9 +12,9 @@
 
   [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.8.3-blue?style=flat-square)]()
+  [![Version](https://img.shields.io/badge/Version-0.8.4-blue?style=flat-square)]()
 
-  [Documentation](docs/INDEX.md) • [Référence API](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [English](README.md)
+  [Documentation](docs/INDEX.md) • [Benchmarks](https://mira.devbyben.fr/benchmarks) • [Référence API](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [English](README.md)
 
 </div>
 
@@ -51,7 +51,7 @@
 - [Architecture technique](#architecture-technique)
 - [Développement](#développement)
 - [Licence](#licence)
-- [Changelog](#changelog)
+- [Versions et historique](#versions-et-historique)
 
 ---
 
@@ -108,7 +108,7 @@ Chaque mémoire est stockée sous trois formes — texte complet (T0), faits str
 
 - **Allocation de Budget Contextuel (CBA)** — combine huit signaux de scoring et un modificateur de diversité borné
 - **Triple représentation (T0/T1/T2)** — rendu adaptatif du texte complet jusqu'à un en-tête de 5 tokens
-- **Recherche hybride** — HNSW O(log n) + SQLite FTS5, fusionné avec Reciprocal Rank Fusion
+- **Recherche hybride** — recherche vectorielle approximative HNSW + recherche lexicale native au backend, fusionnées avec Reciprocal Rank Fusion
 - **Graphe causal** — détection automatique des relations cause-effet entre les mémoires
 - **Clean architecture** — hexagonale, testée, extensible
 
@@ -223,7 +223,7 @@ SORTIE :  Liste de mémoires avec mode de rendu
    e_q ← Embed(q)  — avec cache LRU (1000 entrées)
 
 2. RECHERCHE VECTORIELLE
-   C ← HNSW_Search(e_q, N=100, w, r)           // O(log n)
+   C ← HNSW_Search(e_q, N=100, w, r)           // candidats approximatifs des plus proches voisins
    Si HNSW non prêt : C ← SQLite_Search(...)    // Fallback
 
 3. ÉLAGAGE PRÉCOCE
@@ -279,7 +279,7 @@ MIRA génère des variantes de requête (texte nettoyé, texte sans mots vides e
 
 ### 2. Recherche hybride (Dense + Lexicale)
 
-- **Dense :** recherche vectorielle HNSW en O(log n)
+- **Dense :** recherche approximative des plus proches voisins avec HNSW
 - **Lexicale :** recherche full-text SQLite FTS5 (auto-activée si disponible)
 - **Fusion :** Reciprocal Rank Fusion (`k=60`) fusionne les deux classements
 
@@ -711,7 +711,7 @@ Nous avons décidé de migrer vers PostgreSQL pour la v2...
 
 ```yaml
 system:
-  version: "0.8.3"
+  version: "0.8.4"
 
 storage:
   path: ".mira"
@@ -792,7 +792,7 @@ agent_memory:
 
 mcp:
   name: "mira"
-  version: "0.8.3"
+  version: "0.8.4"
   transport: "stdio"   # "stdio", "sse", ou "http" stateless sur /mcp
   address: "localhost:3001"
   auth_token: ""         # requis pour HTTP si l'adresse n'est pas locale
@@ -1087,19 +1087,27 @@ Voir [docs/API_REFERENCES.md](docs/API_REFERENCES.md) pour la référence compl�
 | Opération | Complexité | Notes |
 |-----------|------------|-------|
 | Stockage T0, T1, T2 | O(1) | Insertion atomique |
-| Recherche vectorielle | O(log n) | HNSW ANN |
+| Recherche vectorielle | Recherche approximative des plus proches voisins | HNSW ANN ; latence selon l'index, les données et l'hôte |
 | Scoring CBA | O(n²) en pratique pour la sélection gloutonne | n = candidats |
 | Allocation gloutonne | O(n²) | Avec renormalisation dynamique |
 | BFS graphe causal | O(V+E) | V = nœuds, E = arêtes |
 
 ### Benchmarks
 
-| Métrique | Valeur |
-|----------|--------|
-| Recherche HNSW | ~0.14 ms pour 10K vecteurs (benchmarké) |
-| Recherche SQLite fallback | ~50 ms pour 10K vecteurs (estimation) |
-| Allocation complète | ~35 ms pour 100 candidats (estimation) |
-| Cosine similarity | ~3.3M ops/sec |
+Aucun résultat de performance officiel n'est publié pour le moment. Les
+anciennes latences et mesures de débit ont été retirées : elles n'étaient pas
+étayées par le protocole versionné actuel. `make bench-locomo` est un
+microbenchmark local du sélecteur CBA ; malgré son nom, il ne lance pas le jeu
+LoCoMo et ne mesure pas le rappel complet.
+
+Le protocole reproductible sépare la qualité du rappel des latences de
+composants et de l'application. Il conserve les échantillons bruts et la
+provenance de l'hôte, du modèle, du backend, du jeu et de la source. Le jeu
+synthétique sert à vérifier le protocole et les régressions, pas à généraliser
+la qualité des réponses. Voir [`benchmarks/README.md`](benchmarks/README.md)
+pour les prérequis, commandes et critères de publication. Le protocole et son
+état sont aussi présentés sur la [page benchmarks de MIRA](https://mira.devbyben.fr/benchmarks).
+PostgreSQL n'est pas mesuré dans la version 1 du protocole.
 
 ### Optimisations en v0.3.3
 
@@ -1205,7 +1213,10 @@ make test         # Tests (avec race detector)
 make test-short   # Tests rapides
 make bench        # Benchmarks
 make bench-full   # Benchmarks complets
-make bench-locomo # Rapport reproductible de recall type LoCoMo
+make bench-locomo # Microbenchmark historique du sélecteur CBA (pas LoCoMo)
+make bench-public # Rapport local qualité et performance versionné
+make bench-public-validate # Valider le rapport local
+make bench-release VERSION=x.y.z # Valider, joindre et exporter le benchmark d'une release taguée
 make run          # Compiler et lancer avec config.yaml
 make clean        # Nettoyer les artefacts et données
 make lint         # Linters
@@ -1222,27 +1233,11 @@ historiques restent sous MIT et une licence future peut changer sans retirer
 les droits déjà accordés. Consultez [docs/LICENSING.md](docs/LICENSING.md)
 pour la politique du projet et [LICENSE](LICENSE) pour le texte contractuel.
 
-## Changelog
+## Versions et historique
 
-### v0.8.3 (2026-09-25)
-
-- 🛠️ Correction des builds CGO/OpenSSL natifs pour les binaires Linux, macOS et Windows
-- 🪟 Correction du toolchain MSYS2 Windows et validation smoke test des binaires
-
-### v0.8.2 (2026-09-25)
-
-- 🛠️ Correction du nettoyage après initialisation partielle
-- 🪟 Correction de l’extraction de l’exécutable par l’installeur Windows
-
-### v0.8.1 (2026-09-24)
-
-- 🚀 Nouvelle version 0.8.1
-
-### v0.8.0 (2026-09-23)
-
-- 🚀 Nouvelle version 0.8.0
-
-Voir [CHANGELOG.md](CHANGELOG.md) pour l'historique complet des releases.
+Les notes de release sont centralisées dans [CHANGELOG.md](CHANGELOG.md).
+Consultez aussi l’[historique des versions et l’état des benchmarks](https://mira.devbyben.fr/versions)
+ou les [binaires publiés sur GitHub](https://github.com/benoitpetit/mira/releases).
 
 ---
 
@@ -1261,7 +1256,7 @@ Voir [CHANGELOG.md](CHANGELOG.md) pour l'historique complet des releases.
 - **Modèle :** sentence-transformers/all-MiniLM-L6-v2
 - **Dimensions :** 384
 - **Taille :** ~80 Mo
-- **Performance :** ~1000 textes/sec sur CPU
+- **Performance :** non publiée ; dépend de l'hôte, du runtime modèle et de la taille des lots
 
 ---
 

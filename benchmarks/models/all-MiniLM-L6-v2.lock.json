@@ -1,0 +1,14 @@
+{
+  "model_id": "sentence-transformers/all-MiniLM-L6-v2",
+  "revision": "c21050a7ef692090620a6d037dd736908f9c7cf6",
+  "license": "Apache-2.0",
+  "upstream": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/tree/c21050a7ef692090620a6d037dd736908f9c7cf6",
+  "conversion": "MIRA local Cybertron artifacts; includes the converted spago_model.bin",
+  "files": [
+    { "path": "config.json", "sha256": "953f9c0d463486b10a6871cc2fd59f223b2c70184f49815e7efbcab5d8908b41" },
+    { "path": "pytorch_model.bin", "sha256": "c3a85f238711653950f6a79ece63eb0ea93d76f6a6284be04019c53733baf256" },
+    { "path": "spago_model.bin", "sha256": "ed2e788a10742d148cf79a991695ee252de4128d538665fdbf4499d601435d2d" },
+    { "path": "tokenizer_config.json", "sha256": "acb92769e8195aabd29b7b2137a9e6d6e25c476a4f15aa4355c233426c61576b" },
+    { "path": "vocab.txt", "sha256": "07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3" }
+  ]
+}

@@ -94,7 +94,7 @@ calibrates source reliability inside the bounded `[0.75, 1.20]` interval.
 
 | Feature | Description |
 |---------|-------------|
-| HNSW Approximate NN | O(log n) search with M=32, efSearch=100 |
+| HNSW Approximate NN | Approximate vector search with M=32, efSearch=100; measured latency depends on the index, data, and host |
 | HNSW Validation | Runtime dimension + model-hash consistency check; auto-rebuild on mismatch |
 | HNSW Persistence | Saves/loads `vectors.bin` across restarts |
 | Background Index Build | Builds HNSW from authoritative SQL embeddings on startup if needed |
@@ -245,11 +245,12 @@ the server.
 |---------|-------------|
 | Unit Tests | ~77% coverage across domain, usecases, adapters |
 | Race Detector Tests | `go test -tags fts5 -race ./...` |
-| Benchmarks | Go benchmarks + HTML dashboard (`scripts/benchmark.sh`) and reproducible LoCoMo-style recall report (`make bench-locomo`) |
-| Benchmark Visualization | HTML dashboard with performance insights |
+| Legacy selector microbenchmark | `make bench-locomo` measures the CBA selector using synthetic candidates; it is not the LoCoMo dataset and does not measure full application recall |
+| Versioned benchmark protocol | `make bench-public` runs the independent quality and performance tracks; `make bench-public-validate` validates local reports; official results require clean source and complete provenance |
+| Benchmark visualization | The legacy `scripts/benchmark.html` is a hard-coded demo and is not evidence; public measurements appear at [mira.devbyben.fr/benchmarks](https://mira.devbyben.fr/benchmarks) only after official validation |
 | Health Check Tests | Tests for liveness, readiness, component status |
 
 ---
 
-*Version: 0.8.3*
+*Version: 0.8.4*
 *Last updated: 2026-04-30*

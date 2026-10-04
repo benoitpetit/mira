@@ -1,0 +1,9 @@
+{
+  "schema_version": "1",
+  "generator_version": "synthetic-v1",
+  "seed": 42,
+  "sha256": "2202fb02f9154531a811e227773bba5df328b7203700adbb9d7688f795c2d396",
+  "memory_count": 20,
+  "query_count": 6,
+  "judgment_count": 8
+}

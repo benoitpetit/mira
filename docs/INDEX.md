@@ -29,6 +29,7 @@ MIRA is a **long-term memory system for Large Language Models (LLMs)** designed 
 | [LICENSING.md](LICENSING.md) | Source-available license policy and commercial boundary |
 | [agent-integration.md](agent-integration.md) | Autonomous agent installation, policies and lifecycle |
 | [MARKET_REFERENCES.md](MARKET_REFERENCES.md) | Published market context and fair-comparison protocol |
+| [Benchmark guide](../benchmarks/README.md) | Reproducible quality and performance protocol, provenance, and publication limits |
 | [CHANGELOG.md](../CHANGELOG.md) | Full release history and version notes |
 | [SKILL.md](../SKILL.md) | Agent guidelines for MCP memory loops |
 
@@ -47,7 +48,7 @@ MIRA is a **long-term memory system for Large Language Models (LLMs)** designed 
 
 ### Memory Retrieval
 - **Context Budget Allocation (CBA)**: Greedy token-budget optimizer with eight core signals, quality/belief calibration and an optional diversity modifier
-- **HNSW Vector Search**: O(log n) approximate nearest neighbor over millions of memories
+- **HNSW Vector Search**: approximate nearest-neighbor retrieval; measured latency depends on index, data, and host
 - **Hybrid Search**: Dense + FTS5 lexical fusion via Reciprocal Rank Fusion (RRF)
 - **Query Expansion**: Embedding averages for cleaned and keyword-focused query variants; cross-language matching depends on the configured model
 - **Search-Time Clustering**: Real-time deduplication of near-duplicate results
@@ -81,5 +82,5 @@ MIRA is a **long-term memory system for Large Language Models (LLMs)** designed 
 
 ---
 
-*Release version documented: 0.8.3. Local source can include unreleased changes beyond that tag.*
-*Last updated: 2026-10-03*
+*Release version documented: 0.8.4. Local source can include unreleased changes beyond that tag.*
+*Last updated: 2026-10-04*

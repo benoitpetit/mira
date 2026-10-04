@@ -1,0 +1,233 @@
+{
+  "schema_version": "1",
+  "name": "mira-synthetic",
+  "version": "1.0.0",
+  "memories": [
+    {
+      "id": "m-apartment",
+      "content": "Nora moved to Cedar House, apartment 4B, on March 12.",
+      "session_id": "session-1",
+      "wing": "personal",
+      "room": "home"
+    },
+    {
+      "id": "m-desk",
+      "content": "The desk for Nora's new apartment is 140 centimeters wide.",
+      "session_id": "session-1",
+      "wing": "personal",
+      "room": "home"
+    },
+    {
+      "id": "m-coffee-old",
+      "content": "Nora used to prefer dark roast coffee.",
+      "session_id": "session-2",
+      "wing": "personal",
+      "room": "preferences"
+    },
+    {
+      "id": "m-coffee-new",
+      "content": "Nora now prefers light roast coffee, especially Ethiopian beans.",
+      "session_id": "session-3",
+      "wing": "personal",
+      "room": "preferences"
+    },
+    {
+      "id": "m-trip-train",
+      "content": "Nora booked a train from Lyon to Turin for June 18.",
+      "session_id": "session-2",
+      "wing": "personal",
+      "room": "travel"
+    },
+    {
+      "id": "m-trip-hotel",
+      "content": "The Turin hotel reservation is for two nights, June 18 through June 20.",
+      "session_id": "session-3",
+      "wing": "personal",
+      "room": "travel"
+    },
+    {
+      "id": "m-project-owner",
+      "content": "The Atlas migration is owned by Ravi.",
+      "session_id": "session-1",
+      "wing": "work",
+      "room": "project"
+    },
+    {
+      "id": "m-project-date",
+      "content": "The Atlas migration review is scheduled for September 9.",
+      "session_id": "session-3",
+      "wing": "work",
+      "room": "project"
+    },
+    {
+      "id": "m-distractor-00",
+      "content": "The old bridge is closed while crews repaint its railings.",
+      "session_id": "session-distractors",
+      "wing": "personal",
+      "room": "notes"
+    },
+    {
+      "id": "m-distractor-01",
+      "content": "The old bridge is closed while crews repaint its railings.",
+      "session_id": "session-distractors",
+      "wing": "personal",
+      "room": "notes"
+    },
+    {
+      "id": "m-distractor-02",
+      "content": "The weekend market sells pears, bread, and fresh herbs.",
+      "session_id": "session-distractors",
+      "wing": "personal",
+      "room": "notes"
+    },
+    {
+      "id": "m-distractor-03",
+      "content": "The community garden on Cedar Street opens at eight in the morning.",
+      "session_id": "session-distractors",
+      "wing": "personal",
+      "room": "notes"
+    },
+    {
+      "id": "m-distractor-04",
+      "content": "A blue notebook was left beside the meeting room window.",
+      "session_id": "session-distractors",
+      "wing": "personal",
+      "room": "notes"
+    },
+    {
+      "id": "m-distractor-05",
+      "content": "A blue notebook was left beside the meeting room window.",
+      "session_id": "session-distractors",
+      "wing": "personal",
+      "room": "notes"
+    },
+    {
+      "id": "m-distractor-06",
+      "content": "The library closes early on the first Wednesday of each month.",
+      "session_id": "session-distractors",
+      "wing": "personal",
+      "room": "notes"
+    },
+    {
+      "id": "m-distractor-07",
+      "content": "The weekend market sells pears, bread, and fresh herbs.",
+      "session_id": "session-distractors",
+      "wing": "personal",
+      "room": "notes"
+    },
+    {
+      "id": "m-distractor-08",
+      "content": "The weekend market sells pears, bread, and fresh herbs.",
+      "session_id": "session-distractors",
+      "wing": "personal",
+      "room": "notes"
+    },
+    {
+      "id": "m-distractor-09",
+      "content": "A blue notebook was left beside the meeting room window.",
+      "session_id": "session-distractors",
+      "wing": "personal",
+      "room": "notes"
+    },
+    {
+      "id": "m-distractor-10",
+      "content": "A blue notebook was left beside the meeting room window.",
+      "session_id": "session-distractors",
+      "wing": "personal",
+      "room": "notes"
+    },
+    {
+      "id": "m-distractor-11",
+      "content": "The old bridge is closed while crews repaint its railings.",
+      "session_id": "session-distractors",
+      "wing": "personal",
+      "room": "notes"
+    }
+  ],
+  "queries": [
+    {
+      "id": "q-address",
+      "text": "Where does Nora live now?",
+      "wing": "personal",
+      "room": "home",
+      "budget": 256
+    },
+    {
+      "id": "q-desk-paraphrase",
+      "text": "How wide is the work table in the new flat?",
+      "wing": "personal",
+      "room": "home",
+      "budget": 256
+    },
+    {
+      "id": "q-coffee-update",
+      "text": "Which coffee roast does Nora currently like?",
+      "wing": "personal",
+      "room": "preferences",
+      "budget": 256
+    },
+    {
+      "id": "q-turin-dates",
+      "text": "When is Nora's trip to Turin and how long is the hotel stay?",
+      "wing": "personal",
+      "room": "travel",
+      "budget": 384
+    },
+    {
+      "id": "q-atlas-owner",
+      "text": "Who is responsible for the Atlas project migration?",
+      "wing": "work",
+      "room": "project",
+      "budget": 256
+    },
+    {
+      "id": "q-atlas-review",
+      "text": "When will the Atlas migration be reviewed?",
+      "wing": "work",
+      "room": "project",
+      "budget": 256
+    }
+  ],
+  "judgments": [
+    {
+      "query_id": "q-address",
+      "memory_id": "m-apartment",
+      "grade": 2
+    },
+    {
+      "query_id": "q-desk-paraphrase",
+      "memory_id": "m-desk",
+      "grade": 2
+    },
+    {
+      "query_id": "q-coffee-update",
+      "memory_id": "m-coffee-new",
+      "grade": 2
+    },
+    {
+      "query_id": "q-coffee-update",
+      "memory_id": "m-coffee-old",
+      "grade": 0
+    },
+    {
+      "query_id": "q-turin-dates",
+      "memory_id": "m-trip-train",
+      "grade": 1
+    },
+    {
+      "query_id": "q-turin-dates",
+      "memory_id": "m-trip-hotel",
+      "grade": 2
+    },
+    {
+      "query_id": "q-atlas-owner",
+      "memory_id": "m-project-owner",
+      "grade": 2
+    },
+    {
+      "query_id": "q-atlas-review",
+      "memory_id": "m-project-date",
+      "grade": 2
+    }
+  ]
+}

@@ -12,9 +12,9 @@
 
   [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.8.3-blue?style=flat-square)]()
+  [![Version](https://img.shields.io/badge/Version-0.8.4-blue?style=flat-square)]()
 
-  [Documentation](docs/INDEX.md) • [API Reference](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [Français](README_FR.md)
+  [Documentation](docs/INDEX.md) • [Benchmarks](https://mira.devbyben.fr/benchmarks) • [API Reference](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [Français](README_FR.md)
 
 </div>
 
@@ -45,7 +45,7 @@
 - [Technical Architecture](#technical-architecture)
 - [Development](#development)
 - [Licensing](#licensing)
-- [Changelog](#changelog)
+- [Releases and version history](#releases-and-version-history)
 
 ---
 
@@ -102,7 +102,7 @@ Each memory is stored in three forms — full text (T0), structured facts (T1), 
 
 - **Context Budget Allocation (CBA)** — combines eight core scoring signals and a bounded diversity modifier
 - **Triple representation (T0/T1/T2)** — adaptive rendering from full text down to a 5-token header
-- **Hybrid search** — HNSW O(log n) + backend-native lexical search, fused with Reciprocal Rank Fusion
+- **Hybrid search** — approximate HNSW vector search + backend-native lexical search, fused with Reciprocal Rank Fusion
 - **Causal graph** — automatic detection of cause-effect relationships between memories
 - **Clean architecture** — hexagonal, fully tested, extensible
 
@@ -217,7 +217,7 @@ OUTPUT: List of memories with render mode
    e_q ← Embed(q)  — with LRU cache (1000 entries)
 
 2. VECTOR SEARCH
-   C ← HNSW_Search(e_q, N=100, w, r)          // O(log n)
+   C ← HNSW_Search(e_q, N=100, w, r)          // approximate nearest-neighbor candidates
    If HNSW not ready: C ← BruteForce_SQL(... )  // Portable fallback
 
 3. EARLY PRUNING
@@ -273,7 +273,7 @@ MIRA generates query variants (cleaned text, stopword-filtered text, and key ter
 
 ### 2. Hybrid Search (Dense + Lexical)
 
-- **Dense:** HNSW O(log n) vector search
+- **Dense:** approximate nearest-neighbor vector search with HNSW
 - **Lexical:** SQLite FTS5 or PostgreSQL GIN-backed simple text search
 - **Fusion:** Reciprocal Rank Fusion (`k=60`) merges both rankings into a single candidate list
 
@@ -705,7 +705,7 @@ We decided to migrate to PostgreSQL for v2...
 
 ```yaml
 system:
-  version: "0.8.3"
+  version: "0.8.4"
 
 storage:
   path: ".mira"
@@ -786,7 +786,7 @@ agent_memory:
 
 mcp:
   name: "mira"
-  version: "0.8.3"
+  version: "0.8.4"
   transport: "stdio"   # "stdio", "sse", or stateless "http" at /mcp
   address: "localhost:3001"
   auth_token: ""         # required for HTTP when address is not loopback
@@ -1075,19 +1075,26 @@ See [docs/API_REFERENCES.md](docs/API_REFERENCES.md) for full request/response s
 | Operation | Complexity | Notes |
 |-----------|------------|-------|
 | Store T0, T1, T2 | O(1) | Atomic insertion |
-| Vector search | O(log n) | HNSW ANN |
+| Vector search | Approximate nearest-neighbor search | HNSW ANN; latency depends on index, data, and host |
 | CBA scoring | O(n²) practical greedy selection | n = candidates |
 | Greedy allocation | O(n²) | With dynamic renormalization |
 | Causal graph BFS | O(V+E) | V = nodes, E = edges |
 
-### Benchmarks
+### Benchmarking
 
-| Metric | Value |
-|--------|-------|
-| HNSW search | ~0.14 ms for 10K vectors (benchmarked) |
-| Brute-force SQL fallback search | ~50 ms for 10K vectors (estimated) |
-| Full allocation | ~35 ms for 100 candidates (estimated) |
-| Cosine similarity | ~3.3M ops/sec |
+No official performance result is published yet. The historical latency and
+throughput figures were removed because they were not backed by the current
+versioned protocol. `make bench-locomo` is a local CBA selector microbenchmark;
+despite its name, it does not run the LoCoMo dataset or measure full recall.
+
+The reproducible public protocol separates recall quality from component and
+application latency. It records raw samples and host, model, backend, dataset,
+and source provenance. Its synthetic fixture is for protocol and regression
+checks, not a general answer-quality claim. See
+[`benchmarks/README.md`](benchmarks/README.md) for setup, commands, validation,
+and publication requirements. The public protocol and result status are also
+available on the [MIRA benchmarks page](https://mira.devbyben.fr/benchmarks).
+PostgreSQL is not measured by protocol v1.
 
 ### Optimizations in v0.3.3
 
@@ -1195,7 +1202,10 @@ make test         # Tests (with race detector)
 make test-short   # Quick tests
 make bench        # Benchmarks
 make bench-full   # Full benchmarks
-make bench-locomo # Reproducible LoCoMo-style recall report
+make bench-locomo # Legacy CBA selector microbenchmark (not LoCoMo)
+make bench-public # Versioned local quality and performance report
+make bench-public-validate # Validate the local report
+make bench-release VERSION=x.y.z # Validate, attach and export a tagged release benchmark
 make run          # Build and run with config.yaml
 make clean        # Clean build artifacts and data
 make lint         # Run linters
@@ -1212,27 +1222,11 @@ MIT-licensed, and future releases may use a different license without
 retroactively changing rights already granted. Read [docs/LICENSING.md](docs/LICENSING.md)
 for the project policy and [LICENSE](LICENSE) for the binding terms.
 
-## Changelog
+## Releases and version history
 
-### v0.8.3 (2026-09-25)
-
-- 🛠️ Correction des builds CGO/OpenSSL natifs pour les binaires Linux, macOS et Windows
-- 🪟 Correction du toolchain MSYS2 Windows et validation smoke test des binaires
-
-### v0.8.2 (2026-09-25)
-
-- 🛠️ Fix application cleanup after partial initialization
-- 🪟 Fix Windows installer extraction for published executable names
-
-### v0.8.1 (2026-09-24)
-
-- 🚀 New version 0.8.1
-
-### v0.8.0 (2026-09-23)
-
-- 🚀 New version 0.8.0
-
-See [CHANGELOG.md](CHANGELOG.md) for the full release history.
+The canonical release notes live in [CHANGELOG.md](CHANGELOG.md). Browse the
+[MIRA version history and benchmark status](https://mira.devbyben.fr/versions)
+or download binaries from [GitHub Releases](https://github.com/benoitpetit/mira/releases).
 
 ---
 
@@ -1251,7 +1245,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 - **Model:** sentence-transformers/all-MiniLM-L6-v2
 - **Dimensions:** 384
 - **Size:** ~80 MB
-- **Performance:** ~1000 texts/sec on CPU
+- **Performance:** not published; depends on host, model runtime, and batch size
 
 ---
 

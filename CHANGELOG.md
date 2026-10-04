@@ -7,12 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-10-04
+
+### Added
+- **Reproducible benchmarks**: a versioned quality and performance protocol, pinned dataset/model metadata, report validation, and site snapshot export.
+
+### Fixed
+- **Retrieval correctness**: semantic ranking, safe reranker defaults, stable HNSW rank after hydration, and bounded causal traversal.
+- **Memory lifecycle**: preserve declared types on content updates, align validation across transports, remove stale tags, and reject updates to missing summaries.
+- **Storage and recovery**: propagate query errors, repair incomplete HNSW state, stabilize pagination, and preserve embeddings through PostgreSQL round trips.
+- **Runtime shutdown**: close owned embedders safely and bound shared shutdown waits.
+
 ## [0.8.3] - 2026-09-25
 
 ### Fixed
 - **Release builds**: native CGO/OpenSSL toolchains now build functional SQLCipher binaries for Linux, macOS, and Windows amd64/arm64.
 - **Windows toolchain setup**: MSYS2 OpenSSL paths are resolved dynamically on GitHub-hosted runners.
 - **Cross-platform validation**: every release binary is smoke-tested with `mira --version` before packaging.
+
+## [0.8.2] - 2026-09-25
+
+### Fixed
+- **Application cleanup**: close partially initialized resources after startup failures.
+- **Windows installer**: extract the published executable names used by release archives.
 
 ## [0.8.1] - 2026-09-24
 
@@ -452,6 +469,11 @@ hnsw:
 ---
 
 [0.4.7]: https://github.com/benoitpetit/mira/releases/tag/v0.4.7
+[0.8.4]: https://github.com/benoitpetit/mira/releases/tag/v0.8.4
+[0.8.3]: https://github.com/benoitpetit/mira/releases/tag/v0.8.3
+[0.8.2]: https://github.com/benoitpetit/mira/releases/tag/v0.8.2
+[0.8.1]: https://github.com/benoitpetit/mira/releases/tag/v0.8.1
+[0.8.0]: https://github.com/benoitpetit/mira/releases/tag/v0.8.0
 [0.4.6]: https://github.com/benoitpetit/mira/releases/tag/v0.4.6
 [0.4.5]: https://github.com/benoitpetit/mira/releases/tag/v0.4.5
 [0.4.4]: https://github.com/benoitpetit/mira/releases/tag/v0.4.4

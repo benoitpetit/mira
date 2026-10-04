@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mira.devbyben.fr/schemas/benchmark-report-v1.schema.json",
+  "title": "MIRA public benchmark report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "benchmark", "run", "source", "dataset", "environment", "model", "protocol", "quality", "performance"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "benchmark": {"$ref": "#/$defs/benchmark"},
+    "run": {"$ref": "#/$defs/run"},
+    "source": {"$ref": "#/$defs/source"},
+    "dataset": {"$ref": "#/$defs/dataset"},
+    "environment": {"$ref": "#/$defs/environment"},
+    "model": {"$ref": "#/$defs/model"},
+    "protocol": {"$ref": "#/$defs/protocol"},
+    "quality": {"$ref": "#/$defs/quality"},
+    "performance": {"$ref": "#/$defs/performance"}
+  },
+  "$defs": {
+    "benchmark": {"type":"object","additionalProperties":false,"required":["name","version"],"properties":{"name":{"type":"string","minLength":1},"version":{"type":"string","minLength":1}}},
+    "run": {"type":"object","additionalProperties":false,"required":["id","started_at_utc","track"],"properties":{"id":{"type":"string","minLength":1},"started_at_utc":{"type":"string","format":"date-time"},"track":{"enum":["all","quality","performance"]}}},
+    "source": {"type":"object","additionalProperties":false,"required":["commit","dirty"],"properties":{"commit":{"type":"string","pattern":"^[a-fA-F0-9]{40}$"},"dirty":{"type":"boolean"}}},
+    "dataset": {"type":"object","additionalProperties":false,"required":["name","version","sha256","seed","memory_count","query_count","judgment_count"],"properties":{"name":{"type":"string","minLength":1},"version":{"type":"string","minLength":1},"sha256":{"$ref":"#/$defs/sha256"},"seed":{"type":"integer"},"memory_count":{"type":"integer","minimum":1},"query_count":{"type":"integer","minimum":1},"judgment_count":{"type":"integer","minimum":1}}},
+    "environment": {"type":"object","additionalProperties":false,"required":["mira_version","go_version","os","arch","host","cpu_model","logical_cpus","gomaxprocs","storage_backend","database_version"],"properties":{"mira_version":{"type":"string"},"go_version":{"type":"string"},"os":{"type":"string"},"arch":{"type":"string"},"host":{"type":"string"},"cpu_model":{"type":"string"},"logical_cpus":{"type":"integer","minimum":1},"gomaxprocs":{"type":"integer","minimum":1},"build_tags":{"type":"array","items":{"type":"string"}},"storage_backend":{"type":"string"},"database_version":{"type":"string"}}},
+    "model": {"type":"object","additionalProperties":false,"required":["name","revision","sha256"],"properties":{"name":{"type":"string"},"revision":{"type":"string"},"sha256":{"$ref":"#/$defs/sha256"}},"description":"Local exploratory reports may use empty model fields when quality is unavailable; official reports require an immutable revision and checksum."},
+    "protocol": {"type":"object","additionalProperties":false,"required":["warmups","repetitions","concurrency","setup_excluded"],"properties":{"warmups":{"type":"integer","minimum":0},"repetitions":{"type":"integer","minimum":0},"concurrency":{"type":"integer","minimum":1},"setup_excluded":{"type":"boolean"}}},
+    "metrics": {"type":"object","additionalProperties":false,"required":["recall_at_5","recall_at_10","recall_at_20","mrr","ndcg_at_10"],"properties":{"recall_at_5":{"$ref":"#/$defs/score"},"recall_at_10":{"$ref":"#/$defs/score"},"recall_at_20":{"$ref":"#/$defs/score"},"mrr":{"$ref":"#/$defs/score"},"ndcg_at_10":{"$ref":"#/$defs/score"}}},
+    "quality": {"type":"object","additionalProperties":false,"required":["status","query_count","failed_queries","metrics"],"properties":{"status":{"$ref":"#/$defs/status"},"unavailable_reason":{"type":"string"},"query_count":{"type":"integer","minimum":0},"failed_queries":{"type":"integer","minimum":0},"metrics":{"$ref":"#/$defs/metrics"},"results":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["query_id","ranked_ids","metrics"],"properties":{"query_id":{"type":"string"},"ranked_ids":{"type":"array","items":{"type":"string"}},"metrics":{"$ref":"#/$defs/metrics"},"selected_memory_count":{"type":"integer","minimum":0},"estimated_tokens":{"type":"integer","minimum":0},"latency_samples_ms":{"type":"array","items":{"$ref":"#/$defs/nonNegative"}},"error":{"type":"string"}}}}}},
+    "summary": {"type":"object","additionalProperties":false,"required":["p50","p95","p99","median","spread"],"properties":{"p50":{"$ref":"#/$defs/nonNegative"},"p95":{"$ref":"#/$defs/nonNegative"},"p99":{"$ref":"#/$defs/nonNegative"},"median":{"$ref":"#/$defs/nonNegative"},"spread":{"$ref":"#/$defs/nonNegative"}}},
+    "performance": {"type":"object","additionalProperties":false,"required":["status","backend","concurrency"],"properties":{"status":{"$ref":"#/$defs/status"},"unavailable_reason":{"type":"string"},"backend":{"type":"string"},"concurrency":{"type":"integer","minimum":1},"cases":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["name","status","unit","repetitions","samples","summary"],"properties":{"name":{"type":"string"},"status":{"$ref":"#/$defs/status"},"unavailable_reason":{"type":"string"},"unit":{"const":"ms"},"repetitions":{"type":"integer","minimum":0},"samples":{"type":"array","items":{"$ref":"#/$defs/nonNegative"}},"summary":{"$ref":"#/$defs/summary"}}}}}},
+    "status": {"enum":["available","unavailable"]},
+    "score": {"type":"number","minimum":0,"maximum":1},
+    "nonNegative": {"type":"number","minimum":0},
+    "sha256": {"type":"string","pattern":"^[a-fA-F0-9]{64}$"}
+  }
+}
