@@ -249,8 +249,10 @@ func runAgentInstall(cmd *cobra.Command, options agentInstallOptions) error {
 			return err
 		}
 	}
+	clientSpec, _ := agentinstall.LookupClient(client)
 	manifest := agentinstall.DefaultManifest(client, root)
 	manifest.Scope, manifest.Policy, manifest.Wing = options.Scope, policy, wing
+	manifest.RecallMode, manifest.CaptureMode = clientSpec.Modes(policy)
 	manifest.Capture.UserPrompts = policy.CaptureUserPrompts()
 	manifest.Capture.AssistantResponses = policy.CaptureAssistantResponses()
 	manifest.Soul.ObserveAssistant = policy == agentinstall.PolicyComplete

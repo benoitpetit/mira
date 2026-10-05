@@ -32,8 +32,10 @@ type Manifest struct {
 	Wing   string `yaml:"-"`
 	Policy Policy `yaml:"-"`
 
-	ClientConfigPath string `yaml:"-"`
-	HookConfigPath   string `yaml:"-"`
+	ClientConfigPath string          `yaml:"-"`
+	HookConfigPath   string          `yaml:"-"`
+	RecallMode       IntegrationMode `yaml:"-"`
+	CaptureMode      IntegrationMode `yaml:"-"`
 
 	Capture CaptureConfig `yaml:"capture"`
 	Recall  RecallConfig  `yaml:"recall"`
@@ -69,12 +71,14 @@ type manifestFile struct {
 }
 
 type manifestAgent struct {
-	Client           string `yaml:"client"`
-	Scope            string `yaml:"scope"`
-	Wing             string `yaml:"wing"`
-	Policy           Policy `yaml:"policy"`
-	ClientConfigPath string `yaml:"client_config_path,omitempty"`
-	HookConfigPath   string `yaml:"hook_config_path,omitempty"`
+	Client           string          `yaml:"client"`
+	Scope            string          `yaml:"scope"`
+	Wing             string          `yaml:"wing"`
+	Policy           Policy          `yaml:"policy"`
+	ClientConfigPath string          `yaml:"client_config_path,omitempty"`
+	HookConfigPath   string          `yaml:"hook_config_path,omitempty"`
+	RecallMode       IntegrationMode `yaml:"recall_mode"`
+	CaptureMode      IntegrationMode `yaml:"capture_mode"`
 }
 
 type rawManifestFile struct {
@@ -85,6 +89,8 @@ type rawManifestFile struct {
 		Policy           string `yaml:"policy"`
 		ClientConfigPath string `yaml:"client_config_path"`
 		HookConfigPath   string `yaml:"hook_config_path"`
+		RecallMode       string `yaml:"recall_mode"`
+		CaptureMode      string `yaml:"capture_mode"`
 	} `yaml:"agent"`
 	Capture struct {
 		UserPrompts         *bool `yaml:"user_prompts"`
@@ -123,8 +129,10 @@ func DefaultManifest(client, projectRoot string) Manifest {
 			RedactSecrets:       true,
 			DeduplicateSessions: true,
 		},
-		Recall: RecallConfig{Enabled: true, BeforeTask: true, SessionStart: true, BudgetTokens: defaultRecallBudget},
-		Soul:   SoulConfig{Enabled: true, ObserveAssistant: false, AutoApplyTraits: false},
+		Recall:      RecallConfig{Enabled: true, BeforeTask: true, SessionStart: true, BudgetTokens: defaultRecallBudget},
+		Soul:        SoulConfig{Enabled: true, ObserveAssistant: false, AutoApplyTraits: false},
+		RecallMode:  IntegrationSkillGuided,
+		CaptureMode: IntegrationNone,
 	}
 }
 
@@ -150,6 +158,12 @@ func LoadManifest(path string) (Manifest, error) {
 	}
 	manifest.ClientConfigPath = raw.Agent.ClientConfigPath
 	manifest.HookConfigPath = raw.Agent.HookConfigPath
+	if raw.Agent.RecallMode != "" {
+		manifest.RecallMode = IntegrationMode(raw.Agent.RecallMode)
+	}
+	if raw.Agent.CaptureMode != "" {
+		manifest.CaptureMode = IntegrationMode(raw.Agent.CaptureMode)
+	}
 	if raw.Capture.UserPrompts != nil {
 		manifest.Capture.UserPrompts = *raw.Capture.UserPrompts
 	}
@@ -197,7 +211,7 @@ func SaveManifest(path string, manifest Manifest) error {
 		return err
 	}
 	data, err := yaml.Marshal(manifestFile{
-		Agent:   manifestAgent{Client: manifest.Client, Scope: manifest.Scope, Wing: manifest.Wing, Policy: manifest.Policy, ClientConfigPath: manifest.ClientConfigPath, HookConfigPath: manifest.HookConfigPath},
+		Agent:   manifestAgent{Client: manifest.Client, Scope: manifest.Scope, Wing: manifest.Wing, Policy: manifest.Policy, ClientConfigPath: manifest.ClientConfigPath, HookConfigPath: manifest.HookConfigPath, RecallMode: manifest.RecallMode, CaptureMode: manifest.CaptureMode},
 		Capture: manifest.Capture,
 		Recall:  manifest.Recall,
 		Soul:    manifest.Soul,
@@ -242,6 +256,12 @@ func (m Manifest) Validate() error {
 	}
 	if _, err := ParsePolicy(string(m.Policy)); err != nil {
 		return err
+	}
+	if _, ok := LookupClient(m.Client); !ok {
+		return fmt.Errorf("agent manifest client %q is unsupported", m.Client)
+	}
+	if !m.RecallMode.IsValid() || !m.CaptureMode.IsValid() {
+		return fmt.Errorf("agent manifest integration modes are invalid: recall=%q capture=%q", m.RecallMode, m.CaptureMode)
 	}
 	if m.Wing == "auto" {
 		return errors.New("agent manifest wing must be resolved before saving")
