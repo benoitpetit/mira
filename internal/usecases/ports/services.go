@@ -118,6 +118,13 @@ type CausalRelationReader interface {
 	RelationBetween(ctx context.Context, fromID, toID uuid.UUID) (valueobjects.RelationType, bool)
 }
 
+// CausalRelationBatchReader loads confirmed directed relations whose endpoints
+// both belong to a candidate set. It is optional so existing graph adapters
+// remain source compatible.
+type CausalRelationBatchReader interface {
+	GetRelationsBetween(ctx context.Context, candidateIDs []uuid.UUID) ([]*entities.CausalEdge, error)
+}
+
 // Extractor combines all extraction capabilities into a single interface.
 // This is provided for backward compatibility and convenience.
 //

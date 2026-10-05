@@ -1115,6 +1115,129 @@ func TestGetFingerprintByVerbatimID(t *testing.T) {
 	}
 }
 
+func TestSQLiteGetRelationsBetweenContract(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	empty, err := repo.GetRelationsBetween(ctx, nil)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("empty candidate IDs returned %d relations, err=%v", len(empty), err)
+	}
+
+	a, b, c, outside := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	edges := []*entities.CausalEdge{
+		{FromID: a, ToID: b, Relation: valueobjects.RelBecause, Confidence: .91, Status: "confirmed", Evidence: "high"},
+		{FromID: a, ToID: b, Relation: valueobjects.RelUpdates, Confidence: .72, Status: "confirmed", Evidence: "parallel"},
+		{FromID: c, ToID: a, Relation: valueobjects.RelTriggered, Confidence: .83, Status: "confirmed"},
+		{FromID: b, ToID: c, Relation: valueobjects.RelResolves, Confidence: .99, Status: "proposed"},
+		{FromID: a, ToID: outside, Relation: valueobjects.RelBecause, Confidence: .99, Status: "confirmed"},
+	}
+	for _, edge := range edges {
+		edge.DetectedAt = time.Unix(123, 0)
+		if err := repo.AddEdge(ctx, edge); err != nil {
+			t.Fatalf("AddEdge: %v", err)
+		}
+	}
+
+	got, err := repo.GetRelationsBetween(ctx, []uuid.UUID{a, b, c, a})
+	if err != nil {
+		t.Fatalf("GetRelationsBetween: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d confirmed in-set directed edges, want 3: %#v", len(got), got)
+	}
+	seen := make(map[string]*entities.CausalEdge, len(got))
+	for _, edge := range got {
+		seen[edge.FromID.String()+":"+edge.ToID.String()+":"+string(edge.Relation)] = edge
+	}
+	if edge := seen[a.String()+":"+b.String()+":"+string(valueobjects.RelBecause)]; edge == nil || edge.Confidence != .91 || edge.Evidence != "high" {
+		t.Fatalf("directed high-confidence edge not preserved: %#v", edge)
+	}
+	if edge := seen[a.String()+":"+b.String()+":"+string(valueobjects.RelUpdates)]; edge == nil || edge.Confidence != .72 {
+		t.Fatalf("parallel edge not preserved: %#v", edge)
+	}
+	if edge := seen[c.String()+":"+a.String()+":"+string(valueobjects.RelTriggered)]; edge == nil || edge.Status != "confirmed" {
+		t.Fatalf("reverse-direction edge not preserved: %#v", edge)
+	}
+}
+
+func TestSQLiteGetRelationsBetweenFindsEdgesAcrossIDChunks(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	ids := make([]uuid.UUID, 401)
+	for i := range ids {
+		ids[i] = uuid.New()
+	}
+	edge := &entities.CausalEdge{FromID: ids[0], ToID: ids[400], Relation: valueobjects.RelBecause, Confidence: .9, Status: "confirmed"}
+	if err := repo.AddEdge(ctx, edge); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+
+	got, err := repo.GetRelationsBetween(ctx, ids)
+	if err != nil {
+		t.Fatalf("GetRelationsBetween: %v", err)
+	}
+	if len(got) != 1 || got[0].FromID != edge.FromID || got[0].ToID != edge.ToID {
+		t.Fatalf("cross-chunk edge results = %#v, want one directed edge %#v", got, edge)
+	}
+}
+
+func TestRecallContractIndexesMigrationAndQueryPlans(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+	verbatimID := uuid.New()
+
+	var applied bool
+	if err := repo.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 19)`).Scan(&applied); err != nil || !applied {
+		t.Fatalf("recall contract migration version 19 applied=%v err=%v", applied, err)
+	}
+
+	for _, tt := range []struct {
+		name  string
+		query string
+		args  []interface{}
+		index string
+	}{
+		{
+			name:  "fingerprint lookup/deletion by verbatim ID",
+			query: `EXPLAIN QUERY PLAN SELECT id FROM fingerprints WHERE verbatim_id = ?`,
+			args:  []interface{}{verbatimID[:]},
+			index: "idx_fp_verbatim_id",
+		},
+		{
+			name:  "lifecycle ordering by extracted time and ID",
+			query: `EXPLAIN QUERY PLAN SELECT f.id FROM fingerprints f JOIN verbatim v ON v.id=f.verbatim_id WHERE COALESCE(v.lifecycle_state,'active')='active' ORDER BY f.extracted_at DESC, f.id DESC LIMIT 20`,
+			index: "idx_fp_extracted_at_id",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rows, err := repo.db.Query(tt.query, tt.args...)
+			if err != nil {
+				t.Fatalf("EXPLAIN QUERY PLAN: %v", err)
+			}
+			defer rows.Close()
+			var details []string
+			for rows.Next() {
+				var id, parent, notUsed int
+				var detail string
+				if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
+					t.Fatalf("scan query plan: %v", err)
+				}
+				details = append(details, detail)
+			}
+			if err := rows.Err(); err != nil {
+				t.Fatalf("iterate query plan: %v", err)
+			}
+			if !strings.Contains(strings.Join(details, "\n"), tt.index) {
+				t.Fatalf("query plan %q does not use %s: %v", tt.name, tt.index, details)
+			}
+		})
+	}
+}
+
 func TestGetFingerprintByVerbatimIDReturnsLatestFingerprint(t *testing.T) {
 	repo, cleanup := setupTestDB(t)
 	defer cleanup()

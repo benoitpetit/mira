@@ -59,7 +59,7 @@ func selectClusterRepresentatives(clusters [][]*entities.Candidate) []*entities.
 		bestScore := clusterRepresentativeScore(best)
 		for _, c := range cluster[1:] {
 			score := clusterRepresentativeScore(c)
-			if score > bestScore {
+			if score > bestScore || (score == bestScore && c.ID().String() < best.ID().String()) {
 				bestScore = score
 				best = c
 			}
@@ -73,34 +73,45 @@ func clusterRepresentativeScore(candidate *entities.Candidate) float64 {
 	if candidate == nil {
 		return 0
 	}
-	if candidate.Score > 0 {
-		return candidate.Score
-	}
-	if candidate.Density > 0 {
-		return candidate.Relevance * candidate.Density
-	}
-	return candidate.Relevance
+	return candidate.Score
 }
 
-func earlyPruneCandidates(candidates []*entities.Candidate, threshold float64) []*entities.Candidate {
-	if threshold <= 0 {
-		return candidates
-	}
+func earlyPruneCandidates(candidates []*entities.Candidate, relevanceFloor float64, fallbackLimit int) []*entities.Candidate {
 	filtered := make([]*entities.Candidate, 0, len(candidates))
 	for _, candidate := range candidates {
-		if candidate != nil && candidatePruneScore(candidate) >= threshold {
+		if candidate != nil && (relevanceFloor <= 0 || clampRecallScore(candidate.Relevance) >= relevanceFloor) {
 			filtered = append(filtered, candidate)
 		}
 	}
-	if len(filtered) > 0 || len(candidates) == 0 {
+	if len(filtered) > 0 || len(candidates) == 0 || fallbackLimit <= 0 {
 		return filtered
 	}
-	// If the complete result set is below the threshold, keep a small bounded
-	// fallback so sparse or cross-language queries still return evidence.
-	sorted := append([]*entities.Candidate(nil), candidates...)
-	sort.SliceStable(sorted, func(i, j int) bool { return candidatePruneScore(sorted[i]) > candidatePruneScore(sorted[j]) })
-	if len(sorted) > 5 {
-		sorted = sorted[:5]
+	// Preserve the most relevant evidence for sparse queries, with a configured
+	// bound and stable tie-breaking.
+	sort.Slice(filtered, func(i, j int) bool {
+		left, right := clampRecallScore(filtered[i].Relevance), clampRecallScore(filtered[j].Relevance)
+		if left == right {
+			return filtered[i].ID().String() < filtered[j].ID().String()
+		}
+		return left > right
+	})
+	// No candidate met the floor: build the fallback from all non-nil candidates.
+	if len(filtered) == 0 {
+		for _, candidate := range candidates {
+			if candidate != nil {
+				filtered = append(filtered, candidate)
+			}
+		}
+		sort.Slice(filtered, func(i, j int) bool {
+			left, right := clampRecallScore(filtered[i].Relevance), clampRecallScore(filtered[j].Relevance)
+			if left == right {
+				return filtered[i].ID().String() < filtered[j].ID().String()
+			}
+			return left > right
+		})
 	}
-	return sorted
+	if len(filtered) > fallbackLimit {
+		filtered = filtered[:fallbackLimit]
+	}
+	return filtered
 }

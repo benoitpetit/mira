@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -324,14 +325,14 @@ Parameters:
 Supports multilingual queries (English, French, Spanish, Italian, German, etc.) through cross-lingual embeddings.
 If the initial search yields sparse results, MIRA automatically broadens the search with relaxed thresholds.
 
-Returns the most relevant verbatims within the specified token budget, ranked by:
+Returns the most relevant verbatims within the specified rendered-body unit budget, ranked by:
 1. Semantic similarity to the query (embedding-based, multilingual)
 2. Session recency boost (recent items in current session)
 3. Causal relevance (items linked in decision chains)
 
 Parameters:
   - query: Search text or question (works in any language)
-  - budget: Max tokens to return (default: 4000)
+  - budget: Optional maximum of 100000 whitespace-delimited units counted in rendered memory bodies; omitted/zero uses the configured default. Queries with fewer than five whitespace-delimited words use 80% of that budget. Transport framing is excluded.
   - wing: Filter to specific namespace/project
   - room: Filter to specific sub-category
 	  - kind: Filter to a business role: identity|user|project|task|knowledge|history
@@ -348,7 +349,7 @@ Examples:
 				Type: "object",
 				Properties: map[string]interface{}{
 					"query":          map[string]string{"type": "string", "description": "Query/search text (any language supported)"},
-					"budget":         map[string]string{"type": "number", "description": "Token budget (default: 4000)"},
+					"budget":         map[string]interface{}{"type": "integer", "minimum": 0, "maximum": valueobjects.MaxRecallBudget, "description": "Optional hard maximum of 100000 whitespace-delimited units in rendered memory bodies; omitted/zero uses the configured default. Queries with fewer than five whitespace-delimited words use 80% of that budget. Transport framing is excluded."},
 					"wing":           map[string]string{"type": "string", "description": "Filter by wing/namespace"},
 					"room":           map[string]string{"type": "string", "description": "Filter by room/sub-category"},
 					"kind":           map[string]string{"type": "string", "description": "Filter by business role"},
@@ -853,22 +854,25 @@ func (c *Controller) handleRecall(ctx context.Context, args map[string]interface
 		return nil, fmt.Errorf("query cannot be empty")
 	}
 
-	budget := 4000
+	budget := 0
 	if bArg, ok := args["budget"]; ok {
 		switch v := bArg.(type) {
 		case float64:
+			if math.Trunc(v) != v {
+				return nil, fmt.Errorf("budget must be an integer")
+			}
+			if v < 0 || v > valueobjects.MaxRecallBudget {
+				return nil, fmt.Errorf("budget must be between 0 and %d", valueobjects.MaxRecallBudget)
+			}
 			budget = int(v)
 		case int:
-			budget = v
-		case string:
-			if bi, err := strconv.Atoi(v); err == nil {
-				budget = bi
+			if v < 0 || v > valueobjects.MaxRecallBudget {
+				return nil, fmt.Errorf("budget must be between 0 and %d", valueobjects.MaxRecallBudget)
 			}
+			budget = v
+		default:
+			return nil, fmt.Errorf("budget must be an integer")
 		}
-	}
-
-	if budget <= 0 || budget > 100000 {
-		budget = 4000
 	}
 
 	var wing, room *string
@@ -933,7 +937,11 @@ func (c *Controller) handleRecall(ctx context.Context, args map[string]interface
 	var parts []string
 	totalTokens := 0
 
-	parts = append(parts, "=== MIRA CONTEXT ===", fmt.Sprintf("Query: %s | Budget: %d", query, budget))
+	budgetLabel := strconv.Itoa(budget)
+	if budget == 0 {
+		budgetLabel = "configured default"
+	}
+	parts = append(parts, "=== MIRA CONTEXT ===", fmt.Sprintf("Query: %s | Budget: %s rendered units", query, budgetLabel))
 	if wing != nil {
 		parts = append(parts, fmt.Sprintf("Wing: %s", *wing))
 	}
@@ -941,13 +949,13 @@ func (c *Controller) handleRecall(ctx context.Context, args map[string]interface
 
 	for i, sel := range output.Memories {
 		safeContent := sanitizeStoredMemoryContent(sel.Rendered)
-		parts = append(parts, fmt.Sprintf("--- [%d] %s (%d tokens) | ID: T0:%s ---",
+		parts = append(parts, fmt.Sprintf("--- [%d] %s (%d rendered units) | ID: T0:%s ---",
 			i+1, sel.Mode.String(), sel.TokenCost, sel.VerbatimID.String()), safeContent, "")
 		totalTokens += sel.TokenCost
 	}
 
-	parts = append(parts, fmt.Sprintf("=== Total: %d/%d tokens (%.1f%%) ===",
-		totalTokens, budget, output.BudgetUsed), "",
+	parts = append(parts, fmt.Sprintf("=== Total: %d rendered units (%.1f%% of effective budget) ===",
+		totalTokens, output.BudgetUsed), "",
 		"INSTRUCTIONS:",
 		"- HEADER: Reference only, use mira_load(id) for full content",
 		"- FINGERPRINT: Essential extracted facts (informational density)",

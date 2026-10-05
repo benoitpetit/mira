@@ -1,11 +1,11 @@
 package interactors
 
 import (
-	"container/heap"
 	"context"
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -84,6 +84,18 @@ func (m *mockRecallRelationGraph) RelationBetween(_ context.Context, fromID, toI
 	return m.relation, m.HasEdge(context.Background(), fromID, toID)
 }
 
+type mockRecallBatchGraph struct {
+	mockRecallCausalGraph
+	edges []*entities.CausalEdge
+	err   error
+	calls int
+}
+
+func (m *mockRecallBatchGraph) GetRelationsBetween(_ context.Context, _ []uuid.UUID) ([]*entities.CausalEdge, error) {
+	m.calls++
+	return m.edges, m.err
+}
+
 type mockRecallVectorStore struct {
 	candidates []*entities.Candidate
 	searchFunc func(ctx context.Context, vector []float32, limit int, wing, room *string) ([]*entities.Candidate, error)
@@ -102,23 +114,32 @@ func TestCausalRelationFactorUsesConfiguredAlpha(t *testing.T) {
 	}
 }
 
-func TestCandidateHeapBreaksScoreTiesByID(t *testing.T) {
-	lowID := &entities.Candidate{Memory: &entities.Fingerprint{ID: uuid.MustParse("11111111-1111-1111-1111-111111111111")}, Score: 0.5}
-	highID := &entities.Candidate{Memory: &entities.Fingerprint{ID: uuid.MustParse("22222222-2222-2222-2222-222222222222")}, Score: 0.5}
-	h := &candidateHeap{candidates: []*entities.Candidate{highID, lowID}}
-	heap.Init(h)
-	if got := heap.Pop(h).(*entities.Candidate); got != lowID {
-		t.Fatal("equal scores should pop the candidate with the lower ID first")
-	}
-}
-
 func TestPruneFallbackBreaksScoreTiesByID(t *testing.T) {
-	uc := &RecallMemory{}
+	uc := &RecallMemory{maxCandidates: 5}
 	highID := &entities.Candidate{Memory: &entities.Fingerprint{ID: uuid.MustParse("22222222-2222-2222-2222-222222222222")}, Relevance: 0.5}
 	lowID := &entities.Candidate{Memory: &entities.Fingerprint{ID: uuid.MustParse("11111111-1111-1111-1111-111111111111")}, Relevance: 0.5}
 	got := uc.pruneCandidatesWithThreshold([]*entities.Candidate{highID, lowID}, 0.9)
 	if len(got) != 2 || got[0] != lowID || got[1] != highID {
 		t.Fatal("fallback candidates with equal scores should sort by ID")
+	}
+}
+
+func TestPruneCandidatesDoesNotUseRelevanceForZeroScore(t *testing.T) {
+	uc := &RecallMemory{}
+	highRelevanceZeroScore := &entities.Candidate{
+		Memory:    &entities.Fingerprint{ID: uuid.MustParse("11111111-1111-1111-1111-111111111111")},
+		Relevance: .99,
+		Score:     0,
+	}
+	compositeScoreAboveThreshold := &entities.Candidate{
+		Memory:    &entities.Fingerprint{ID: uuid.MustParse("22222222-2222-2222-2222-222222222222")},
+		Relevance: .2,
+		Score:     .8,
+	}
+
+	got := uc.pruneCandidatesWithThreshold([]*entities.Candidate{highRelevanceZeroScore, compositeScoreAboveThreshold}, .5)
+	if len(got) != 1 || got[0] != compositeScoreAboveThreshold {
+		t.Fatalf("adaptive score gate must use composite score only, got %+v", got)
 	}
 }
 
@@ -690,6 +711,181 @@ func TestSelectGreedy(t *testing.T) {
 	}
 }
 
+func TestSelectGreedyRecomputesScoresAfterSelection(t *testing.T) {
+	interactor := createTestInteractor(nil)
+	config := DefaultRecallMemoryConfig()
+	config.CausalPenaltyAlpha = 0
+	config.SessionBoostBeta = 0
+	config.SessionBoostMax = 1
+	config.SessionMemoryBoost = 0
+	config.DiversityBoostAlpha = 0
+	interactor = NewRecallMemory(&mockRecallVectorStore{}, &mockRecallOverlapCache{}, &mockRecallCausalGraph{}, &mockRecallEmbedder{}, &mockRecallRenderer{}, config, nil, nil)
+	now := time.Now()
+	candidates := []*entities.Candidate{
+		selectorCandidate("11111111-1111-1111-1111-111111111111", .99, []float32{1, 0}, now),
+		selectorCandidate("22222222-2222-2222-2222-222222222222", .90, []float32{.6, .8}, now),
+		selectorCandidate("33333333-3333-3333-3333-333333333333", .75, []float32{0, 1}, now),
+		selectorCandidate("44444444-4444-4444-4444-444444444444", .25, []float32{0, -1}, now),
+	}
+
+	selected := interactor.selectGreedy(context.Background(), candidates, 500, nil)
+	wantIDs := []uuid.UUID{candidates[0].ID(), candidates[2].ID(), candidates[3].ID(), candidates[1].ID()}
+	if len(selected) != len(wantIDs) {
+		t.Fatalf("selected %d memories, want %d", len(selected), len(wantIDs))
+	}
+	for i, want := range wantIDs {
+		if selected[i].CandidateID != want {
+			t.Fatalf("selection order at %d = %s, want %s", i, selected[i].CandidateID, want)
+		}
+	}
+	if math.Abs(selected[3].Confidence-.18) > .001 {
+		t.Fatalf("last marginal score = %.3f, want .180 after recomputing overlap against both selections", selected[3].Confidence)
+	}
+}
+
+func TestSelectGreedyUsesCurrentCausalSessionAndDiversitySignals(t *testing.T) {
+	config := DefaultRecallMemoryConfig()
+	config.CausalPenaltyAlpha = .2
+	config.SessionBoostBeta = .1
+	config.SessionBoostMax = 1.1
+	config.SessionMemoryBoost = 1.25
+	config.DiversityBoostAlpha = .2
+	config.SessionWindowSeconds = 3600
+	graph := &mockRecallBatchGraph{edges: []*entities.CausalEdge{
+		{FromID: uuid.MustParse("22222222-2222-2222-2222-222222222222"), ToID: uuid.MustParse("11111111-1111-1111-1111-111111111111"), Relation: valueobjects.RelUpdates, Confidence: .9, Status: "confirmed"},
+		{FromID: uuid.MustParse("11111111-1111-1111-1111-111111111111"), ToID: uuid.MustParse("22222222-2222-2222-2222-222222222222"), Relation: valueobjects.RelBecause, Confidence: .9, Status: "confirmed"},
+	}}
+	interactor := NewRecallMemory(&mockRecallVectorStore{}, &mockRecallOverlapCache{}, graph, &mockRecallEmbedder{}, &mockRecallRenderer{}, config, nil, nil)
+	now := time.Now()
+	first := selectorCandidate("11111111-1111-1111-1111-111111111111", .8, []float32{1, 0}, now, "project")
+	causalSession := selectorCandidate("22222222-2222-2222-2222-222222222222", .6, []float32{0, 1}, now.Add(100*time.Second), "decision")
+	priorSession := selectorCandidate("33333333-3333-3333-3333-333333333333", .5, []float32{-1, 0}, now.Add(-24*time.Hour), "project")
+	coveredSubject := selectorCandidate("44444444-4444-4444-4444-444444444444", .55, []float32{0, -1}, now.Add(-24*time.Hour), "project")
+	newSubject := selectorCandidate("55555555-5555-5555-5555-555555555555", .4, []float32{.7, .7}, now.Add(-24*time.Hour), "decision")
+	const sessionID = "session-contract"
+	interactor.sessionCache[sessionID] = sessionCacheEntry{ids: []uuid.UUID{priorSession.ID()}, expires: now.Add(time.Hour)}
+
+	selected := interactor.selectGreedy(context.Background(), []*entities.Candidate{first, causalSession, priorSession, coveredSubject, newSubject}, 500, strPtr(sessionID))
+	wantIDs := []uuid.UUID{first.ID(), causalSession.ID(), priorSession.ID(), coveredSubject.ID(), newSubject.ID()}
+	if len(selected) != len(wantIDs) {
+		t.Fatalf("selected %d memories, want %d", len(selected), len(wantIDs))
+	}
+	for i, want := range wantIDs {
+		if selected[i].CandidateID != want {
+			t.Fatalf("selection order at %d = %s, want %s", i, selected[i].CandidateID, want)
+		}
+	}
+	if graph.calls != 1 {
+		t.Fatalf("batch causal relations loaded %d times, want once", graph.calls)
+	}
+	if causalSession.CausalPenalty != 1.2 || causalSession.SessionBoost != 1.1 || math.Abs(causalSession.Score-.9504) > .001 {
+		t.Fatalf("causal/session marginal = score %.4f, causal %.3f, session %.3f", causalSession.Score, causalSession.CausalPenalty, causalSession.SessionBoost)
+	}
+	if math.Abs(priorSession.Score-.625) > .001 {
+		t.Fatalf("prior-session candidate score = %.3f, want .625 after its subject is covered", priorSession.Score)
+	}
+	wantNewSubjectScore := .4 * (1 - math.Sqrt(.5)) * 1.1
+	if math.Abs(newSubject.Score-wantNewSubjectScore) > .001 {
+		t.Fatalf("candidate whose subject became covered has score %.3f, want %.3f", newSubject.Score, wantNewSubjectScore)
+	}
+}
+
+func TestSelectGreedyContinuesWhenBatchCausalReadFails(t *testing.T) {
+	config := DefaultRecallMemoryConfig()
+	config.CausalPenaltyAlpha = .2
+	graph := &mockRecallBatchGraph{err: errors.New("database unavailable")}
+	interactor := NewRecallMemory(&mockRecallVectorStore{}, &mockRecallOverlapCache{}, graph, &mockRecallEmbedder{}, &mockRecallRenderer{}, config, nil, nil)
+	now := time.Now()
+	first := selectorCandidate("11111111-1111-1111-1111-111111111111", .8, []float32{1, 0}, now)
+	second := selectorCandidate("22222222-2222-2222-2222-222222222222", .7, []float32{0, 1}, now)
+
+	selected := interactor.selectGreedy(context.Background(), []*entities.Candidate{first, second}, 500, nil)
+	if len(selected) != 2 || graph.calls != 1 {
+		t.Fatalf("selected %d memories after %d batch reads, want 2 and 1", len(selected), graph.calls)
+	}
+	if second.CausalPenalty != 1 {
+		t.Fatalf("causal factor after batch failure = %.3f, want 1", second.CausalPenalty)
+	}
+}
+
+func TestSelectGreedyMatchesReferenceSelector(t *testing.T) {
+	config := DefaultRecallMemoryConfig()
+	config.CausalPenaltyAlpha = 0
+	config.SessionBoostBeta = 0
+	config.SessionBoostMax = 1
+	config.SessionMemoryBoost = 0
+	config.DiversityBoostAlpha = 0
+	interactor := NewRecallMemory(&mockRecallVectorStore{}, &mockRecallOverlapCache{}, &mockRecallCausalGraph{}, &mockRecallEmbedder{}, &mockRecallRenderer{}, config, nil, nil)
+	now := time.Now()
+	candidates := []*entities.Candidate{
+		selectorCandidate("11111111-1111-1111-1111-111111111111", .99, []float32{1, 0}, now),
+		selectorCandidate("22222222-2222-2222-2222-222222222222", .90, []float32{.6, .8}, now),
+		selectorCandidate("33333333-3333-3333-3333-333333333333", .75, []float32{0, 1}, now),
+		selectorCandidate("44444444-4444-4444-4444-444444444444", .25, []float32{0, -1}, now),
+	}
+	want := referenceGreedySelection(candidates)
+	got := interactor.selectGreedy(context.Background(), candidates, 500, nil)
+	if len(got) != len(want) {
+		t.Fatalf("selected %d memories, reference selected %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i].CandidateID != want[i].CandidateID || math.Abs(got[i].Confidence-want[i].score) > .001 {
+			t.Fatalf("selection %d = (%s, %.4f), reference=(%s, %.4f)", i, got[i].CandidateID, got[i].Confidence, want[i].CandidateID, want[i].score)
+		}
+	}
+}
+
+func selectorCandidate(id string, relevance float64, embedding []float32, createdAt time.Time, subjects ...string) *entities.Candidate {
+	uid := uuid.MustParse(id)
+	return &entities.Candidate{
+		Memory:               &entities.Fingerprint{ID: uid, Subjects: subjects},
+		Verbatim:             &entities.Verbatim{ID: uid, CreatedAt: createdAt},
+		Embedding:            embedding,
+		Relevance:            relevance,
+		Density:              1,
+		Recency:              1,
+		ExtractionConfidence: 1,
+		ValidationFreshness:  1,
+		LifecycleFactor:      1,
+		BeliefCalibration:    1,
+	}
+}
+
+func referenceGreedySelection(candidates []*entities.Candidate) []struct {
+	CandidateID uuid.UUID
+	score       float64
+} {
+	type result = struct {
+		CandidateID uuid.UUID
+		score       float64
+	}
+	remaining := append([]*entities.Candidate(nil), candidates...)
+	var chosen []*entities.Candidate
+	var resultList []result
+	for len(remaining) > 0 {
+		scores := make(map[uuid.UUID]float64, len(remaining))
+		for _, candidate := range remaining {
+			maxOverlap := 0.0
+			for _, previous := range chosen {
+				maxOverlap = math.Max(maxOverlap, util.CosineSimilarity(candidate.Embedding, previous.Embedding))
+			}
+			scores[candidate.ID()] = candidate.Relevance * (1 - maxOverlap)
+		}
+		sort.Slice(remaining, func(i, j int) bool {
+			left, right := scores[remaining[i].ID()], scores[remaining[j].ID()]
+			if left == right {
+				return remaining[i].ID().String() < remaining[j].ID().String()
+			}
+			return left > right
+		})
+		best := remaining[0]
+		remaining = remaining[1:]
+		chosen = append(chosen, best)
+		resultList = append(resultList, result{CandidateID: best.ID(), score: scores[best.ID()]})
+	}
+	return resultList
+}
+
 // TestEmbeddingCacheDetailed tests the LRU embedding cache thoroughly
 func TestEmbeddingCacheDetailed(t *testing.T) {
 	tests := []struct {
@@ -926,6 +1122,9 @@ func TestPruneCandidates(t *testing.T) {
 		createTestCandidateWithRelevance("2", now, 0.6),
 		createTestCandidateWithRelevance("3", now, 0.3),
 	}
+	for i, score := range []float64{.8, .6, .3} {
+		candidates[i].Score = score
+	}
 
 	pruned := interactor.pruneCandidates(candidates)
 
@@ -962,6 +1161,54 @@ func TestExecute_ExtremeBudgets(t *testing.T) {
 			}
 			if tt.expectZero && len(output.Memories) != 0 {
 				t.Errorf("expected 0 memories for budget=%d, got %d", tt.budget, len(output.Memories))
+			}
+		})
+	}
+}
+
+func TestExecuteRejectsInvalidRecallBudget(t *testing.T) {
+	interactor := createTestInteractor(nil)
+	for _, budget := range []int{-1, 100001} {
+		_, err := interactor.Execute(context.Background(), RecallMemoryInput{Query: "valid query", Budget: budget})
+		if !errors.Is(err, ErrInvalidRecallBudget) {
+			t.Errorf("Execute budget %d error = %v, want invalid recall budget", budget, err)
+		}
+	}
+}
+
+func TestExecuteRecallBudgetRangeAndNormalization(t *testing.T) {
+	candidate := createTestCandidateWithScore("budget-contract", time.Now(), .9, 1200)
+	interactor := createTestInteractor([]*entities.Candidate{candidate})
+	interactor.defaultBudget = 100
+
+	tests := []struct {
+		name       string
+		query      string
+		budget     int
+		wantUsed   float64
+		wantMax    int
+		wantMemory bool
+	}{
+		{name: "configured default for zero", query: "one two three four five", budget: 0, wantUsed: 2, wantMax: 100, wantMemory: true},
+		{name: "short query reduction", query: "short query", budget: 100, wantUsed: 2.5, wantMax: 100, wantMemory: true},
+		{name: "long query cannot increase request", query: strings.Repeat("word ", 51), budget: 100, wantUsed: 2, wantMax: 100, wantMemory: true},
+		{name: "minimum floor cannot raise request", query: "short query", budget: 1, wantUsed: 0, wantMax: 1, wantMemory: false},
+		{name: "maximum is accepted", query: "one two three four five", budget: 100000, wantUsed: .002, wantMax: 100000, wantMemory: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := interactor.Execute(context.Background(), RecallMemoryInput{Query: tt.query, Budget: tt.budget})
+			if err != nil {
+				t.Fatalf("Execute failed: %v", err)
+			}
+			if out.TotalTokens > tt.wantMax {
+				t.Fatalf("rendered token units %d exceed hard maximum %d", out.TotalTokens, tt.wantMax)
+			}
+			if len(out.Memories) > 0 != tt.wantMemory {
+				t.Fatalf("selected %d memories, want memory selected=%v", len(out.Memories), tt.wantMemory)
+			}
+			if math.Abs(out.BudgetUsed-tt.wantUsed) > .001 {
+				t.Fatalf("BudgetUsed = %.3f, want %.3f", out.BudgetUsed, tt.wantUsed)
 			}
 		})
 	}

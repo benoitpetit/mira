@@ -997,39 +997,13 @@ func TestHandleRecallParameters(t *testing.T) {
 				"budget": 500,
 			},
 		},
-		{
-			name: "budget as string",
-			args: map[string]interface{}{
-				"query":  "query with string budget",
-				"budget": "600",
-			},
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Just verify the args can be processed without validation errors
-			// (we can't actually call handleRecall without proper initialization)
-
-			query, hasQuery := tt.args["query"].(string)
-			if !hasQuery || query == "" {
-				t.Error("Query should be a non-empty string")
-			}
-
-			// Verify budget parsing logic
-			budget := 4000 // default
-			if bArg, ok := tt.args["budget"]; ok {
-				switch v := bArg.(type) {
-				case float64:
-					budget = int(v)
-				case int:
-					budget = v
-				case string:
-					// Would parse string in real code
-				}
-			}
-			if budget <= 0 {
-				t.Error("Budget should be positive")
+			controller := newTestController(func(c *Controller) { c.recallMemory = &mockRecallMemory{} })
+			if _, err := controller.handleRecall(context.Background(), tt.args); err != nil {
+				t.Fatalf("handleRecall rejected valid parameters: %v", err)
 			}
 		})
 	}
@@ -1821,42 +1795,90 @@ func TestHandleRecall_BudgetAsInt(t *testing.T) {
 
 func TestHandleRecall_BudgetAsString(t *testing.T) {
 	controller := newTestController(func(c *Controller) { c.recallMemory = &mockRecallMemory{} })
-	result, err := controller.handleRecall(context.Background(), map[string]interface{}{
+	_, err := controller.handleRecall(context.Background(), map[string]interface{}{
 		"query":  "something",
 		"budget": "300",
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected result, got nil")
+	if err == nil || !strings.Contains(err.Error(), "budget must be an integer") {
+		t.Fatalf("string budget error = %v, want integer validation error", err)
 	}
 }
 
 func TestHandleRecall_BudgetOutOfRange(t *testing.T) {
 	controller := newTestController(func(c *Controller) { c.recallMemory = &mockRecallMemory{} })
-	// budget <= 0 → resets to 4000
-	result, err := controller.handleRecall(context.Background(), map[string]interface{}{
-		"query":  "something",
-		"budget": float64(-1),
-	})
-	if err != nil {
-		t.Fatalf("unexpected error (negative budget): %v", err)
+	for _, budget := range []float64{-1, 100001} {
+		_, err := controller.handleRecall(context.Background(), map[string]interface{}{"query": "something", "budget": budget})
+		if err == nil || !strings.Contains(err.Error(), "budget must be between 0 and 100000") {
+			t.Errorf("budget %v error = %v, want range validation error", budget, err)
+		}
 	}
-	if result == nil {
-		t.Fatal("expected result, got nil")
+}
+
+func TestHandleRecallBudgetContract(t *testing.T) {
+	valid := []struct {
+		name string
+		args map[string]interface{}
+		want int
+	}{
+		{name: "omitted uses core default", args: map[string]interface{}{"query": "something"}, want: 0},
+		{name: "zero uses core default", args: map[string]interface{}{"query": "something", "budget": float64(0)}, want: 0},
+		{name: "integer number", args: map[string]interface{}{"query": "something", "budget": float64(500)}, want: 500},
+		{name: "maximum", args: map[string]interface{}{"query": "something", "budget": float64(100000)}, want: 100000},
 	}
-	// budget > 100000 → resets to 4000
-	result, err = controller.handleRecall(context.Background(), map[string]interface{}{
-		"query":  "something",
-		"budget": float64(200000),
-	})
-	if err != nil {
-		t.Fatalf("unexpected error (budget too large): %v", err)
+	for _, tt := range valid {
+		t.Run(tt.name, func(t *testing.T) {
+			var got int
+			recall := &mockRecallMemory{executeFunc: func(_ context.Context, input interactors.RecallMemoryInput) (*interactors.RecallMemoryOutput, error) {
+				got = input.Budget
+				return &interactors.RecallMemoryOutput{}, nil
+			}}
+			controller := newTestController(func(c *Controller) { c.recallMemory = recall })
+			if _, err := controller.handleRecall(context.Background(), tt.args); err != nil {
+				t.Fatalf("handleRecall failed: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("use-case budget = %d, want %d", got, tt.want)
+			}
+		})
 	}
-	if result == nil {
-		t.Fatal("expected result, got nil")
+
+	invalid := []struct {
+		name   string
+		budget interface{}
+	}{
+		{name: "negative", budget: float64(-1)},
+		{name: "fractional JSON number", budget: float64(1.5)},
+		{name: "above maximum", budget: float64(100001)},
+		{name: "string coercion", budget: "500"},
 	}
+	for _, tt := range invalid {
+		t.Run(tt.name, func(t *testing.T) {
+			called := false
+			recall := &mockRecallMemory{executeFunc: func(context.Context, interactors.RecallMemoryInput) (*interactors.RecallMemoryOutput, error) {
+				called = true
+				return &interactors.RecallMemoryOutput{}, nil
+			}}
+			controller := newTestController(func(c *Controller) { c.recallMemory = recall })
+			_, err := controller.handleRecall(context.Background(), map[string]interface{}{"query": "something", "budget": tt.budget})
+			if err == nil || called {
+				t.Fatalf("invalid budget %v: error=%v executorCalled=%v", tt.budget, err, called)
+			}
+		})
+	}
+}
+
+func TestToolDefinitionsDeclareRecallBudgetAsInteger(t *testing.T) {
+	for _, tool := range newTestController().ToolDefinitions() {
+		if tool.Name != "mira_recall" {
+			continue
+		}
+		budget, ok := tool.InputSchema.Properties["budget"].(map[string]interface{})
+		if !ok || budget["type"] != "integer" || budget["minimum"] != 0 || budget["maximum"] != valueobjects.MaxRecallBudget {
+			t.Fatalf("recall budget schema = %#v, want integer", tool.InputSchema.Properties["budget"])
+		}
+		return
+	}
+	t.Fatal("mira_recall tool definition not found")
 }
 
 func TestHandleRecall_WithAllOptionalParams(t *testing.T) {

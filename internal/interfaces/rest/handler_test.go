@@ -33,11 +33,13 @@ func (f *fakeStore) Execute(_ context.Context, input interactors.StoreMemoryInpu
 }
 
 type fakeRecall struct {
-	out *interactors.RecallMemoryOutput
-	err error
+	out    *interactors.RecallMemoryOutput
+	err    error
+	inputs []interactors.RecallMemoryInput
 }
 
-func (f *fakeRecall) Execute(_ context.Context, _ interactors.RecallMemoryInput) (*interactors.RecallMemoryOutput, error) {
+func (f *fakeRecall) Execute(_ context.Context, input interactors.RecallMemoryInput) (*interactors.RecallMemoryOutput, error) {
+	f.inputs = append(f.inputs, input)
 	return f.out, f.err
 }
 
@@ -481,6 +483,51 @@ func TestHandleRecall_MissingQuery(t *testing.T) {
 	}
 }
 
+func TestHandleRecallBudgetContract(t *testing.T) {
+	valid := []struct {
+		name   string
+		body   map[string]any
+		budget int
+	}{
+		{name: "omitted defaults in core", body: map[string]any{"query": "something"}, budget: 0},
+		{name: "zero defaults in core", body: map[string]any{"query": "something", "budget": 0}, budget: 0},
+		{name: "exact maximum", body: map[string]any{"query": "something", "budget": valueobjects.MaxRecallBudget}, budget: valueobjects.MaxRecallBudget},
+	}
+	for _, tt := range valid {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newSuite(t)
+			resp := s.post("/api/v1/memories/recall", tt.body)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+			if len(s.recall.inputs) != 1 || s.recall.inputs[0].Budget != tt.budget {
+				t.Fatalf("recall inputs = %#v, want budget %d", s.recall.inputs, tt.budget)
+			}
+		})
+	}
+
+	invalid := []struct {
+		name string
+		body string
+	}{
+		{name: "negative", body: `{"query":"something","budget":-1}`},
+		{name: "above maximum", body: `{"query":"something","budget":100001}`},
+		{name: "fractional JSON number", body: `{"query":"something","budget":1.5}`},
+	}
+	for _, tt := range invalid {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newSuite(t)
+			resp := s.do(http.MethodPost, "/api/v1/memories/recall", json.RawMessage(tt.body))
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", resp.StatusCode)
+			}
+			if len(s.recall.inputs) != 0 {
+				t.Fatalf("invalid request reached use case: %#v", s.recall.inputs)
+			}
+		})
+	}
+}
+
 func TestHandleSearch_Success(t *testing.T) {
 	s := newSuite(t)
 	s.search.out = []*interactors.SearchSemanticResult{
@@ -676,6 +723,25 @@ func TestOpenAPICausalContractMatchesRuntimeBounds(t *testing.T) {
 	causalProperties := schemas["CausalChainResponse"].(map[string]any)["properties"].(map[string]any)
 	if causalProperties["truncated"].(map[string]any)["type"] != "boolean" {
 		t.Fatalf("causal response truncated schema = %#v", causalProperties["truncated"])
+	}
+}
+
+func TestOpenAPIRecallBudgetContractMatchesRuntime(t *testing.T) {
+	response := httptest.NewRecorder()
+	rest.ServeSpec(response, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
+	var doc map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("decode OpenAPI document: %v", err)
+	}
+	schemas := doc["components"].(map[string]any)["schemas"].(map[string]any)
+	properties := schemas["RecallRequest"].(map[string]any)["properties"].(map[string]any)
+	budget := properties["budget"].(map[string]any)
+	if budget["type"] != "integer" || budget["minimum"] != float64(0) || budget["maximum"] != float64(valueobjects.MaxRecallBudget) {
+		t.Fatalf("recall budget schema = %#v", budget)
+	}
+	description, _ := budget["description"].(string)
+	if !strings.Contains(description, "whitespace-delimited") || !strings.Contains(description, "Transport framing is excluded") {
+		t.Fatalf("recall budget description omits counting contract: %q", description)
 	}
 }
 

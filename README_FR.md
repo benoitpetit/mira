@@ -12,7 +12,7 @@
 
   [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.8.4-blue?style=flat-square)]()
+  [![Version](https://img.shields.io/badge/Version-0.8.5-blue?style=flat-square)]()
 
   [Documentation](docs/INDEX.md) • [Benchmarks](https://mira.devbyben.fr/benchmarks) • [Référence API](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [English](README.md)
 
@@ -64,7 +64,7 @@ Claude Code apprend l'architecture de votre projet le lundi. Codex connaît auto
 - ✓ Local par défaut — le stockage et les embeddings par défaut s’exécutent sur votre machine
 - ✓ Pas de clé API requise pour la configuration locale par défaut
 - ✓ MCP natif — fonctionne avec Claude Code, Codex, Cursor, Windsurf et plus
-- ✓ Économe en tokens — l'algorithme CBA maximise l'information par token
+- ✓ Budget maîtrisé — le CBA sélectionne et rend les mémoires sous un budget borné de corps
 - ✓ Persistant entre modèles — changez de LLM sans perdre le contexte
 
 > **La persistance d'identité est intégrée.** MIRA expose les outils `soul_*` pour conserver la continuité, rappeler le contexte d'identité, détecter les dérives et gérer les changements de modèle. Ils sont activés automatiquement.
@@ -93,7 +93,7 @@ MIRA :
 
 ### Comment MIRA fonctionne
 
-Au lieu d'une simple récupération par similarité, MIRA résout un problème d'optimisation : maximiser l'information utile dans un budget de tokens fixe.
+Au lieu d'une simple récupération par similarité, MIRA applique une heuristique gloutonne d'allocation pour classer les mémoires utiles sous un budget borné de corps rendus.
 
 Chaque mémoire est stockée sous trois formes — texte complet (T0), faits structurés (T1) et embedding 384 dimensions (T2) — permettant un rendu adaptatif selon le budget disponible.
 
@@ -135,30 +135,31 @@ Les deux sont dérivés atomiquement et stockés aux côtés du verbatim origina
 Requête  →  Embed  →  HNSW top-100 (+ FTS5)  →  Fusion RRF  →  Scoring CBA  →  Sélection gloutonne
 ```
 
-L'algorithme CBA sélectionne les mémoires de façon gloutonne dans un budget de tokens, ajustant le mode de rendu de chaque mémoire (Verbatim / Fingerprint / Header) selon les tokens restants.
+L'algorithme CBA sélectionne les mémoires de façon gloutonne selon un budget d'unités séparées par des espaces dans les corps de mémoire rendus. C'est une approximation déterministe, pas le comptage d'un tokenizer de modèle. Le niveau de rendu (Verbatim / Fingerprint / Header) dépend du budget restant.
 
 ### Score composite CBA
 
-**S(m) = ρ × δ × η × q × β × (1−σ) × τ × χ × υ × 𝟙[ρ>θ]**
+**S(m | S) = ρ × δ × η × q × β × (1−σ(S)) × τ(S) × χ(S) × υ(S)**, éligible si **ρ ≥ θ**
 
 | Symbole | Dimension | Formule |
 |---------|-----------|---------|
 | ρ | Pertinence sémantique | cos(embedding_m, requête) |
-| δ | Densité informationnelle | sigmoïde(faits / √tokens) |
+| δ | Densité informationnelle | sigmoïde(faits / √unités rendues) |
 | η | Poids temporel | exp(−λ × âge) |
 | q | Enveloppe de qualité | confiance d'extraction × fraîcheur de validation × cycle de vie actif |
 | β | Calibration de croyance | calibration locale bornée dans [0,75 ; 1,2] |
 | σ | Chevauchement max | similarité max avec mémoires déjà sélectionnées |
-| τ | Boost session | +20% si dans la même fenêtre de 2h |
+| τ | Boost session | Facteur configuré pour la session active ou précédente |
 | χ | Facteur causal | conserve et pondère les voisins causaux fiables |
 | υ | Modificateur de diversité | boost optionnel pour les nouveaux sujets couverts |
-| 𝟙[ρ>θ] | Seuil | exclure si ρ < 0.6 |
+| ρ ≥ θ | Porte de pertinence | le candidat atteint le plancher configuré ; un repli borné s'applique si aucun ne le franchit |
 
 Les huit signaux centraux sont ρ, δ, η, q, β, σ, τ et χ. `υ` est un
-modificateur optionnel appliqué pendant la sélection gloutonne ; le seuil
-adaptatif est une porte, pas un neuvième signal. Les lignes dont le cycle de
-vie n'est pas actif sont exclues et les facteurs de qualité/croyance sont
-appliqués avant la renormalisation gloutonne.
+modificateur optionnel. Le plancher de pertinence est une porte distincte, pas
+un multiplicateur du score. Les scores marginaux sont recalculés selon les
+mémoires déjà sélectionnées et les lignes dont le cycle de vie n'est pas actif
+sont exclues. Cette heuristique ne garantit pas un optimum global d'information
+par unité de budget.
 
 ---
 
@@ -226,36 +227,37 @@ SORTIE :  Liste de mémoires avec mode de rendu
    C ← HNSW_Search(e_q, N=100, w, r)           // candidats approximatifs des plus proches voisins
    Si HNSW non prêt : C ← SQLite_Search(...)    // Fallback
 
-3. ÉLAGAGE PRÉCOCE
-   C' ← { c ∈ C : ρ(c,q) > 0.6 }
-   Si C' = ∅ : C' ← top-5(C) par ρ
+3. FILTRAGE PAR PERTINENCE
+   C' ← { c ∈ C : ρ(c,q) ≥ plancher_configuré }
+   Si C' = ∅ : C' ← top-max_candidates(C) par ρ
 
 4. SCORING INITIAL
    Pour chaque c ∈ C' :
       c.score ← ρ(c) × δ_sigmoïde(c) × η_récence(c) × q(c) × β(c)
 
-5. SÉLECTION GLOUTONNE avec renormalisation dynamique
-   S ← ∅, utilisé ← 0
-   PQ ← MaxHeap(C')
+5. SÉLECTION GLOUTONNE avec scores marginaux à jour
+   S ← ∅, utilisé ← 0, restant ← C'
 
-   Tant que PQ ≠ ∅ et utilisé < B :
-      c ← Pop(PQ)
-      c.σ ← max_{s∈S} sim(c, s)
-      c.χ ← causalRelationFactor(c, S)  // conserver les voisins causaux fiables
-      c.τ ← 1.2 si |temps(c) − temps(S)| < 2h sinon 1.0
-      ajusté ← c.score × (1−c.σ) × c.χ × c.τ
+   Tant que restant ≠ ∅ et utilisé < B :
+      Recalculer le score de chaque candidat selon S :
+        chevauchement ← cosinus max avec S
+        causalité ← facteur des relations confirmées avec S
+        session ← facteur de session active/précédente
+        diversité ← facteur des sujets encore peu couverts
+      c ← score courant le plus élevé (UUID pour départager)
+      mode, corps, coût ← première représentation adaptée à B − utilisé
+      Si aucune représentation ne tient : retirer c de restant ; continuer
+      Ajouter c et son corps à S ; utilisé ← utilisé + unités séparées par espaces(corps)
+      Retirer c de restant
 
-      Si PQ[0].score × 0.8 > ajusté :
-         Push(PQ, c) avec score ajusté ; continuer
-
-      mode ← ChoisirMode(c, B − utilisé)
-      coût ← Coût(c, mode)
-      Si utilisé + coût > B : Dégrader(mode) ; Recalculer ; ignorer si toujours dépassé
-
-      S ← S ∪ {c}, utilisé ← utilisé + coût
-
-6. RETOURNER S trié par score décroissant
+6. RETOURNER S dans l'ordre de sélection gloutonne
 ```
+
+Les requêtes de moins de cinq mots séparés par des espaces utilisent 80 % du
+budget choisi comme limite effective. `B` compte les unités séparées par des espaces dans les corps de mémoire rendus,
+hors enveloppe de transport. C'est une approximation déterministe, pas le
+comptage d'un tokenizer de modèle. Cette heuristique gloutonne ne garantit pas
+un optimum global.
 
 ### Modes de rendu adaptatif
 
@@ -710,8 +712,7 @@ Nous avons décidé de migrer vers PostgreSQL pour la v2...
 ### config.yaml
 
 ```yaml
-system:
-  version: "0.8.4"
+# system.version est défini à l'exécution selon la version du core.
 
 storage:
   path: ".mira"
@@ -792,7 +793,7 @@ agent_memory:
 
 mcp:
   name: "mira"
-  version: "0.8.4"
+  # mcp.version est défini à l'exécution selon la version du core.
   transport: "stdio"   # "stdio", "sse", ou "http" stateless sur /mcp
   address: "localhost:3001"
   auth_token: ""         # requis pour HTTP si l'adresse n'est pas locale
@@ -873,7 +874,7 @@ Choisissez le bon type de mémoire en fonction de ce que vous stockez :
 |-------|-------------|
 | `mira_store` | Stocker une mémoire avec extraction T0/T1/T2 |
 | `mira_ingest` | Extraire des mémoires d'historique depuis des messages de conversation structurés |
-| `mira_recall` | Récupérer le contexte optimal dans un budget de tokens |
+| `mira_recall` | Récupérer un contexte sélectionné par heuristique sous un budget borné du corps rendu |
 | `mira_load` | Charger le verbatim complet par UUID |
 | `mira_causal_chain` | Remonter la chaîne causale depuis une mémoire |
 | `mira_status` | Statistiques système et santé |
@@ -1089,7 +1090,7 @@ Voir [docs/API_REFERENCES.md](docs/API_REFERENCES.md) pour la référence compl�
 | Stockage T0, T1, T2 | O(1) | Insertion atomique |
 | Recherche vectorielle | Recherche approximative des plus proches voisins | HNSW ANN ; latence selon l'index, les données et l'hôte |
 | Scoring CBA | O(n²) en pratique pour la sélection gloutonne | n = candidats |
-| Allocation gloutonne | O(n²) | Avec renormalisation dynamique |
+| Allocation gloutonne | O(n²) | Recalcul des scores marginaux à chaque sélection |
 | BFS graphe causal | O(V+E) | V = nœuds, E = arêtes |
 
 ### Benchmarks

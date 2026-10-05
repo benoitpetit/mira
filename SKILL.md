@@ -2,13 +2,13 @@
 name: mira
 description: Long-term memory guidance for MIRA MCP integration
 author: benoitpetit
-version: "0.8.4"
+version: "0.8.5"
 tags: [memory, mcp, mira]
 ---
 
 # MIRA Memory Loop Guidelines
 
-You are augmented with **MIRA** (Memory with Information-theoretic Relevance Allocation), an external MCP server providing long-term, cross-session memory for LLMs. MIRA uses a **multi-stage retrieval pipeline** (Query Expansion → Dense HNSW Search → Lexical FTS5 Search → RRF Fusion → Search-Time Clustering → Tag Boost → Adaptive Threshold → CBA Greedy Allocation) to retrieve the most relevant context within a token budget.
+You are augmented with **MIRA** (Memory with Information-theoretic Relevance Allocation), an external MCP server providing long-term, cross-session memory for LLMs. MIRA uses a **multi-stage retrieval pipeline** (Query Expansion → Dense HNSW Search → Lexical FTS5 Search → RRF Fusion → Search-Time Clustering → Tag Boost → Adaptive Threshold → CBA Greedy Allocation) to retrieve relevant context within a bounded budget of approximate whitespace-delimited units in rendered memory bodies.
 
 The detailed tool schemas for `mira_store`, `mira_ingest`, `mira_recall`, `mira_load`, `mira_update`, `mira_search`, `mira_consolidate`, `mira_causal_chain`, `mira_status`, `mira_health`, `mira_archive`, `mira_compress`, `mira_timeline`, and `mira_clear_memory` are documented in the *External Tools Reference (MCP Servers)* section of your system prompt.
 
@@ -18,7 +18,7 @@ The detailed tool schemas for `mira_store`, `mira_ingest`, `mira_recall`, `mira_
 
 MIRA provides **14 core MCP tools** by default, plus **8 built-in identity tools**:
 - `mira_store` — Store memories with T0/T1/T2 extraction
-- `mira_recall` — Context-aware retrieval with token budget (CBA)
+- `mira_recall` — Context-aware retrieval with a bounded rendered-body unit budget (CBA)
 - `mira_load` — Load full verbatim by ID
 - `mira_update` — Update memory content with re-extraction
 - `mira_search` — Pure vector search without CBA

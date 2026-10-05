@@ -12,7 +12,7 @@
 
   [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.8.4-blue?style=flat-square)]()
+  [![Version](https://img.shields.io/badge/Version-0.8.5-blue?style=flat-square)]()
 
   [Documentation](docs/INDEX.md) • [Benchmarks](https://mira.devbyben.fr/benchmarks) • [API Reference](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [Français](README_FR.md)
 
@@ -58,7 +58,7 @@ Claude Code learns your project architecture on Monday. Codex automatically know
 - ✓ Local-first — default storage and embeddings run on your machine
 - ✓ No API key required for the default local configuration
 - ✓ MCP native — works with Claude Code, Codex, Cursor, Windsurf and more
-- ✓ Token-efficient — CBA algorithm maximizes information per token
+- ✓ Budget-aware — CBA greedily selects and renders memories within a bounded body budget
 - ✓ Persistent across models — switch LLMs without losing context
 
 > **Identity persistence is built in.** MIRA includes `soul_*` tools for capturing continuity, recalling identity context, detecting drift, and handling model changes. They are enabled automatically.
@@ -87,7 +87,7 @@ MIRA:
 
 ### How MIRA works
 
-Instead of simple similarity retrieval, MIRA solves an optimization problem: maximize useful information within a fixed token budget.
+Instead of simple similarity retrieval, MIRA uses a greedy allocation heuristic to rank useful memories under a bounded rendered-body budget.
 
 Each memory is stored in three forms — full text (T0), structured facts (T1), and a 384-dimensional embedding (T2) — enabling adaptive rendering that adjusts to the available budget.
 
@@ -129,30 +129,30 @@ Both are derived atomically and stored alongside the original verbatim (T0).
 Query  →  Embed  →  HNSW top-100 (+ SQL lexical)  →  RRF fusion  →  CBA scoring  →  Greedy selection
 ```
 
-The CBA algorithm selects memories greedily against a token budget, adjusting each memory's render mode (Verbatim / Fingerprint / Header) based on remaining tokens.
+The CBA algorithm selects memories greedily against a budget of whitespace-delimited units in rendered memory bodies. This is a deterministic approximation, not a model tokenizer count. It adjusts each memory's render mode (Verbatim / Fingerprint / Header) based on the remaining budget.
 
 ### CBA Composite Score
 
-**S(m) = ρ × δ × η × q × β × (1−σ) × τ × χ × υ × 𝟙[ρ>θ]**
+**S(m | S) = ρ × δ × η × q × β × (1−σ(S)) × τ(S) × χ(S) × υ(S)**, eligible when **ρ ≥ θ**
 
 | Symbol | Dimension | Formula |
 |--------|-----------|---------|
 | ρ | Semantic relevance | cos(embedding_m, query) |
-| δ | Information density | sigmoid(facts / √tokens) |
+| δ | Information density | sigmoid(facts / √rendered units) |
 | η | Temporal weight | exp(−λ × age) |
 | q | Quality envelope | extraction confidence × validation freshness × active lifecycle |
 | β | Belief calibration | bounded local calibration in [0.75, 1.2] |
 | σ | Max overlap | max similarity with already-selected memories |
-| τ | Session boost | +20% if within the same 2-hour window |
+| τ | Session boost | Configured boost for active/previous session context |
 | χ | Causal relation factor | preserves and weights reliable causal neighbours |
 | υ | Diversity modifier | optional boost for newly covered subjects |
-| 𝟙[ρ>θ] | Threshold gate | discard if ρ < 0.6 |
+| ρ ≥ θ | Relevance gate | candidate must meet the configured relevance floor; bounded fallback applies if none do |
 
 The eight core signals are ρ, δ, η, q, β, σ, τ and χ. `υ` is an optional
-diversity modifier applied during greedy selection; the adaptive threshold is
-a gate, not a ninth signal. The implementation keeps non-active lifecycle rows
-out of the selected context and applies the quality/belief factors before
-greedy re-normalisation.
+diversity modifier. The relevance floor is a separate gate, not a score
+multiplier. Marginal scores are recomputed against the memories already
+selected, and non-active lifecycle rows are excluded. The heuristic does not
+guarantee globally optimal information per budget unit.
 
 ---
 
@@ -220,36 +220,36 @@ OUTPUT: List of memories with render mode
    C ← HNSW_Search(e_q, N=100, w, r)          // approximate nearest-neighbor candidates
    If HNSW not ready: C ← BruteForce_SQL(... )  // Portable fallback
 
-3. EARLY PRUNING
-   C' ← { c ∈ C : ρ(c,q) > 0.6 }
-   If C' = ∅: C' ← top-5(C) by ρ
+3. RELEVANCE PRUNING
+   C' ← { c ∈ C : ρ(c,q) ≥ configured_floor }
+   If C' = ∅: C' ← top-max_candidates(C) by ρ
 
 4. INITIAL SCORING
    For each c ∈ C':
       c.score ← ρ(c) × δ_sigmoid(c) × η_recency(c) × q(c) × β(c)
 
-5. GREEDY SELECTION with dynamic renormalization
-   S ← ∅, used ← 0
-   PQ ← MaxHeap(C')
+5. GREEDY SELECTION with current marginal scores
+   S ← ∅, used ← 0, remaining ← C'
 
-   While PQ ≠ ∅ and used < B:
-      c ← Pop(PQ)
-      c.σ ← max_{s∈S} sim(c, s)
-      c.χ ← causalRelationFactor(c, S)  // preserve reliable causal neighbours
-      c.τ ← 1.2 if |time(c) − time(S)| < 2h else 1.0
-      adjusted ← c.score × (1−c.σ) × c.χ × c.τ
+   While remaining ≠ ∅ and used < B:
+      Recompute each candidate's score against S:
+        overlap ← max cosine with S
+        causal ← confirmed relation factor against S
+        session ← current/previous session factor
+        diversity ← newly covered subject factor
+      c ← highest current score (UUID breaks ties)
+      mode, body, cost ← first representation that fits B − used
+      If no representation fits: remove c from remaining; continue
+      Add c and body to S; used ← used + whitespace-unit count(body)
+      Remove c from remaining
 
-      If PQ[0].score × 0.8 > adjusted:
-         Push(PQ, c) with adjusted score; continue
-
-      mode ← ChooseMode(c, B − used)
-      cost ← Cost(c, mode)
-      If used + cost > B: Downgrade(mode); Recalculate; skip if still over
-
-      S ← S ∪ {c}, used ← used + cost
-
-6. RETURN S sorted by descending score
+6. RETURN S in greedy selection order
 ```
+
+Queries with fewer than five whitespace-delimited words use 80% of the selected
+budget as their effective limit. `B` counts whitespace-delimited units in rendered memory bodies, excluding
+transport framing. It is a deterministic approximation, not a model-tokenizer
+count. The greedy heuristic does not guarantee a global optimum.
 
 ### Adaptive Render Modes
 
@@ -704,8 +704,7 @@ We decided to migrate to PostgreSQL for v2...
 ### config.yaml
 
 ```yaml
-system:
-  version: "0.8.4"
+# system.version is set from the core build version at runtime.
 
 storage:
   path: ".mira"
@@ -786,7 +785,7 @@ agent_memory:
 
 mcp:
   name: "mira"
-  version: "0.8.4"
+  # mcp.version is set from the core build version at runtime.
   transport: "stdio"   # "stdio", "sse", or stateless "http" at /mcp
   address: "localhost:3001"
   auth_token: ""         # required for HTTP when address is not loopback
@@ -862,7 +861,7 @@ Choose the right memory type based on what you're storing:
 |------|-------------|
 | `mira_store` | Store a memory with T0/T1/T2 extraction |
 | `mira_ingest` | Extract history memories from structured conversation messages |
-| `mira_recall` | Retrieve optimal context within a token budget |
+| `mira_recall` | Retrieve a heuristically selected context within a bounded rendered-body budget |
 | `mira_load` | Load the full verbatim by UUID |
 | `mira_causal_chain` | Trace causal chain from a memory |
 | `mira_status` | System statistics and health |
@@ -1077,7 +1076,7 @@ See [docs/API_REFERENCES.md](docs/API_REFERENCES.md) for full request/response s
 | Store T0, T1, T2 | O(1) | Atomic insertion |
 | Vector search | Approximate nearest-neighbor search | HNSW ANN; latency depends on index, data, and host |
 | CBA scoring | O(n²) practical greedy selection | n = candidates |
-| Greedy allocation | O(n²) | With dynamic renormalization |
+| Greedy allocation | O(n²) | Recomputes marginal scores after each selection |
 | Causal graph BFS | O(V+E) | V = nodes, E = edges |
 
 ### Benchmarking

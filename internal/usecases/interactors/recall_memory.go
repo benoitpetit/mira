@@ -2,10 +2,10 @@
 package interactors
 
 import (
-	"container/heap"
 	"container/list"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -20,6 +20,10 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 )
+
+// ErrInvalidRecallBudget is returned when a caller supplies a budget outside
+// the supported inclusive range [0, MaxRecallBudget].
+var ErrInvalidRecallBudget = errors.New("invalid recall budget")
 
 // RecallMemoryInput contains the input for recalling memories
 type RecallMemoryInput struct {
@@ -39,31 +43,6 @@ type RecallMemoryOutput struct {
 	// transport and caller-added framing are excluded.
 	TotalTokens int     `json:"total_tokens"`
 	BudgetUsed  float64 `json:"budget_used"`
-}
-
-// candidateHeap is a max-heap for O(log n) extraction instead of O(n) linear scan.
-// Implements heap.Interface for use with the standard library container/heap package.
-type candidateHeap struct {
-	candidates []*entities.Candidate
-}
-
-func (h candidateHeap) Len() int { return len(h.candidates) }
-func (h candidateHeap) Less(i, j int) bool {
-	left, right := h.candidates[i], h.candidates[j]
-	if left.Score == right.Score {
-		return left.ID().String() < right.ID().String()
-	}
-	return left.Score > right.Score
-}
-func (h candidateHeap) Swap(i, j int) {
-	h.candidates[i], h.candidates[j] = h.candidates[j], h.candidates[i]
-}
-func (h *candidateHeap) Push(x any) { h.candidates = append(h.candidates, x.(*entities.Candidate)) }
-func (h *candidateHeap) Pop() any {
-	n := len(h.candidates)
-	c := h.candidates[n-1]
-	h.candidates = h.candidates[:n-1]
-	return c
 }
 
 // embeddingCache is an LRU cache to avoid re-computations (thread-safe)
@@ -342,6 +321,12 @@ func NewRecallMemory(
 // Execute performs context budget allocation
 func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*RecallMemoryOutput, error) {
 	start := time.Now()
+	if input.Budget < 0 || input.Budget > valueobjects.MaxRecallBudget {
+		return nil, fmt.Errorf("%w: must be between 0 and %d", ErrInvalidRecallBudget, valueobjects.MaxRecallBudget)
+	}
+	if uc.defaultBudget <= 0 || uc.defaultBudget > valueobjects.MaxRecallBudget {
+		return nil, fmt.Errorf("%w: configured default must be between 1 and %d", ErrInvalidRecallBudget, valueobjects.MaxRecallBudget)
+	}
 
 	uc.cleanupSessionCache()
 	if uc.sessionCacheStore != nil {
@@ -351,7 +336,7 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 	}
 
 	budget := input.Budget
-	if budget <= 0 {
+	if budget == 0 {
 		budget = uc.defaultBudget
 	}
 
@@ -359,11 +344,6 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 	queryTokens := len(strings.Fields(input.Query))
 	if queryTokens < 5 {
 		budget = int(float64(budget) * 0.8)
-	} else if queryTokens > 50 {
-		budget = int(float64(budget) * 1.2)
-	}
-	if budget < 32 {
-		budget = 32
 	}
 
 	// 1. Get query embedding with cache
@@ -420,7 +400,7 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 	// be selected using the actual query score, not an unscored density proxy.
 	tagBoostIDs := uc.getTagBoostIDs(ctx, input.Query)
 	scored := uc.scoreCandidates(candidates, queryVec, tagBoostIDs)
-	scored = earlyPruneCandidates(scored, uc.earlyPruningThreshold)
+	scored = earlyPruneCandidates(scored, uc.earlyPruningThreshold, uc.maxCandidates)
 	if uc.searchTimeClusteringEnabled {
 		scored = selectClusterRepresentatives(clusterCandidates(scored, uc.searchTimeClusteringThreshold))
 	}
@@ -436,7 +416,7 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 			broadCandidates = filterCandidatesValidAt(broadCandidates, time.Now())
 			broadCandidates = filterCandidatesByKind(broadCandidates, input.Kind)
 			broadCandidates = uc.scoreCandidates(broadCandidates, queryVec, tagBoostIDs)
-			broadCandidates = earlyPruneCandidates(broadCandidates, 0.15)
+			broadCandidates = earlyPruneCandidates(broadCandidates, 0.15, uc.maxCandidates)
 			if uc.searchTimeClusteringEnabled {
 				broadCandidates = selectClusterRepresentatives(clusterCandidates(broadCandidates, uc.searchTimeClusteringThreshold))
 			}
@@ -475,7 +455,7 @@ func (uc *RecallMemory) Execute(ctx context.Context, input RecallMemoryInput) (*
 			fbCandidates = filterCandidatesValidAt(fbCandidates, time.Now())
 			fbCandidates = filterCandidatesByKind(fbCandidates, input.Kind)
 			fbCandidates = uc.scoreCandidates(fbCandidates, queryVec, tagBoostIDs)
-			fbCandidates = earlyPruneCandidates(fbCandidates, uc.earlyPruningThreshold)
+			fbCandidates = earlyPruneCandidates(fbCandidates, uc.earlyPruningThreshold, uc.maxCandidates)
 			if uc.searchTimeClusteringEnabled {
 				fbCandidates = selectClusterRepresentatives(clusterCandidates(fbCandidates, uc.searchTimeClusteringThreshold))
 			}
@@ -904,36 +884,37 @@ func (uc *RecallMemory) pruneCandidatesWithThreshold(candidates []*entities.Cand
 		}
 	}
 
-	if len(pruned) == 0 && len(candidates) > 0 {
-		// Fallback: keep top 5
-		sort.Slice(candidates, func(i, j int) bool {
-			left, right := candidatePruneScore(candidates[i]), candidatePruneScore(candidates[j])
+	if len(pruned) == 0 && len(candidates) > 0 && uc.maxCandidates > 0 {
+		// If all composite scores are below the adaptive threshold, preserve a
+		// deterministic, bounded fallback using the same score scale.
+		fallback := make([]*entities.Candidate, 0, len(candidates))
+		for _, candidate := range candidates {
+			if candidate != nil {
+				fallback = append(fallback, candidate)
+			}
+		}
+		sort.Slice(fallback, func(i, j int) bool {
+			left, right := candidatePruneScore(fallback[i]), candidatePruneScore(fallback[j])
 			if left == right {
-				return candidates[i].ID().String() < candidates[j].ID().String()
+				return fallback[i].ID().String() < fallback[j].ID().String()
 			}
 			return left > right
 		})
-		topN := 5
-		if len(candidates) < topN {
-			topN = len(candidates)
+		if len(fallback) > uc.maxCandidates {
+			fallback = fallback[:uc.maxCandidates]
 		}
-		pruned = candidates[:topN]
+		pruned = fallback
 	}
 
 	return pruned
 }
 
-// candidatePruneScore keeps thresholding aligned with the score used by the
-// allocator. Test doubles that only set Relevance continue to work, while
-// production candidates use the density- and recency-aware Score.
+// candidatePruneScore returns the composite score used by adaptive pruning.
 func candidatePruneScore(candidate *entities.Candidate) float64 {
 	if candidate == nil {
 		return 0
 	}
-	if candidate.Score > 0 {
-		return candidate.Score
-	}
-	return candidate.Relevance
+	return candidate.Score
 }
 
 func (uc *RecallMemory) applyReranker(ctx context.Context, query string, candidates []*entities.Candidate) []*entities.Candidate {
@@ -985,22 +966,29 @@ func (uc *RecallMemory) applyReranker(ctx context.Context, query string, candida
 }
 
 func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities.Candidate, budget int, sessionID *string) []*valueobjects.SelectedMemory {
-	if len(candidates) == 0 {
+	remaining := make([]*entities.Candidate, 0, len(candidates))
+	seenIDs := make(map[uuid.UUID]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		if candidate == nil || candidate.Memory == nil || candidate.Verbatim == nil || candidate.LifecycleFactor == 0 {
+			continue
+		}
+		if _, exists := seenIDs[candidate.ID()]; exists {
+			continue
+		}
+		seenIDs[candidate.ID()] = struct{}{}
+		remaining = append(remaining, candidate)
+	}
+	if len(remaining) == 0 || budget <= 0 {
 		return nil
 	}
 
-	// Copy candidates for heap
-	h := &candidateHeap{candidates: make([]*entities.Candidate, len(candidates))}
-	copy(h.candidates, candidates)
-
 	var selected []*valueobjects.SelectedMemory
-	tokensUsed := 0
-	selectedEmbeddings := make([][]float32, 0)
+	var selectedEmbeddings [][]float32
+	var selectedTimes []time.Time
 	selectedIDs := make(map[uuid.UUID]bool)
-	selectedTimes := make([]time.Time, 0)
 	coveredSubjects := make(map[string]bool)
 
-	// Retrieve session memory IDs for multi-turn boost
+	// Retrieve session memory IDs for multi-turn boost.
 	var sessionMemoryIDs map[uuid.UUID]bool
 	if sessionID != nil && *sessionID != "" {
 		if uc.sessionCacheStore != nil {
@@ -1012,164 +1000,159 @@ func (uc *RecallMemory) selectGreedy(ctx context.Context, candidates []*entities
 			}
 		}
 		uc.sessionCacheMu.RLock()
-		if entry, ok := uc.sessionCache[*sessionID]; ok {
-			if time.Now().Before(entry.expires) {
-				if sessionMemoryIDs == nil {
-					sessionMemoryIDs = make(map[uuid.UUID]bool, len(entry.ids))
-				}
-				for _, id := range entry.ids {
-					sessionMemoryIDs[id] = true
-				}
+		if entry, ok := uc.sessionCache[*sessionID]; ok && time.Now().Before(entry.expires) {
+			if sessionMemoryIDs == nil {
+				sessionMemoryIDs = make(map[uuid.UUID]bool, len(entry.ids))
+			}
+			for _, id := range entry.ids {
+				sessionMemoryIDs[id] = true
 			}
 		}
 		uc.sessionCacheMu.RUnlock()
 	}
 
-	// Pre-compute adaptive threshold
-	greedyThresholdScores := make([]float64, 0, len(candidates))
-	for _, c := range candidates {
-		greedyThresholdScores = append(greedyThresholdScores, candidatePruneScore(c))
-	}
-	greedyThreshold := uc.adaptiveThreshold(greedyThresholdScores)
-
-	// needsScore tracks candidates whose overlap/causal/session scores have not yet
-	// been lazily computed against the current selected set. Using an explicit set
-	// avoids the previous sentinel bug: MaxOverlap == 0 is ambiguous because a
-	// candidate with no overlap against selected items also has MaxOverlap == 0,
-	// causing an infinite push-pop loop when selected is empty.
-	needsScore := make(map[uuid.UUID]bool, len(candidates))
-
-	// Initialize scores for all candidates
-	for _, c := range h.candidates {
-		initialScore := c.Relevance * c.Density * c.Recency * c.ExtractionConfidence * c.ValidationFreshness * c.LifecycleFactor * c.BeliefCalibration
-		if uc.sessionMemoryBoost > 0 && sessionMemoryIDs != nil && sessionMemoryIDs[c.ID()] {
-			initialScore *= uc.sessionMemoryBoost
+	// Load causal edges once when the adapter supports batching. An adapter error
+	// is best-effort: it disables causal adjustments for this selection pass.
+	causalRelations := make(map[string]valueobjects.RelationType)
+	batchRelationReader, hasBatchReader := uc.causalGraph.(ports.CausalRelationBatchReader)
+	if hasBatchReader {
+		ids := make([]uuid.UUID, 0, len(remaining))
+		for _, candidate := range remaining {
+			ids = append(ids, candidate.ID())
 		}
-		maxCausalBoost := 1.0 + clampRecallScore(uc.causalPenaltyAlpha)
-		maxSessionBoost := math.Max(1.0, math.Min(1.0+uc.sessionBoostBeta, uc.sessionBoostMax))
-		maxDiversityBoost := 1.0 + math.Max(0, uc.diversityBoostAlpha)
-		maxPossibleScore := clampRecallScore(initialScore * maxCausalBoost * maxSessionBoost * maxDiversityBoost)
-		if maxPossibleScore < greedyThreshold {
-			c.Score = maxPossibleScore
-			c.MaxOverlap = 0
-			c.CausalPenalty = 1.0
-			c.SessionBoost = 1.0
-			// Pre-scored: does not need lazy evaluation
+		edges, err := batchRelationReader.GetRelationsBetween(ctx, ids)
+		if err != nil {
+			if uc.logger != nil {
+				uc.logger.Warn("batch causal relation read failed; continuing without causal scoring", "error", err)
+			}
 		} else {
-			c.Score = initialScore
-			needsScore[c.ID()] = true // Needs overlap/causal/session scoring on first pop
+			type relationChoice struct {
+				relation   valueobjects.RelationType
+				confidence float64
+			}
+			choices := make(map[string]relationChoice)
+			for _, edge := range edges {
+				if edge == nil || (edge.Status != "" && edge.Status != "confirmed") {
+					continue
+				}
+				key := unorderedCandidatePair(edge.FromID, edge.ToID)
+				current, exists := choices[key]
+				if !exists || edge.Confidence > current.confidence ||
+					(edge.Confidence == current.confidence && string(edge.Relation) < string(current.relation)) {
+					choices[key] = relationChoice{relation: edge.Relation, confidence: edge.Confidence}
+				}
+			}
+			for key, choice := range choices {
+				causalRelations[key] = choice.relation
+			}
 		}
 	}
-	heap.Init(h)
+	legacyRelationReader, hasLegacyReader := uc.causalGraph.(ports.CausalRelationReader)
 
-	// A header is the smallest useful rendering unit. Keep the established
-	// minimum reserve so tiny budgets do not return context that cannot be
-	// meaningfully consumed by the caller.
-	for h.Len() > 0 && budget-tokensUsed >= 50 {
-		// Extract best from heap (O(log n))
-		c := heap.Pop(h).(*entities.Candidate)
-		if c.LifecycleFactor == 0 {
-			continue
-		}
-
-		// Lazily compute overlap and update scores on first pop.
-		// We use needsScore instead of (MaxOverlap == 0 && Score > 0) because
-		// MaxOverlap is genuinely 0 when there are no selected items yet, which
-		// caused an infinite re-push loop under the old sentinel approach.
-		if needsScore[c.ID()] {
-			delete(needsScore, c.ID())
-			// Overlap with selected items
+	var tokensUsed int
+	for len(remaining) > 0 && budget-tokensUsed >= 50 {
+		// Recompute every remaining candidate against the complete current
+		// selection before choosing the next marginal result.
+		for _, candidate := range remaining {
 			maxOverlap := 0.0
-			for i, sel := range selected {
-				selID := sel.CandidateID
+			for i, selectedMemory := range selected {
 				var overlap float64
 				if uc.overlapCache != nil {
-					if cached, ok := uc.overlapCache.Get(ctx, c.ID(), selID); ok {
+					if cached, ok := uc.overlapCache.Get(ctx, candidate.ID(), selectedMemory.CandidateID); ok {
 						overlap = cached
 					} else {
-						overlap = util.CosineSimilarity(c.Embedding, selectedEmbeddings[i])
-						uc.overlapCache.Set(ctx, c.ID(), selID, overlap)
+						overlap = util.CosineSimilarity(candidate.Embedding, selectedEmbeddings[i])
+						uc.overlapCache.Set(ctx, candidate.ID(), selectedMemory.CandidateID, overlap)
 					}
 				} else {
-					overlap = util.CosineSimilarity(c.Embedding, selectedEmbeddings[i])
+					overlap = util.CosineSimilarity(candidate.Embedding, selectedEmbeddings[i])
 				}
 				if overlap > maxOverlap {
 					maxOverlap = overlap
 				}
 			}
-			c.MaxOverlap = maxOverlap
+			candidate.MaxOverlap = maxOverlap
 
-			// Causal neighbors are retained as context. Reliable relation types
-			// adjust the score instead of applying one blanket penalty.
 			causalFactor := 1.0
-			if reader, ok := uc.causalGraph.(ports.CausalRelationReader); ok {
-				for _, sel := range selected {
-					if relation, found := reader.RelationBetween(ctx, sel.CandidateID, c.ID()); found {
+			for _, selectedMemory := range selected {
+				if hasBatchReader {
+					if relation, found := causalRelations[unorderedCandidatePair(candidate.ID(), selectedMemory.CandidateID)]; found {
+						causalFactor = math.Max(causalFactor, causalRelationFactor(relation, uc.causalPenaltyAlpha))
+					}
+				} else if hasLegacyReader {
+					if relation, found := legacyRelationReader.RelationBetween(ctx, selectedMemory.CandidateID, candidate.ID()); found {
 						causalFactor = math.Max(causalFactor, causalRelationFactor(relation, uc.causalPenaltyAlpha))
 					}
 				}
 			}
-			c.CausalPenalty = causalFactor
+			candidate.CausalPenalty = causalFactor
 
-			// Session boost
-			sessionWindow := float64(uc.sessionWindowSeconds)
 			sessionBoost := 1.0
-			for _, t := range selectedTimes {
-				if math.Abs(c.Verbatim.CreatedAt.Sub(t).Seconds()) < sessionWindow {
+			for _, selectedTime := range selectedTimes {
+				if math.Abs(candidate.Verbatim.CreatedAt.Sub(selectedTime).Seconds()) < float64(uc.sessionWindowSeconds) {
 					sessionBoost = math.Min(1.0+uc.sessionBoostBeta, uc.sessionBoostMax)
 					break
 				}
 			}
-			c.SessionBoost = sessionBoost
+			candidate.SessionBoost = sessionBoost
 
-			// Diversity boost
 			diversityBoost := 1.0
-			if c.Memory != nil && len(c.Memory.Subjects) > 0 {
+			if candidate.Memory != nil && len(candidate.Memory.Subjects) > 0 {
 				newSubjects := 0
-				for _, s := range c.Memory.Subjects {
-					if !coveredSubjects[strings.ToLower(s)] {
+				for _, subject := range candidate.Memory.Subjects {
+					if !coveredSubjects[strings.ToLower(subject)] {
 						newSubjects++
 					}
 				}
-				diversityBoost = 1.0 + uc.diversityBoostAlpha*float64(newSubjects)/float64(len(c.Memory.Subjects))
+				diversityBoost += uc.diversityBoostAlpha * float64(newSubjects) / float64(len(candidate.Memory.Subjects))
 			}
 
-			initialScore := c.Relevance * c.Density * c.Recency * c.ExtractionConfidence * c.ValidationFreshness * c.LifecycleFactor * c.BeliefCalibration
-			if uc.sessionMemoryBoost > 0 && sessionMemoryIDs != nil && sessionMemoryIDs[c.ID()] {
-				initialScore *= uc.sessionMemoryBoost
+			baseScore := candidate.Relevance * candidate.Density * candidate.Recency * candidate.ExtractionConfidence * candidate.ValidationFreshness * candidate.LifecycleFactor * candidate.BeliefCalibration
+			if uc.sessionMemoryBoost > 0 && sessionMemoryIDs != nil && sessionMemoryIDs[candidate.ID()] {
+				baseScore *= uc.sessionMemoryBoost
 			}
-			c.Score = clampRecallScore(initialScore * (1.0 - c.MaxOverlap) * c.CausalPenalty * c.SessionBoost * diversityBoost)
+			candidate.Score = clampRecallScore(baseScore * (1.0 - candidate.MaxOverlap) * candidate.CausalPenalty * candidate.SessionBoost * diversityBoost)
+		}
 
-			// Push back with updated score
-			heap.Push(h, c)
+		sort.Slice(remaining, func(i, j int) bool {
+			if remaining[i].Score == remaining[j].Score {
+				return remaining[i].ID().String() < remaining[j].ID().String()
+			}
+			return remaining[i].Score > remaining[j].Score
+		})
+		candidate := remaining[0]
+		remaining = remaining[1:]
+		if selectedIDs[candidate.ID()] {
 			continue
 		}
 
-		if selectedIDs[c.ID()] {
-			continue
-		}
-
-		// Determine render mode
 		remainingBudget := budget - tokensUsed
-		mode, rendered, tokenCost, fits := uc.fitRenderedMode(c, uc.determineRenderMode(remainingBudget), remainingBudget)
+		mode, rendered, tokenCost, fits := uc.fitRenderedMode(candidate, uc.determineRenderMode(remainingBudget), remainingBudget)
 		if !fits {
+			// This item is removed; the next iteration recomputes the best score
+			// among everything that can still fit.
 			continue
 		}
 
-		sel := valueobjects.NewSelectedMemory(c.ID(), c.Verbatim.ID, mode, tokenCost, rendered, c.Score).WithSources(c.RetrievalSources)
-		selected = append(selected, sel)
-		selectedEmbeddings = append(selectedEmbeddings, c.Embedding)
-		selectedIDs[c.ID()] = true
-		selectedTimes = append(selectedTimes, c.Verbatim.CreatedAt)
-		if c.Memory != nil {
-			for _, s := range c.Memory.Subjects {
-				coveredSubjects[strings.ToLower(s)] = true
-			}
+		selected = append(selected, valueobjects.NewSelectedMemory(candidate.ID(), candidate.Verbatim.ID, mode, tokenCost, rendered, candidate.Score).WithSources(candidate.RetrievalSources))
+		selectedEmbeddings = append(selectedEmbeddings, candidate.Embedding)
+		selectedIDs[candidate.ID()] = true
+		selectedTimes = append(selectedTimes, candidate.Verbatim.CreatedAt)
+		for _, subject := range candidate.Memory.Subjects {
+			coveredSubjects[strings.ToLower(subject)] = true
 		}
 		tokensUsed += tokenCost
 	}
 
 	return selected
+}
+
+func unorderedCandidatePair(first, second uuid.UUID) string {
+	left, right := first.String(), second.String()
+	if left > right {
+		left, right = right, left
+	}
+	return left + ":" + right
 }
 
 func (uc *RecallMemory) determineRenderMode(remainingBudget int) valueobjects.RenderMode {

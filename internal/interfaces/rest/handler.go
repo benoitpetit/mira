@@ -447,6 +447,10 @@ func (h *Handler) handleRecall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
+	if body.Budget < 0 || body.Budget > valueobjects.MaxRecallBudget {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("budget must be between 0 and %d", valueobjects.MaxRecallBudget))
+		return
+	}
 	if body.Query == "" {
 		writeError(w, http.StatusUnprocessableEntity, "query is required")
 		return
@@ -480,6 +484,10 @@ func (h *Handler) handleRecall(w http.ResponseWriter, r *http.Request) {
 		SessionID:     body.SessionID,
 	})
 	if err != nil {
+		if errors.Is(err, interactors.ErrInvalidRecallBudget) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

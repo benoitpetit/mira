@@ -4,8 +4,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/benoitpetit/mira/internal/usecases/ports"
 	"github.com/google/uuid"
 )
+
+var _ ports.CausalRelationBatchReader = (*PostgreSQLRepository)(nil)
 
 func TestPostgresPlaceholders(t *testing.T) {
 	if got, want := postgresPlaceholders(3, 3), "$3, $4, $5"; got != want {

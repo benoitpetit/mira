@@ -5,6 +5,7 @@ import (
 
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
+	"github.com/google/uuid"
 )
 
 func TestClusterCandidates(t *testing.T) {
@@ -44,12 +45,15 @@ func TestSelectClusterRepresentatives(t *testing.T) {
 	c1 := entities.NewCandidate(fp1, v1, []float32{1, 0, 0})
 	c1.Relevance = 0.5
 	c1.Density = 0.5
+	c1.Score = 0.25
 	c2 := entities.NewCandidate(fp2, v2, []float32{1, 0, 0})
 	c2.Relevance = 0.9
 	c2.Density = 0.9
+	c2.Score = 0.81
 	c3 := entities.NewCandidate(fp3, v3, []float32{0, 1, 0})
 	c3.Relevance = 0.6
 	c3.Density = 0.6
+	c3.Score = 0.36
 
 	clusters := [][]*entities.Candidate{
 		{c1, c2},
@@ -93,30 +97,37 @@ func TestClusterCandidatesAvoidsTransitiveChains(t *testing.T) {
 	}
 }
 
-func TestEarlyPruneCandidatesHonorsConfiguredThreshold(t *testing.T) {
-	v1 := entities.NewVerbatim("below", "w", nil)
-	v2 := entities.NewVerbatim("above", "w", nil)
-	c1 := entities.NewCandidate(&entities.Fingerprint{ID: v1.ID}, v1, []float32{1, 0})
-	c2 := entities.NewCandidate(&entities.Fingerprint{ID: v2.ID}, v2, []float32{0, 1})
-	c1.Relevance = .40
-	c2.Relevance = .80
+func TestEarlyPruneCandidatesUsesRelevanceFloor(t *testing.T) {
+	low := &entities.Candidate{Memory: &entities.Fingerprint{ID: uuid.MustParse("11111111-1111-1111-1111-111111111111")}, Relevance: .2, Score: .99}
+	high := &entities.Candidate{Memory: &entities.Fingerprint{ID: uuid.MustParse("22222222-2222-2222-2222-222222222222")}, Relevance: .7, Score: 0}
 
-	filtered := earlyPruneCandidates([]*entities.Candidate{c1, c2}, .6)
-	if len(filtered) != 1 || filtered[0].ID() != v2.ID {
-		t.Fatalf("expected threshold to remove low-relevance candidate, got %+v", filtered)
+	filtered := earlyPruneCandidates([]*entities.Candidate{low, high}, .6, 5)
+	if len(filtered) != 1 || filtered[0] != high {
+		t.Fatalf("relevance floor should keep the zero-score relevant candidate only, got %+v", filtered)
 	}
 }
 
-func TestEarlyPruneCandidatesUsesCompositeScore(t *testing.T) {
-	v1 := entities.NewVerbatim("high relevance but low quality", "w", nil)
-	v2 := entities.NewVerbatim("lower relevance but trusted", "w", nil)
-	c1 := entities.NewCandidate(&entities.Fingerprint{ID: v1.ID}, v1, []float32{1, 0})
-	c2 := entities.NewCandidate(&entities.Fingerprint{ID: v2.ID}, v2, []float32{0, 1})
-	c1.Relevance, c1.Score = .95, .20
-	c2.Relevance, c2.Score = .70, .80
+func TestEarlyPruneCandidatesFallbackUsesLimit(t *testing.T) {
+	makeCandidate := func(id string, relevance float64) *entities.Candidate {
+		return &entities.Candidate{Memory: &entities.Fingerprint{ID: uuid.MustParse(id)}, Relevance: relevance}
+	}
+	third := makeCandidate("33333333-3333-3333-3333-333333333333", .8)
+	tiedHigh := makeCandidate("22222222-2222-2222-2222-222222222222", .9)
+	lowestID := makeCandidate("11111111-1111-1111-1111-111111111111", .9)
 
-	filtered := earlyPruneCandidates([]*entities.Candidate{c1, c2}, .6)
-	if len(filtered) != 1 || filtered[0].ID() != v2.ID {
-		t.Fatalf("expected composite score to remove low-quality candidate, got %+v", filtered)
+	got := earlyPruneCandidates([]*entities.Candidate{third, tiedHigh, nil, lowestID}, .95, 2)
+	if len(got) != 2 || got[0] != lowestID || got[1] != tiedHigh {
+		t.Fatalf("fallback should keep the two highest relevance candidates, tied by UUID; got %+v", got)
+	}
+}
+
+func TestClusterRepresentativeUsesCompositeScoreForZeroScore(t *testing.T) {
+	zero := &entities.Candidate{Memory: &entities.Fingerprint{ID: uuid.MustParse("00000000-0000-0000-0000-000000000001")}, Relevance: 1, Density: 1}
+	bestHighID := &entities.Candidate{Memory: &entities.Fingerprint{ID: uuid.MustParse("33333333-3333-3333-3333-333333333333")}, Relevance: .4, Density: .2, Score: .5}
+	bestLowID := &entities.Candidate{Memory: &entities.Fingerprint{ID: uuid.MustParse("22222222-2222-2222-2222-222222222222")}, Relevance: .3, Density: .1, Score: .5}
+
+	representatives := selectClusterRepresentatives([][]*entities.Candidate{{zero, bestHighID, bestLowID}})
+	if len(representatives) != 1 || representatives[0] != bestLowID {
+		t.Fatalf("representative should use composite score and break ties by UUID, got %+v", representatives)
 	}
 }

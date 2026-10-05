@@ -15,6 +15,7 @@ import (
 	_ "github.com/benoitpetit/go-sqlcipher/v4"
 	"github.com/benoitpetit/mira/internal/domain/entities"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
+	"github.com/benoitpetit/mira/internal/usecases/ports"
 	"github.com/benoitpetit/mira/internal/util"
 	"github.com/google/uuid"
 )
@@ -613,6 +614,78 @@ func (r *SQLiteRepository) RelationBetween(ctx context.Context, fromID, toID uui
 		return "", false
 	}
 	return valueobjects.RelationType(relation), true
+}
+
+// GetRelationsBetween returns confirmed directed edges where both endpoints
+// are in candidateIDs. The ID set is stably deduplicated and chunked on both
+// sides so cross-chunk relations are not lost and SQLite bind limits are kept.
+func (r *SQLiteRepository) GetRelationsBetween(ctx context.Context, candidateIDs []uuid.UUID) ([]*entities.CausalEdge, error) {
+	ids := stableUniqueUUIDs(candidateIDs)
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var edges []*entities.CausalEdge
+	for fromStart := 0; fromStart < len(ids); fromStart += causalRelationIDBatchSize {
+		fromEnd := min(fromStart+causalRelationIDBatchSize, len(ids))
+		fromIDs := ids[fromStart:fromEnd]
+		for toStart := 0; toStart < len(ids); toStart += causalRelationIDBatchSize {
+			toEnd := min(toStart+causalRelationIDBatchSize, len(ids))
+			toIDs := ids[toStart:toEnd]
+			query := `SELECT from_id, to_id, relation, weight, detected_at, confidence, status, evidence, detector
+				FROM causal_edges
+				WHERE COALESCE(status, 'confirmed') = 'confirmed'
+				AND from_id IN (` + sqlitePlaceholders(len(fromIDs)) + `)
+				AND to_id IN (` + sqlitePlaceholders(len(toIDs)) + `)
+				ORDER BY from_id, to_id, confidence DESC, relation ASC`
+			args := make([]interface{}, 0, len(fromIDs)+len(toIDs))
+			for _, id := range fromIDs {
+				args = append(args, id[:])
+			}
+			for _, id := range toIDs {
+				args = append(args, id[:])
+			}
+			rows, err := r.db.QueryContext(ctx, query, args...)
+			if err != nil {
+				return nil, fmt.Errorf("query causal relations: %w", err)
+			}
+			for rows.Next() {
+				var fromBytes, toBytes []byte
+				var relation, status, evidence, detector string
+				var weight, detectedAt, confidence float64
+				if err := rows.Scan(&fromBytes, &toBytes, &relation, &weight, &detectedAt, &confidence, &status, &evidence, &detector); err != nil {
+					_ = rows.Close()
+					return nil, fmt.Errorf("scan causal relation: %w", err)
+				}
+				fromID, err := uuid.FromBytes(fromBytes)
+				if err != nil {
+					_ = rows.Close()
+					return nil, fmt.Errorf("decode causal relation from ID: %w", err)
+				}
+				toID, err := uuid.FromBytes(toBytes)
+				if err != nil {
+					_ = rows.Close()
+					return nil, fmt.Errorf("decode causal relation to ID: %w", err)
+				}
+				edges = append(edges, &entities.CausalEdge{
+					FromID: fromID, ToID: toID, Relation: valueobjects.RelationType(relation),
+					Weight: weight, DetectedAt: time.Unix(int64(detectedAt), 0), Confidence: confidence,
+					Status: status, Evidence: evidence, Detector: detector,
+				})
+			}
+			if err := rows.Err(); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("iterate causal relations: %w", err)
+			}
+			if err := rows.Close(); err != nil {
+				return nil, fmt.Errorf("close causal relation rows: %w", err)
+			}
+		}
+	}
+	return edges, nil
+}
+
+func sqlitePlaceholders(count int) string {
+	return strings.TrimSuffix(strings.Repeat("?,", count), ",")
 }
 
 // GetChain implements CausalGraphRepository
@@ -1993,3 +2066,5 @@ func (r *SQLiteRepository) ListPolicies(ctx context.Context) ([]*entities.Access
 	}
 	return policies, nil
 }
+
+var _ ports.CausalRelationBatchReader = (*SQLiteRepository)(nil)

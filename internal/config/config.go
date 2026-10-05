@@ -18,7 +18,7 @@ const (
 	TransportStdio = "stdio"
 	TransportSSE   = "sse"
 	TransportHTTP  = "http"
-	CurrentVersion = "0.8.4"
+	CurrentVersion = "0.8.5"
 )
 
 // Config represents complete configuration
@@ -567,6 +567,9 @@ func (c *Config) Validate() error {
 	// Allocator validation
 	if c.Allocator.DefaultBudget <= 0 {
 		c.Allocator.DefaultBudget = 4000
+	}
+	if c.Allocator.DefaultBudget > valueobjects.MaxRecallBudget {
+		return fmt.Errorf("allocator default budget exceeds maximum of %d", valueobjects.MaxRecallBudget)
 	}
 	if c.Allocator.MaxCandidates <= 0 {
 		c.Allocator.MaxCandidates = 100

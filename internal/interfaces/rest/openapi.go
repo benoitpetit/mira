@@ -343,6 +343,7 @@ func buildSpec() oaDocument {
 
 func buildSchemas() map[string]oaSchema {
 	defaultMinChars := 20
+	minRecallBudget, maxRecallBudget := 0, valueobjects.MaxRecallBudget
 	str := func() oaSchema { return oaSchema{Type: "string"} }
 	integer := func() oaSchema { return oaSchema{Type: "integer"} }
 	number := func() oaSchema { return oaSchema{Type: "number"} }
@@ -445,7 +446,7 @@ func buildSchemas() map[string]oaSchema {
 			Type: "object",
 			Properties: map[string]oaSchema{
 				"query":          str(),
-				"budget":         integer(),
+				"budget":         {Type: "integer", Minimum: &minRecallBudget, Maximum: &maxRecallBudget, Description: "Optional hard maximum of 100000 whitespace-delimited units in rendered memory bodies; omitted/zero uses the configured default. Queries with fewer than five whitespace-delimited words use 80% of that budget. Transport framing is excluded."},
 				"wing":           str(),
 				"room":           str(),
 				"kind":           str(),

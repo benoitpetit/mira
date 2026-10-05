@@ -564,6 +564,60 @@ func (r *PostgreSQLRepository) RelationBetween(ctx context.Context, fromID, toID
 	return valueobjects.RelationType(relation), true
 }
 
+// GetRelationsBetween returns confirmed directed edges whose two endpoints
+// are in candidateIDs. Stable de-duplication and two-sided chunking preserve
+// cross-chunk edges while bounding the generated query size.
+func (r *PostgreSQLRepository) GetRelationsBetween(ctx context.Context, candidateIDs []uuid.UUID) ([]*entities.CausalEdge, error) {
+	ids := stableUniqueUUIDs(candidateIDs)
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var edges []*entities.CausalEdge
+	for fromStart := 0; fromStart < len(ids); fromStart += causalRelationIDBatchSize {
+		fromEnd := min(fromStart+causalRelationIDBatchSize, len(ids))
+		fromIDs := ids[fromStart:fromEnd]
+		for toStart := 0; toStart < len(ids); toStart += causalRelationIDBatchSize {
+			toEnd := min(toStart+causalRelationIDBatchSize, len(ids))
+			toIDs := ids[toStart:toEnd]
+			query := `SELECT from_id, to_id, relation, weight, detected_at, confidence, status, evidence, detector
+				FROM causal_edges
+				WHERE COALESCE(status, 'confirmed') = 'confirmed'
+				AND from_id IN (` + postgresPlaceholders(1, len(fromIDs)) + `)
+				AND to_id IN (` + postgresPlaceholders(len(fromIDs)+1, len(toIDs)) + `)
+				ORDER BY from_id, to_id, confidence DESC, relation ASC`
+			args := make([]interface{}, 0, len(fromIDs)+len(toIDs))
+			for _, id := range fromIDs {
+				args = append(args, id)
+			}
+			for _, id := range toIDs {
+				args = append(args, id)
+			}
+			rows, err := r.db.QueryContext(ctx, query, args...)
+			if err != nil {
+				return nil, fmt.Errorf("query causal relations: %w", err)
+			}
+			for rows.Next() {
+				var edge entities.CausalEdge
+				var detectedAt float64
+				if err := rows.Scan(&edge.FromID, &edge.ToID, &edge.Relation, &edge.Weight, &detectedAt, &edge.Confidence, &edge.Status, &edge.Evidence, &edge.Detector); err != nil {
+					_ = rows.Close()
+					return nil, fmt.Errorf("scan causal relation: %w", err)
+				}
+				edge.DetectedAt = time.Unix(int64(detectedAt), 0)
+				edges = append(edges, &edge)
+			}
+			if err := rows.Err(); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("iterate causal relations: %w", err)
+			}
+			if err := rows.Close(); err != nil {
+				return nil, fmt.Errorf("close causal relation rows: %w", err)
+			}
+		}
+	}
+	return edges, nil
+}
+
 // GetChain implements CausalGraphRepository
 func (r *PostgreSQLRepository) GetChain(ctx context.Context, id uuid.UUID, maxDepth, maxNodes int) ([]*entities.CausalNode, bool, error) {
 	nodes, truncated, err := traverseCausalNodes(ctx, id, maxDepth, maxNodes, true, func(ctx context.Context, frontier, visited []uuid.UUID, limit int) ([]*entities.CausalNode, error) {

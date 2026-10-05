@@ -68,8 +68,12 @@ fi
 
 mkdir -p "$TMP_DIR/extracted" "$INSTALL_DIR"
 tar -xzf "$ARCHIVE" -C "$TMP_DIR/extracted"
-[ -f "$TMP_DIR/extracted/mira" ] || fail "archive does not contain the mira binary"
-install -m 0755 "$TMP_DIR/extracted/mira" "${INSTALL_DIR}/mira"
+BINARY="$TMP_DIR/extracted/mira"
+if [ ! -f "$BINARY" ]; then
+  BINARY="$TMP_DIR/extracted/mira-${OS}-${ARCH}"
+fi
+[ -f "$BINARY" ] || fail "archive does not contain the mira binary for ${OS}/${ARCH}"
+install -m 0755 "$BINARY" "${INSTALL_DIR}/mira"
 
 printf 'MIRA installed at %s/mira\n' "$INSTALL_DIR"
 case ":${PATH}:" in

@@ -130,6 +130,14 @@ func TestValidateAppliesDefaults(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsRecallDefaultAboveMaximum(t *testing.T) {
+	cfg := Default()
+	cfg.Allocator.DefaultBudget = 100001
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "allocator default budget exceeds maximum") {
+		t.Fatalf("Validate() error = %v, want default recall budget maximum error", err)
+	}
+}
+
 func TestValidateRejectsUnsafeNetworkBindings(t *testing.T) {
 	tests := []struct {
 		name string

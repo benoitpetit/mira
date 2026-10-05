@@ -27,7 +27,7 @@ Practical examples for using MIRA's MCP tools and optional REST HTTP API.
 |------|-------------|-----------|
 | `mira_store` | Store a memory with T0/T1/T2 extraction | `content` (required), `wing` (required), `room`, `type`, `kind`, `valid_from`, `valid_until` (optional RFC3339 bounds) |
 | `mira_ingest` | Extract history memories from structured conversation messages | `messages` and `wing` (required), `room`, `include_assistant`, `min_chars`, `dry_run` (optional) |
-| `mira_recall` | Retrieve optimal context with budget via multi-stage pipeline (expansion, hybrid search, clustering, reranker). Supports multi-turn session injection | `query` (required), `budget` (optional), `wing` (optional), `room` (optional), `kind` (optional), `fallback_wings` (optional), `include_global` (optional), `session_id` (optional) |
+| `mira_recall` | Retrieve a greedily allocated context within a bounded rendered-body budget via the multi-stage pipeline. Supports multi-turn session injection | `query` (required), `budget` (optional), `wing` (optional), `room` (optional), `kind` (optional), `fallback_wings` (optional), `include_global` (optional), `session_id` (optional) |
 | `mira_load` | Load full verbatim by ID | `id` (required) |
 | `mira_causal_chain` | Trace causal chain | `id` (required), `max_depth` (optional), `include_consequences` (optional) |
 | `mira_timeline` | Chronological reconstruction | `wing` (required), `room` (optional), `since` (optional), `until` (optional), `type` (optional) |
@@ -227,19 +227,19 @@ archival through `mira_archive`; MIRA does not run a background archive job.
 **Response:**
 ```
 === MIRA CONTEXT ===
-Query: What authentication method should I use for the API? | Budget: 2000
+Query: What authentication method should I use for the API? | Budget: 2000 rendered units
 Wing: auth-service
 
---- [1] VERBATIM (18 tokens) ---
+--- [1] VERBATIM (18 rendered units) ---
 The authentication service runs on port 8080 and uses JWT tokens with a 24-hour expiration.
 
---- [2] FINGERPRINT (12 tokens) ---
+--- [2] FINGERPRINT (12 rendered units) ---
 [Type: fact | Date: 2026-04-09 | Wing: auth-service]
 - Subject: authentication service
 - Configuration: port 8080, JWT tokens, 24h expiration
 → T0:550e8400-e29b-41d4-a716-446655440000
 
-=== Total: 30/2000 tokens (1.5%) ===
+=== Total: 30/2000 rendered units (1.5%) ===
 
 INSTRUCTIONS:
 - HEADER: Reference only, use mira_load(id) for full content
@@ -639,7 +639,7 @@ mira_recall(query="How should I handle payment retries?", wing="payment-service"
 ```
 MIRA System Status
 ═══════════════════════════════════════
-Version: 0.8.4
+Version: 0.8.5
 Uptime: 2h15m30s
 
 Storage:
@@ -865,7 +865,7 @@ Delete a single memory and all associated fingerprints, embeddings, and causal n
 
 ### POST /api/v1/memories/recall — Recall
 
-Retrieve an optimally budget-allocated context for a query using the full CBA pipeline
+Retrieve a greedily allocated context for a query using the full CBA pipeline
 (query expansion → hybrid search → RRF fusion → clustering → adaptive threshold → greedy selection).
 
 **Request body:**
@@ -885,7 +885,7 @@ Retrieve an optimally budget-allocated context for a query using the full CBA pi
 | Field | Required | Description |
 |-------|----------|-------------|
 | `query` | yes | Search query text |
-| `budget` | no | Token budget (default 4000) |
+| `budget` | no | Maximum of 100000 whitespace-delimited units counted in rendered memory bodies; omitted or zero uses the configured default (4000 by default). Queries with fewer than five whitespace-delimited words use 80% of the selected budget as the effective limit. Transport framing is excluded. This is an approximation, not a model-tokenizer count. Response fields `tokens` and `total_tokens` retain their names for compatibility and report these units. |
 | `wing` | no | Filter by wing |
 | `room` | no | Filter by room |
 | `fallback_wings` | no | Searched if primary wing returns no results |
@@ -899,7 +899,7 @@ Retrieve an optimally budget-allocated context for a query using the full CBA pi
   "memories": [
     {
       "id": "550e8400-...",
-      "rendered": "--- [1] FINGERPRINT (45 tokens) ---\nDecision: PostgreSQL...",
+      "rendered": "--- [1] FINGERPRINT (45 rendered units) ---\nDecision: PostgreSQL...",
       "mode": "fingerprint",
       "tokens": 45,
       "score": 0.92
@@ -1124,7 +1124,7 @@ Returns system statistics identical to the `mira_status` MCP tool.
 
 ```json
 {
-  "version": "0.8.4",
+  "version": "0.8.5",
   "uptime": "2h15m30s",
   "stats": {
     "verbatim_count": 1250,
@@ -1192,7 +1192,7 @@ curl http://localhost:9090/health
 {
   "status": "healthy",
   "timestamp": "2026-04-10T14:30:00Z",
-  "version": "0.8.4",
+  "version": "0.8.5",
   "checks": {
     "database": {"status": "pass", "message": "connected"},
     "vector_store": {"status": "pass", "message": "HNSW ready"},
@@ -1284,7 +1284,7 @@ No memories found matching query. Try:
 
 **Budget Exhausted:**
 ```
-=== Total: 4000/4000 tokens (100.0%) ===
+=== Total: 4000/4000 rendered units (100.0%) ===
 Consider increasing budget or refining query
 ```
 
@@ -1350,4 +1350,4 @@ recall:
 | `reranker.enabled` | `false` | Enable heuristic lexical reranking |
 
 *Last updated: 2026-04-30*
-*Version: 0.8.4*
+*Version: 0.8.5*

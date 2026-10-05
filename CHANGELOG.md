@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-10-05
+
+### Added
+- **Recall contracts and throughput**: enforce a shared rendered-body budget across configuration, REST, and MCP; batch causal-relation reads and add recall indexes.
+- **Official benchmark handoff**: document the validated core-to-site report and snapshot export process.
+
+### Changed
+- **CBA allocation**: recompute marginal scores against the selected set, apply the eligibility threshold consistently, and resolve score ties deterministically.
+
+### Fixed
+- **Shell installer**: accept the architecture-suffixed executable stored in Linux and macOS release archives.
+
 ## [0.8.4] - 2026-10-04
 
 ### Added
@@ -470,6 +482,7 @@ hnsw:
 
 [0.4.7]: https://github.com/benoitpetit/mira/releases/tag/v0.4.7
 [0.8.4]: https://github.com/benoitpetit/mira/releases/tag/v0.8.4
+[0.8.5]: https://github.com/benoitpetit/mira/releases/tag/v0.8.5
 [0.8.3]: https://github.com/benoitpetit/mira/releases/tag/v0.8.3
 [0.8.2]: https://github.com/benoitpetit/mira/releases/tag/v0.8.2
 [0.8.1]: https://github.com/benoitpetit/mira/releases/tag/v0.8.1
