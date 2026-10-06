@@ -126,8 +126,8 @@ func (b *Bridge) Handle(ctx context.Context, event Event) (Result, error) {
 	}
 
 	if b.shouldCapture(event) {
-		content, _ := agentinstall.RedactSecrets(event.Content)
-		if agentinstall.IsSubstantivePrompt(content, b.manifest.Capture.MinChars) {
+		content, accepted := agentinstall.PrepareCaptureContent(event.Content, b.manifest.Capture.MinChars)
+		if accepted {
 			key := captureKey(event, content, wing)
 			if b.markSeen(key) {
 				if err := b.backend.Capture(ctx, CaptureInput{
@@ -143,8 +143,8 @@ func (b *Bridge) Handle(ctx context.Context, event Event) (Result, error) {
 	}
 	if event.EventName == EventResponseComplete && event.Role == RoleAssistant && b.manifest.Policy.CaptureAssistantResponses() && b.manifest.Soul.Enabled && b.manifest.Soul.ObserveAssistant {
 		if soul, ok := b.backend.(SoulBackend); ok {
-			content, _ := agentinstall.RedactSecrets(event.Content)
-			if agentinstall.IsSubstantivePrompt(content, b.manifest.Capture.MinChars) {
+			content, accepted := agentinstall.PrepareCaptureContent(event.Content, b.manifest.Capture.MinChars)
+			if accepted {
 				if err := soul.SoulObserve(ctx, SoulObservation{AgentID: wing, Role: event.Role, Content: content, SessionID: event.SessionID, ModelID: event.Client}); err != nil {
 					result.Diagnostics = append(result.Diagnostics, "soul observation unavailable")
 				}

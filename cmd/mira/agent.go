@@ -819,7 +819,12 @@ func newAgentEventCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
+			output, err := agentbridge.RenderHookOutput(client, eventName, result)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), string(output))
+			return err
 		},
 	}
 	cmd.Flags().StringVar(&client, "client", "", "agent client name")

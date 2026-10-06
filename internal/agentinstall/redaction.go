@@ -1,6 +1,9 @@
 package agentinstall
 
-import "regexp"
+import (
+	"regexp"
+	"strings"
+)
 
 var secretRedactors = []struct {
 	re *regexp.Regexp
@@ -23,4 +26,12 @@ func RedactSecrets(input string) (string, bool) {
 		output = redactor.re.ReplaceAllString(output, redactor.to)
 	}
 	return output, output != input
+}
+
+// PrepareCaptureContent applies the single capture policy shared by all agent
+// entry points: trim transport whitespace, redact credentials, then discard
+// content below the configured usefulness threshold.
+func PrepareCaptureContent(input string, minChars int) (string, bool) {
+	content, _ := RedactSecrets(strings.TrimSpace(input))
+	return content, IsSubstantivePrompt(content, minChars)
 }

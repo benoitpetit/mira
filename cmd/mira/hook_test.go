@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/benoitpetit/mira/internal/config"
@@ -17,6 +18,16 @@ func TestPrepareHookConfigDisablesBackgroundServices(t *testing.T) {
 
 	if cfg.Metrics.Enabled || cfg.Webhooks.Enabled || cfg.API.Enabled || !cfg.AgentMemory.Enabled {
 		t.Fatal("hook configuration must disable all background services")
+	}
+}
+
+func TestRedactHookCaptureContentRemovesSecretsBeforeStorage(t *testing.T) {
+	content, ok := redactHookCaptureContent("Remember the deployment bearer sk-test-secret-1234567890 for later.", 20)
+	if !ok {
+		t.Fatal("substantive hook content was discarded")
+	}
+	if strings.Contains(content, "sk-test-secret") || !strings.Contains(content, "[REDACTED") {
+		t.Fatalf("hook capture leaked a secret: %q", content)
 	}
 }
 

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
+	"github.com/benoitpetit/mira/internal/agentinstall"
 	"github.com/benoitpetit/mira/internal/app"
 	"github.com/benoitpetit/mira/internal/config"
 	"github.com/benoitpetit/mira/internal/usecases/interactors"
@@ -138,7 +138,8 @@ func promptHookMessage(event *claudeCodeHookInput) (role, content string) {
 }
 
 func storeHookMemory(client, source, role, content, wing, room string, minChars int, sessionID, threadID string) error {
-	if strings.TrimSpace(content) == "" {
+	content, ok := redactHookCaptureContent(content, minChars)
+	if !ok {
 		return nil
 	}
 	var roomRef *string
@@ -175,6 +176,10 @@ func storeHookMemory(client, source, role, content, wing, room string, minChars 
 	defer application.Close()
 	_, err = application.StoreMemoryUC().Execute(context.Background(), input)
 	return err
+}
+
+func redactHookCaptureContent(content string, minChars int) (string, bool) {
+	return agentinstall.PrepareCaptureContent(content, minChars)
 }
 
 // prepareHookConfig keeps short-lived client hook invocations focused on memory

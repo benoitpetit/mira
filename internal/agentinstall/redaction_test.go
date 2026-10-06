@@ -1,6 +1,9 @@
 package agentinstall
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestRedactSecretsCoversCredentialShapesWithoutLeakingValues(t *testing.T) {
 	input := "api_key=sk-test-secret bearer token Bearer abc.def.ghi password: hunter2\n" +
@@ -34,5 +37,19 @@ func TestRedactSecretsCoversRawOpenAIStyleKeys(t *testing.T) {
 	output, changed := RedactSecrets(input)
 	if !changed || containsManagedBody(output, "sk-proj-1234567890abcdef1234567890abcdef") || !containsManagedBody(output, "[REDACTED_API_KEY]") {
 		t.Fatalf("raw key was not redacted: %q", output)
+	}
+}
+
+func TestPrepareCaptureContentRedactsAndFilters(t *testing.T) {
+	content, ok := PrepareCaptureContent("remember sk-1234567890abcdefghijkl this decision", 20)
+	if !ok {
+		t.Fatal("expected substantive redacted content to be accepted")
+	}
+	if strings.Contains(content, "sk-1234567890abcdefghijkl") || !strings.Contains(content, "[REDACTED_API_KEY]") {
+		t.Fatalf("expected credential to be redacted, got %q", content)
+	}
+
+	if _, ok := PrepareCaptureContent("short", 20); ok {
+		t.Fatal("expected short content to be rejected")
 	}
 }
