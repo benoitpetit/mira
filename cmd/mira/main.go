@@ -15,11 +15,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/benoitpetit/mira/internal/agentinstall"
 	"github.com/benoitpetit/mira/internal/app"
 	"github.com/benoitpetit/mira/internal/config"
 	"github.com/benoitpetit/mira/internal/domain/valueobjects"
 	"github.com/benoitpetit/mira/internal/usecases/interactors"
 	"github.com/google/uuid"
+	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -238,6 +240,61 @@ func codexMemoryHookCommand(binaryPath, miraConfigPath, wing string) string {
 
 func codexHooksConfigPath(homeDir string) string {
 	return filepath.Join(homeDir, ".codex", "hooks.json")
+}
+
+func codexMCPConfigPath(projectRoot, homeDir, scope string) string {
+	base := projectRoot
+	if scope == agentinstall.ScopeUser {
+		base = homeDir
+	}
+	return filepath.Join(base, ".codex", "config.toml")
+}
+
+func codexHooksConfigPathForScope(projectRoot, homeDir, scope string) string {
+	base := projectRoot
+	if scope == agentinstall.ScopeUser {
+		base = homeDir
+	}
+	return filepath.Join(base, ".codex", "hooks.json")
+}
+
+// configureCodexProjectMCP updates only MIRA's stdio entry in Codex's native
+// project TOML. Decoding into a generic structure retains every unrelated
+// table and server configuration when the file is rewritten.
+func configureCodexProjectMCP(path, binaryPath, miraConfigPath string, force bool) ([]byte, error) {
+	settings := make(map[string]any)
+	raw, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("setup: read Codex config %q: %w", path, err)
+	}
+	if err == nil && len(raw) > 0 {
+		if err := toml.Unmarshal(raw, &settings); err != nil {
+			return nil, fmt.Errorf("setup: Codex config %q is not valid TOML: %w", path, err)
+		}
+	}
+	servers, ok := settings["mcp_servers"].(map[string]any)
+	if !ok {
+		if _, exists := settings["mcp_servers"]; exists {
+			return nil, fmt.Errorf("setup: Codex mcp_servers in %q must be a TOML table", path)
+		}
+		servers = make(map[string]any)
+	}
+	if existing, ok := servers["mira"].(map[string]any); ok && !force {
+		command, _ := existing["command"].(string)
+		if command != "" && command != binaryPath {
+			return nil, fmt.Errorf("setup: Codex already has a different MIRA server in %q; use --force to replace it", path)
+		}
+	}
+	servers["mira"] = map[string]any{
+		"command": binaryPath,
+		"args":    []string{"--config", miraConfigPath, "server"},
+	}
+	settings["mcp_servers"] = servers
+	data, err := toml.Marshal(settings)
+	if err != nil {
+		return nil, fmt.Errorf("setup: encode Codex config: %w", err)
+	}
+	return append(data, '\n'), nil
 }
 
 // redactedSetupPreview removes common credential-shaped values from dry-run

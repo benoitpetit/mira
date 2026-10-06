@@ -12,6 +12,7 @@ import (
 
 	"github.com/benoitpetit/mira/internal/config"
 	"github.com/benoitpetit/mira/internal/usecases/interactors"
+	"github.com/pelletier/go-toml/v2"
 )
 
 func TestInitCreatesProjectLocalConfiguration(t *testing.T) {
@@ -65,6 +66,44 @@ func TestCodexSetupArgs(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("argument %d = %q, want %q", i, got[i], want[i])
 		}
+	}
+}
+
+func TestCodexProjectMCPConfigPreservesUnrelatedTables(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("[sandbox]\nmode = \"workspace-write\"\n\n[mcp_servers.other]\ncommand = \"other\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := configureCodexProjectMCP(path, "/bin/mira", "/project/.mira/config.yaml", false)
+	if err != nil {
+		t.Fatalf("configure project MCP: %v", err)
+	}
+	var settings map[string]any
+	if err := toml.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("result is not TOML: %v", err)
+	}
+	if got := settings["sandbox"].(map[string]any)["mode"]; got != "workspace-write" {
+		t.Errorf("sandbox mode = %q", got)
+	}
+	servers := settings["mcp_servers"].(map[string]any)
+	if got := servers["other"].(map[string]any)["command"]; got != "other" {
+		t.Errorf("other MCP command = %q", got)
+	}
+	if got := servers["mira"].(map[string]any)["command"]; got != "/bin/mira" {
+		t.Errorf("MIRA MCP command = %q", got)
+	}
+}
+
+func TestCodexProjectConfigPath(t *testing.T) {
+	if got, want := codexMCPConfigPath("/work/api", "/home/alice", "project"), filepath.Join("/work/api", ".codex", "config.toml"); got != want {
+		t.Errorf("project config path = %q, want %q", got, want)
+	}
+	if got, want := codexHooksConfigPathForScope("/work/api", "/home/alice", "project"), filepath.Join("/work/api", ".codex", "hooks.json"); got != want {
+		t.Errorf("project hooks path = %q, want %q", got, want)
 	}
 }
 

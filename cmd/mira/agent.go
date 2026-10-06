@@ -622,6 +622,8 @@ func resolvedAgentMCPPath(client, projectRoot, home string, options agentInstall
 		return options.ClientConfig
 	}
 	switch client {
+	case clientCodex:
+		return codexMCPConfigPath(projectRoot, home, options.Scope)
 	case agentClientCursor:
 		return cursorMCPConfigPath(options.MiraConfig)
 	case clientWindsurf:
@@ -639,7 +641,7 @@ func resolvedAgentMCPPath(client, projectRoot, home string, options agentInstall
 func resolvedAgentHookPath(client string, options agentInstallOptions, home string) string {
 	switch client {
 	case clientCodex:
-		return codexHooksConfigPath(home)
+		return codexHooksConfigPathForScope(projectRootFromMiraConfig(options.MiraConfig), home, options.Scope)
 	case clientClaudeCode:
 		scope := "project"
 		if options.Scope == agentinstall.ScopeUser {
@@ -654,6 +656,18 @@ func resolvedAgentHookPath(client string, options agentInstallOptions, home stri
 }
 
 func installAgentMCP(cmd *cobra.Command, client, projectRoot, home string, options agentInstallOptions) error {
+	if client == clientCodex && options.Scope == agentinstall.ScopeProject {
+		path := resolvedAgentMCPPath(client, projectRoot, home, options)
+		data, err := configureCodexProjectMCP(path, options.BinaryPath, options.MiraConfig, options.Force)
+		if err != nil {
+			return err
+		}
+		if options.DryRun {
+			fmt.Fprintf(cmd.OutOrStdout(), "Would write %s:\n%s", path, redactedSetupPreview(data))
+			return nil
+		}
+		return writeAgentFile(path, data, 0o600)
+	}
 	if client == clientCodex || client == clientClaudeCode {
 		var args []string
 		program := client
@@ -721,13 +735,19 @@ func installAgentHooks(cmd *cobra.Command, client, projectRoot, home string, opt
 	var err error
 	switch client {
 	case clientCodex:
-		specs := []memoryHookSpec{{event: "UserPromptSubmit", command: commandFor(agentbridge.EventPromptSubmit)}}
+		specs := []memoryHookSpec{
+			{event: "SessionStart", command: commandFor(agentbridge.EventSessionStart)},
+			{event: "UserPromptSubmit", command: commandFor(agentbridge.EventPromptSubmit)},
+		}
 		if includeAssistant {
 			specs = append(specs, memoryHookSpec{event: "Stop", command: commandFor(agentbridge.EventResponseComplete)})
 		}
 		data, err = configureMemoryHooks(path, "Codex", specs...)
 	case clientClaudeCode:
-		specs := []memoryHookSpec{{event: "UserPromptSubmit", command: commandFor(agentbridge.EventPromptSubmit)}}
+		specs := []memoryHookSpec{
+			{event: "SessionStart", command: commandFor(agentbridge.EventSessionStart)},
+			{event: "UserPromptSubmit", command: commandFor(agentbridge.EventPromptSubmit)},
+		}
 		if includeAssistant {
 			specs = append(specs, memoryHookSpec{event: "Stop", command: commandFor(agentbridge.EventResponseComplete)})
 		}

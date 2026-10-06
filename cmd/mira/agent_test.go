@@ -2,11 +2,56 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/benoitpetit/mira/internal/agentinstall"
+	"github.com/spf13/cobra"
 )
+
+func TestAgentHooksInstallSessionStartForCodexAndClaude(t *testing.T) {
+	projectRoot := t.TempDir()
+	configPath := filepath.Join(projectRoot, ".mira", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("storage: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	options := agentInstallOptions{
+		BinaryPath:   "/bin/mira",
+		MiraConfig:   configPath,
+		ManifestPath: filepath.Join(projectRoot, ".mira", "agent.yaml"),
+		Scope:        agentinstall.ScopeProject,
+		Policy:       string(agentinstall.PolicyStandard),
+	}
+	for _, client := range []string{clientCodex, clientClaudeCode} {
+		t.Run(client, func(t *testing.T) {
+			cmd := &cobra.Command{}
+			if err := installAgentHooks(cmd, client, projectRoot, t.TempDir(), options, ""); err != nil {
+				t.Fatalf("install hooks: %v", err)
+			}
+			path := resolvedAgentHookPath(client, options, t.TempDir())
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read hooks: %v", err)
+			}
+			var settings map[string]any
+			if err := json.Unmarshal(data, &settings); err != nil {
+				t.Fatal(err)
+			}
+			hooks := settings["hooks"].(map[string]any)
+			for _, event := range []string{"SessionStart", "UserPromptSubmit"} {
+				if _, ok := hooks[event]; !ok {
+					t.Errorf("missing %s hook", event)
+				}
+			}
+		})
+	}
+}
 
 func TestNormalizeAgentEventAppliesClientEventAndManifest(t *testing.T) {
 	event, err := normalizeAgentEvent(strings.NewReader(`{"role":"user","content":"Keep project memory local.","session_id":"s1"}`), "codex", "prompt-submit", "/project/.mira/agent.yaml")
