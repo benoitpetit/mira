@@ -71,6 +71,26 @@ func TestCursorRuleHasFrontMatter(t *testing.T) {
 	}
 }
 
+func TestAgentStatusReportsActualModes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	manifest := agentinstall.DefaultManifest("opencode", t.TempDir())
+	manifest.RecallMode = agentinstall.IntegrationSkillGuided
+	manifest.CaptureMode = agentinstall.IntegrationNone
+	if err := agentinstall.SaveManifest(path, manifest); err != nil {
+		t.Fatal(err)
+	}
+	cmd := newAgentStatusCmd()
+	var output bytes.Buffer
+	cmd.SetOut(&output)
+	cmd.SetArgs([]string{"--manifest", path})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "recall=skill-guided capture=none") {
+		t.Fatalf("status lacks actual modes: %s", output.String())
+	}
+}
+
 func TestAgentHooksInstallSessionStartForCodexAndClaude(t *testing.T) {
 	projectRoot := t.TempDir()
 	configPath := filepath.Join(projectRoot, ".mira", "config.yaml")

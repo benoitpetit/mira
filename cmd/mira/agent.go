@@ -81,7 +81,7 @@ func newAgentStatusCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("load agent manifest: %w", err)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "client=%s scope=%s policy=%s wing=%s\nmanifest=%s\ninjection=%s\n", manifest.Client, manifest.Scope, manifest.Policy, manifest.Wing, path, manifest.Policy.InjectionMode())
+			fmt.Fprintf(cmd.OutOrStdout(), "client=%s scope=%s policy=%s wing=%s\nmanifest=%s\nrecall=%s capture=%s\n", manifest.Client, manifest.Scope, manifest.Policy, manifest.Wing, path, manifest.RecallMode, manifest.CaptureMode)
 			return nil
 		},
 	}
@@ -115,22 +115,30 @@ func newAgentDoctorCmd() *cobra.Command {
 			if _, err := os.Stat(instructionPath); err != nil {
 				issues = append(issues, "managed instructions are missing")
 			}
-			if executable, err := os.Executable(); err != nil {
-				issues = append(issues, "local MIRA executable is unavailable")
-			} else if _, err := os.Stat(executable); err != nil {
-				issues = append(issues, "local MIRA executable is unavailable")
+			if manifest.ClientConfigPath != "" {
+				if _, err := os.Stat(manifest.ClientConfigPath); err != nil {
+					issues = append(issues, "client MCP configuration is missing")
+				}
+			}
+			if manifest.RecallMode == agentinstall.IntegrationHook || manifest.CaptureMode == agentinstall.IntegrationHook {
+				if manifest.HookConfigPath == "" {
+					issues = append(issues, "hook configuration path is missing")
+				} else if _, err := os.Stat(manifest.HookConfigPath); err != nil {
+					issues = append(issues, "client hook configuration is missing")
+				}
+			}
+			if client, ok := agentinstall.LookupClient(manifest.Client); ok && client.NativeSkill {
+				if _, err := os.Stat(agentSkillPath(manifest.Client, root, home, manifest.Scope)); err != nil {
+					issues = append(issues, "managed MIRA skill is missing")
+				}
 			}
 			if manifest.Client == clientCodex || manifest.Client == clientClaudeCode {
 				if _, err := exec.LookPath(manifest.Client); err != nil {
 					issues = append(issues, manifest.Client+" CLI is unavailable")
 				}
-			} else if manifest.Client == agentClientCursor || manifest.Client == agentClientClaudeDesktop {
-				fmt.Fprintln(cmd.OutOrStdout(), "warning: this client uses instruction-guided fallback; deterministic event interception is unavailable")
 			}
-			if manifest.ClientConfigPath != "" && manifest.Client != clientCodex && manifest.Client != clientClaudeCode {
-				if _, err := os.Stat(manifest.ClientConfigPath); err != nil {
-					issues = append(issues, "client MCP configuration is missing")
-				}
+			if manifest.RecallMode == agentinstall.IntegrationSkillGuided || manifest.CaptureMode == agentinstall.IntegrationSkillGuided {
+				fmt.Fprintln(cmd.OutOrStdout(), "warning: this client uses skill-guided memory; automatic context interception is unavailable")
 			}
 			if len(issues) > 0 {
 				for _, issue := range issues {
@@ -138,7 +146,7 @@ func newAgentDoctorCmd() *cobra.Command {
 				}
 				return fmt.Errorf("agent integration is unhealthy")
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "agent integration healthy: client=%s policy=%s\n", manifest.Client, manifest.Policy)
+			fmt.Fprintf(cmd.OutOrStdout(), "agent integration healthy: client=%s recall=%s capture=%s\n", manifest.Client, manifest.RecallMode, manifest.CaptureMode)
 			return nil
 		},
 	}
@@ -165,6 +173,9 @@ func newAgentUninstallCmd() *cobra.Command {
 			root := projectRootFromAgentManifest(path)
 			instructionPath := agentInstructionPath(manifest.Client, root, home, manifest.Scope)
 			if err := removeManagedInstructions(instructionPath, dryRun, cmd.OutOrStdout()); err != nil {
+				return err
+			}
+			if err := removeManagedSkill(agentSkillPath(manifest.Client, root, home, manifest.Scope), dryRun, cmd.OutOrStdout()); err != nil {
 				return err
 			}
 			if err := removeAgentClientFiles(manifest, root, home, path, dryRun, cmd.OutOrStdout()); err != nil {
@@ -510,6 +521,9 @@ func removeManagedInstructions(path string, dryRun bool, out io.Writer) error {
 	if cleaned == string(existing) {
 		return nil
 	}
+	if strings.HasSuffix(path, ".mdc") {
+		cleaned = removeMIRACursorFrontMatter(cleaned)
+	}
 	if dryRun {
 		fmt.Fprintf(out, "Would update %s\n", path)
 		return nil
@@ -518,6 +532,48 @@ func removeManagedInstructions(path string, dryRun bool, out io.Writer) error {
 		return os.Remove(path)
 	}
 	return writeAgentFile(path, []byte(cleaned), 0o644)
+}
+
+func removeMIRACursorFrontMatter(value string) string {
+	const generated = "---\ndescription: MIRA project memory workflow\nalwaysApply: true\n---\n"
+	if start := strings.Index(value, generated); start >= 0 {
+		cleaned := value[:start] + value[start+len(generated):]
+		if strings.TrimSpace(cleaned) == "" {
+			return ""
+		}
+		return strings.TrimRight(cleaned, "\r\n") + "\n"
+	}
+	return value
+}
+
+func removeManagedSkill(path string, dryRun bool, out io.Writer) error {
+	if path == "" {
+		return nil
+	}
+	existing, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read managed skill %q: %w", path, err)
+	}
+	frontMatter, body := splitInstructionFrontMatter(string(existing))
+	cleaned, err := agentinstall.RemoveManagedBlock(body)
+	if err != nil {
+		return fmt.Errorf("remove managed skill %q: %w", path, err)
+	}
+	if cleaned == body {
+		return nil
+	}
+	updated := frontMatter + cleaned
+	if dryRun {
+		fmt.Fprintf(out, "Would update %s\n", path)
+		return nil
+	}
+	if strings.TrimSpace(cleaned) == "" {
+		return os.Remove(path)
+	}
+	return writeAgentFile(path, []byte(updated), 0o644)
 }
 
 func removeAgentClientFiles(manifest agentinstall.Manifest, projectRoot, home, manifestPath string, dryRun bool, out io.Writer) error {
