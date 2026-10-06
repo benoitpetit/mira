@@ -5,7 +5,7 @@
 
   ### Mémoire persistante pour agents de code IA.
 
-  Donnez à Claude Code, Codex, Cursor et autres agents MCP
+  Donnez à Claude Code, Codex, Cursor, Hermes, OpenCode, Pi Agent et autres agents MCP
   une mémoire partagée par projet, avec stockage local par défaut.
 
   ✓ Local par défaut · ✓ Pas de clé API pour les composants locaux · ✓ MCP natif · ✓ Économe en tokens · ✓ Persistant entre modèles
@@ -63,7 +63,7 @@ Claude Code apprend l'architecture de votre projet le lundi. Codex connaît auto
 
 - ✓ Local par défaut — le stockage et les embeddings par défaut s’exécutent sur votre machine
 - ✓ Pas de clé API requise pour la configuration locale par défaut
-- ✓ MCP natif — fonctionne avec Claude Code, Codex, Cursor, Windsurf et plus
+- ✓ MCP natif — fonctionne avec Claude Code, Codex, Cursor, Windsurf, Hermes, OpenCode, Pi Agent et plus
 - ✓ Budget maîtrisé — le CBA sélectionne et rend les mémoires sous un budget borné de corps
 - ✓ Persistant entre modèles — changez de LLM sans perdre le contexte
 
@@ -477,6 +477,12 @@ unzip mira-windows-amd64.exe.zip
 # Cela configure MCP, les instructions gérées, le recall et la capture prudente.
 ./mira agent install --client auto --scope project --policy standard --wing auto
 ./mira agent doctor
+
+# Ou choisissez explicitement un agent. `agent status` indique si le rappel
+# et la capture sont gérés par hook, guidés par skill ou indisponibles.
+./mira agent install --client opencode --scope project --policy standard --wing auto
+./mira agent install --client pi --scope project --policy standard --wing auto
+./mira agent install --client hermes --scope project --policy standard --wing auto
 
 # La configuration bas niveau reste disponible pour compatibilité :
 ./mira setup --client codex

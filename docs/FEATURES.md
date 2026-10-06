@@ -8,10 +8,10 @@ Complete inventory of MIRA capabilities.
 
 ### Autonomous agent installation
 
-- `mira agent install` configures MIRA in Codex, Claude Code, Windsurf, Cursor or Claude Desktop.
+- `mira agent install` configures MIRA in Codex, Claude Code, Windsurf, Cursor, Claude Desktop, Hermes, OpenCode and Pi Agent.
 - Managed instruction blocks are idempotent and preserve user-authored content.
 - `minimal`, `standard` and `complete` policies bound automatic capture and recall injection.
-- Native hooks use a short-lived fail-open event bridge; fallback clients are reported honestly by `mira agent doctor`.
+- Native hooks use a short-lived fail-open event bridge; `agent status` reports `hook`, `skill-guided` or `none` separately for recall and capture.
 - Credential-shaped values are redacted before storage or injected context.
 
 ### Coherence and autonomy

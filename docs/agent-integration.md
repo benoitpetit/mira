@@ -22,7 +22,7 @@ accidentally share a memory wing.
 | Policy | Automatic capture | Recall injection | Assistant capture |
 |---|---|---|---|
 | `minimal` | none | instruction-guided fallback | no |
-| `standard` | substantive user prompts | automatic when hooks exist | no |
+| `standard` | substantive user prompts when a capture hook exists | automatic when a recall hook exists | no |
 | `complete` | substantive user prompts | automatic when hooks exist | yes, when exposed |
 
 `standard` is the default. Every policy keeps secret redaction enabled and
@@ -32,13 +32,30 @@ that hook policy.
 
 ## Client behavior
 
-| Client | Instructions | MCP / hooks | Limitation |
+| Client | Native artifact | Recall / capture | Notes |
 |---|---|---|---|
-| Codex | project `AGENTS.md` | official MCP CLI and hooks | hook trust may require approval |
-| Claude Code | project `CLAUDE.md` | official MCP CLI and hooks | hook trust follows Claude Code |
-| Windsurf | `.windsurf/rules/mira.md` | MCP config and Cascade hooks | user hook permissions apply |
-| Cursor | `.cursor/rules/mira.mdc` | `.cursor/mcp.json` | instruction-guided fallback |
-| Claude Desktop | generated local guide | platform MCP JSON | instruction-guided fallback |
+| Codex | `.agents/skills/mira/SKILL.md` | hook / hook | project scope writes `.codex/config.toml` and `.codex/hooks.json`; hook trust may require approval |
+| Claude Code | `.claude/skills/mira/SKILL.md` | hook / hook | hook trust follows Claude Code |
+| Windsurf | `.windsurf/skills/mira/SKILL.md` | skill-guided / hook | Cascade does not expose a compatible recall-injection result |
+| Cursor | `.cursor/skills/mira/SKILL.md` | skill-guided / none | `.cursor/mcp.json` plus a valid MDC rule |
+| Claude Desktop | generated local guide | skill-guided / none | platform MCP JSON |
+| Hermes | `.hermes/skills/mira/SKILL.md` | skill-guided / none | managed YAML MCP configuration |
+| OpenCode | `.opencode/skills/mira/SKILL.md` | skill-guided / none | project `opencode.json` MCP entry |
+| Pi Agent | `.pi/skills/mira/SKILL.md` | skill-guided / none | project `.pi/mcp.json` and `APPEND_SYSTEM.md` |
+
+Install a specific client when automatic detection is not the desired target:
+
+```bash
+mira agent install --client hermes --scope project --policy standard --wing auto
+mira agent install --client opencode --scope project --policy standard --wing auto
+mira agent install --client pi --scope project --policy standard --wing auto
+```
+
+`hook` means MIRA can inject reference-only recall and/or capture a supported
+lifecycle event. `skill-guided` means the MCP server and native skill are
+installed, while the agent follows the recall/store workflow itself. Check the
+result with `mira agent status`; `mira agent doctor` verifies every recorded
+MCP, hook, instruction and skill artifact.
 
 The managed instruction block is delimited by stable markers. Reinstalling
 replaces only that block; uninstalling removes it without deleting surrounding

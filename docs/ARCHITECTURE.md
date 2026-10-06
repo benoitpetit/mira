@@ -37,7 +37,8 @@ agent install
 The bridge does not create a second memory pipeline. It calls the same
 `RecallMemory` and `StoreMemory` use cases used by MCP and REST. Hook failures
 are fail-open, diagnostics never include captured content, and clients without
-native interception are marked instruction-guided by `mira agent doctor`.
+native interception are marked `skill-guided` by `mira agent status` and
+`mira agent doctor`.
 
 MIRA follows **Uncle Bob's Clean Architecture** with strict dependency direction from outer layers inward.
 

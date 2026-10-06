@@ -1,5 +1,7 @@
 package agentinstall
 
+import "sort"
+
 // IntegrationMode describes how a client receives MIRA recall or capture.
 // It is persisted in the manifest so status and doctor report what is actually
 // available rather than inferring from the selected policy alone.
@@ -38,6 +40,17 @@ var clients = map[string]Client{
 func LookupClient(id string) (Client, bool) {
 	client, ok := clients[id]
 	return client, ok
+}
+
+// SupportedClients returns the stable public client contract used by the CLI
+// and the installation documentation.
+func SupportedClients() []Client {
+	result := make([]Client, 0, len(clients))
+	for _, client := range clients {
+		result = append(result, client)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	return result
 }
 
 func (c Client) SupportsScope(scope string) bool {

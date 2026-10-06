@@ -91,6 +91,18 @@ func TestAgentStatusReportsActualModes(t *testing.T) {
 	}
 }
 
+func TestAgentDocumentationContract(t *testing.T) {
+	clients := agentinstall.SupportedClients()
+	if len(clients) != 8 {
+		t.Fatalf("public clients = %d, want 8", len(clients))
+	}
+	for _, client := range clients {
+		if client.ID == "" || !client.RecallMode.IsValid() || !client.CaptureMode.IsValid() {
+			t.Fatalf("invalid public client contract: %#v", client)
+		}
+	}
+}
+
 func TestAgentHooksInstallSessionStartForCodexAndClaude(t *testing.T) {
 	projectRoot := t.TempDir()
 	configPath := filepath.Join(projectRoot, ".mira", "config.yaml")

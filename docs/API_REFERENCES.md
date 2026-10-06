@@ -549,8 +549,9 @@ mira agent uninstall
 `complete` also captures exposed assistant completions. `minimal` is
 instruction-guided only. The bridge emits recall inside
 `<MIRA_CONTEXT trust="reference-only">` and redacts secrets before storage or
-injection. Cursor and Claude Desktop are reported as instruction-guided
-fallbacks because they do not provide the same deterministic event surface.
+injection. Cursor, Claude Desktop, Hermes, OpenCode and Pi are reported as
+`skill-guided` where they do not provide the same deterministic event surface;
+the MCP server and a native skill are still installed.
 
 ### Session-Based Knowledge Building
 
