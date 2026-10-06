@@ -15,6 +15,7 @@ import (
 	"github.com/benoitpetit/mira/internal/agentinstall"
 	"github.com/benoitpetit/mira/internal/app"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 func newAgentCmd() *cobra.Command {
@@ -33,6 +34,9 @@ func newAgentCmd() *cobra.Command {
 const (
 	agentClientCursor        = "cursor"
 	agentClientClaudeDesktop = "claude-desktop"
+	agentClientHermes        = "hermes"
+	agentClientOpenCode      = "opencode"
+	agentClientPi            = "pi"
 )
 
 func newAgentInstallCmd() *cobra.Command {
@@ -49,7 +53,7 @@ func newAgentInstallCmd() *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().StringVar(&client, "client", "auto", "agent client: auto, codex, claude-code, windsurf, cursor, claude-desktop")
+	cmd.Flags().StringVar(&client, "client", "auto", "agent client: auto, codex, claude-code, windsurf, cursor, claude-desktop, hermes, opencode, pi")
 	cmd.Flags().StringVar(&scope, "scope", agentinstall.ScopeProject, "installation scope: project or user")
 	cmd.Flags().StringVar(&policyName, "policy", string(agentinstall.PolicyStandard), "capture policy: minimal, standard, or complete")
 	cmd.Flags().StringVar(&wing, "wing", "auto", "MIRA wing, or auto for a stable project wing")
@@ -239,8 +243,12 @@ func runAgentInstall(cmd *cobra.Command, options agentInstallOptions) error {
 	if client == "auto" {
 		client = detectAgentClient(root)
 	}
-	if !supportedAgentClient(client) {
+	clientSpec, supported := agentinstall.LookupClient(client)
+	if !supported {
 		return fmt.Errorf("unsupported agent client %q", client)
+	}
+	if !clientSpec.SupportsScope(options.Scope) {
+		return fmt.Errorf("agent client %q does not support %s scope", client, options.Scope)
 	}
 	wing := options.Wing
 	if wing == "auto" {
@@ -249,7 +257,6 @@ func runAgentInstall(cmd *cobra.Command, options agentInstallOptions) error {
 			return err
 		}
 	}
-	clientSpec, _ := agentinstall.LookupClient(client)
 	manifest := agentinstall.DefaultManifest(client, root)
 	manifest.Scope, manifest.Policy, manifest.Wing = options.Scope, policy, wing
 	manifest.RecallMode, manifest.CaptureMode = clientSpec.Modes(policy)
@@ -294,6 +301,11 @@ func runAgentInstall(cmd *cobra.Command, options agentInstallOptions) error {
 	if err := installManagedInstructions(instructionPath, body, options.DryRun, cmd.OutOrStdout()); err != nil {
 		return err
 	}
+	if clientSpec.NativeSkill {
+		if err := installManagedSkill(agentSkillPath(client, root, home, options.Scope), agentinstall.NativeSkill(wing), options.DryRun, cmd.OutOrStdout()); err != nil {
+			return err
+		}
+	}
 	if err := installAgentMCP(cmd, client, root, home, options); err != nil {
 		return err
 	}
@@ -315,12 +327,8 @@ func runAgentInstall(cmd *cobra.Command, options agentInstallOptions) error {
 }
 
 func supportedAgentClient(client string) bool {
-	switch client {
-	case clientCodex, clientClaudeCode, clientWindsurf, agentClientCursor, agentClientClaudeDesktop:
-		return true
-	default:
-		return false
-	}
+	_, ok := agentinstall.LookupClient(client)
+	return ok
 }
 
 func detectAgentClient(root string) string {
@@ -328,6 +336,8 @@ func detectAgentClient(root string) string {
 		{agentClientCursor, filepath.Join(root, ".cursor")},
 		{clientWindsurf, filepath.Join(root, ".windsurf")},
 		{clientClaudeCode, filepath.Join(root, ".claude")},
+		{agentClientOpenCode, filepath.Join(root, "opencode.json")},
+		{agentClientPi, filepath.Join(root, ".pi")},
 	} {
 		if _, err := os.Stat(candidate.marker); err == nil {
 			return candidate.name
@@ -382,8 +392,37 @@ func agentInstructionPath(client, projectRoot, home, scope string) string {
 		return filepath.Join(base, ".windsurf", "rules", "mira.md")
 	case agentClientCursor:
 		return filepath.Join(base, ".cursor", "rules", "mira.mdc")
+	case agentClientPi:
+		return filepath.Join(base, ".pi", "APPEND_SYSTEM.md")
+	case agentClientHermes, agentClientOpenCode:
+		return filepath.Join(base, "AGENTS.md")
 	default:
 		return filepath.Join(base, ".mira", "claude-desktop-instructions.md")
+	}
+}
+
+func agentSkillPath(client, projectRoot, home, scope string) string {
+	base := projectRoot
+	if scope == agentinstall.ScopeUser {
+		base = home
+	}
+	switch client {
+	case clientCodex:
+		return filepath.Join(base, ".agents", "skills", "mira", "SKILL.md")
+	case clientClaudeCode:
+		return filepath.Join(base, ".claude", "skills", "mira", "SKILL.md")
+	case clientWindsurf:
+		return filepath.Join(base, ".windsurf", "skills", "mira", "SKILL.md")
+	case agentClientCursor:
+		return filepath.Join(base, ".cursor", "skills", "mira", "SKILL.md")
+	case agentClientHermes:
+		return filepath.Join(base, ".hermes", "skills", "mira", "SKILL.md")
+	case agentClientOpenCode:
+		return filepath.Join(base, ".opencode", "skills", "mira", "SKILL.md")
+	case agentClientPi:
+		return filepath.Join(base, ".pi", "skills", "mira", "SKILL.md")
+	default:
+		return ""
 	}
 }
 
@@ -406,9 +445,48 @@ func installManagedInstructions(path, body string, dryRun bool, out io.Writer) e
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read managed instruction file %q: %w", path, err)
 	}
-	merged, err := agentinstall.MergeManagedBlock(string(existing), body)
+	existingText := string(existing)
+	frontMatter := ""
+	if strings.HasSuffix(path, ".mdc") {
+		frontMatter, existingText = splitInstructionFrontMatter(existingText)
+		if frontMatter == "" {
+			frontMatter = "---\ndescription: MIRA project memory workflow\nalwaysApply: true\n---\n\n"
+		}
+	}
+	merged, err := agentinstall.MergeManagedBlock(existingText, body)
 	if err != nil {
 		return fmt.Errorf("merge managed instructions %q: %w", path, err)
+	}
+	merged = frontMatter + merged
+	if dryRun {
+		fmt.Fprintf(out, "Would write %s\n", path)
+		return nil
+	}
+	return writeAgentFile(path, []byte(merged), 0o644)
+}
+
+func splitInstructionFrontMatter(value string) (string, string) {
+	if !strings.HasPrefix(value, "---\n") {
+		return "", value
+	}
+	if end := strings.Index(value[4:], "\n---\n"); end >= 0 {
+		end += 9
+		return value[:end], value[end:]
+	}
+	return "", value
+}
+
+func installManagedSkill(path, skill string, dryRun bool, out io.Writer) error {
+	if path == "" {
+		return nil
+	}
+	existing, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read managed skill %q: %w", path, err)
+	}
+	merged, err := agentinstall.MergeManagedSkill(string(existing), skill)
+	if err != nil {
+		return fmt.Errorf("merge managed skill %q: %w", path, err)
 	}
 	if dryRun {
 		fmt.Fprintf(out, "Would write %s\n", path)
@@ -633,6 +711,24 @@ func resolvedAgentMCPPath(client, projectRoot, home string, options agentInstall
 			return path
 		}
 		return ""
+	case agentClientHermes:
+		base := projectRoot
+		if options.Scope == agentinstall.ScopeUser {
+			base = home
+		}
+		return filepath.Join(base, ".hermes", "config.yaml")
+	case agentClientOpenCode:
+		base := projectRoot
+		if options.Scope == agentinstall.ScopeUser {
+			base = filepath.Join(home, ".config", "opencode")
+		}
+		return filepath.Join(base, "opencode.json")
+	case agentClientPi:
+		base := projectRoot
+		if options.Scope == agentinstall.ScopeUser {
+			base = home
+		}
+		return filepath.Join(base, ".pi", "mcp.json")
 	}
 	_ = projectRoot
 	return ""
@@ -710,6 +806,12 @@ func installAgentMCP(cmd *cobra.Command, client, projectRoot, home string, optio
 		if err == nil {
 			data, err = configureMCPConfig(path, "Claude Desktop", options.BinaryPath, options.MiraConfig, options.Force)
 		}
+	case agentClientHermes:
+		data, err = configureHermesMCP(path, options.BinaryPath, options.MiraConfig, options.Force)
+	case agentClientOpenCode:
+		data, err = configureOpenCodeMCP(path, options.BinaryPath, options.MiraConfig, options.Force)
+	case agentClientPi:
+		data, err = configurePiMCP(path, options.BinaryPath, options.MiraConfig, options.Force)
 	}
 	if err != nil {
 		return err
@@ -719,6 +821,74 @@ func installAgentMCP(cmd *cobra.Command, client, projectRoot, home string, optio
 		return nil
 	}
 	return writeAgentFile(path, data, 0o600)
+}
+
+func configureOpenCodeMCP(path, binaryPath, miraConfigPath string, force bool) ([]byte, error) {
+	settings := make(map[string]any)
+	raw, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("read OpenCode config %q: %w", path, err)
+	}
+	if err == nil && len(raw) > 0 {
+		if err := json.Unmarshal(raw, &settings); err != nil {
+			return nil, fmt.Errorf("OpenCode config %q is not valid JSON: %w", path, err)
+		}
+	}
+	mcp, ok := settings["mcp"].(map[string]any)
+	if !ok {
+		if _, exists := settings["mcp"]; exists {
+			return nil, fmt.Errorf("OpenCode mcp in %q must be a JSON object", path)
+		}
+		mcp = make(map[string]any)
+	}
+	if existing, ok := mcp["mira"].(map[string]any); ok && !force {
+		if command, _ := existing["command"].(string); command != "" && command != binaryPath {
+			return nil, fmt.Errorf("OpenCode already has a different MIRA server in %q; use --force to replace it", path)
+		}
+	}
+	mcp["mira"] = map[string]any{"type": "local", "command": binaryPath, "args": []string{"--config", miraConfigPath, "server"}}
+	settings["mcp"] = mcp
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(data, '\n'), nil
+}
+
+func configurePiMCP(path, binaryPath, miraConfigPath string, force bool) ([]byte, error) {
+	return configureMCPConfig(path, "Pi", binaryPath, miraConfigPath, force)
+}
+
+func configureHermesMCP(path, binaryPath, miraConfigPath string, force bool) ([]byte, error) {
+	settings := make(map[string]any)
+	raw, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("read Hermes config %q: %w", path, err)
+	}
+	if err == nil && len(raw) > 0 {
+		if err := yaml.Unmarshal(raw, &settings); err != nil {
+			return nil, fmt.Errorf("Hermes config %q is not valid YAML: %w", path, err)
+		}
+	}
+	servers, ok := settings["mcp_servers"].(map[string]any)
+	if !ok {
+		if _, exists := settings["mcp_servers"]; exists {
+			return nil, fmt.Errorf("Hermes mcp_servers in %q must be a YAML mapping", path)
+		}
+		servers = make(map[string]any)
+	}
+	if existing, ok := servers["mira"].(map[string]any); ok && !force {
+		if command, _ := existing["command"].(string); command != "" && command != binaryPath {
+			return nil, fmt.Errorf("Hermes already has a different MIRA server in %q; use --force to replace it", path)
+		}
+	}
+	servers["mira"] = map[string]any{"command": binaryPath, "args": []string{"--config", miraConfigPath, "server"}}
+	settings["mcp_servers"] = servers
+	data, err := yaml.Marshal(settings)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 func installAgentHooks(cmd *cobra.Command, client, projectRoot, home string, options agentInstallOptions, _ string) error {

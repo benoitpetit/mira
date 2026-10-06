@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,7 +11,65 @@ import (
 
 	"github.com/benoitpetit/mira/internal/agentinstall"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
+
+func TestClientMCPAdaptersPreserveExistingConfiguration(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		initial   string
+		configure func(string, string, string, bool) ([]byte, error)
+		json      bool
+	}{
+		{name: "OpenCode", initial: `{"theme":"dark","mcp":{"other":{"type":"local","command":"other"}}}`, configure: configureOpenCodeMCP, json: true},
+		{name: "Pi", initial: `{"mcpServers":{"other":{"command":"other"}}}`, configure: configurePiMCP, json: true},
+		{name: "Hermes", initial: "theme: dark\nmcp_servers:\n  other:\n    command: other\n", configure: configureHermesMCP},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config")
+			if err := os.WriteFile(path, []byte(tt.initial), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			data, err := tt.configure(path, "/bin/mira", "/project/.mira/config.yaml", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			settings := map[string]any{}
+			if tt.json {
+				err = json.Unmarshal(data, &settings)
+			} else {
+				err = yaml.Unmarshal(data, &settings)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			key := "mcp"
+			if tt.name == "Pi" {
+				key = "mcpServers"
+			} else if tt.name == "Hermes" {
+				key = "mcp_servers"
+			}
+			servers := settings[key].(map[string]any)
+			if servers["other"] == nil || servers["mira"] == nil {
+				t.Fatalf("MCP entries were not preserved and merged: %#v", servers)
+			}
+		})
+	}
+}
+
+func TestCursorRuleHasFrontMatter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".cursor", "rules", "mira.mdc")
+	if err := installManagedInstructions(path, "MIRA guidance", false, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(data), "---\n") || !strings.Contains(string(data), "alwaysApply: true") {
+		t.Fatalf("Cursor rule is missing front matter: %s", data)
+	}
+}
 
 func TestAgentHooksInstallSessionStartForCodexAndClaude(t *testing.T) {
 	projectRoot := t.TempDir()
