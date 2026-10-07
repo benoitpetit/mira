@@ -30,6 +30,7 @@ type RunnerConfig struct {
 	Dimension   int    `json:"dimension,omitempty"`
 	Seed        int64  `json:"seed,omitempty"`
 	Backend     string `json:"backend,omitempty"`
+	DatabaseURL string `json:"-"`
 }
 
 type SiteSnapshot struct {
@@ -111,7 +112,7 @@ func runBenchmark(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	outputPath := fs.String("output", "", "output report JSON path")
 	warmups := fs.Int("warmups", 2, "untimed warm-up iterations")
 	repetitions := fs.Int("repetitions", 5, "measured repetitions")
-	databaseURL := fs.String("database-url", "", "optional disposable PostgreSQL URL; v1 runner currently reports PostgreSQL unavailable")
+	databaseURL := fs.String("database-url", "", "disposable PostgreSQL URL required when backend is postgres")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -130,15 +131,20 @@ func runBenchmark(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	if *repetitions < 1 {
 		return fmt.Errorf("repetitions must be positive")
 	}
-	if *databaseURL != "" {
-		if err := ValidateDisposableDatabase(*databaseURL); err != nil {
-			return err
-		}
-		return fmt.Errorf("PostgreSQL execution is not implemented in benchmark v1; URL was validated but not used")
-	}
 	cfg, err := loadRunnerConfig(*configPath)
 	if err != nil {
 		return err
+	}
+	if cfg.Backend == "postgres" {
+		if *databaseURL == "" {
+			return fmt.Errorf("--database-url is required when backend=postgres")
+		}
+		if err := ValidateDisposableDatabase(*databaseURL); err != nil {
+			return err
+		}
+		cfg.DatabaseURL = *databaseURL
+	} else if *databaseURL != "" {
+		return fmt.Errorf("--database-url requires backend=postgres")
 	}
 	if cfg.ModelDir == "" {
 		cfg.ModelDir = os.Getenv("MIRA_BENCH_MODEL_DIR")
@@ -242,7 +248,7 @@ func buildLocalReport(ctx context.Context, trackName string, cfg RunnerConfig, l
 	if lock.ModelID != "" {
 		model = ModelIdentity{Name: lock.ModelID, Revision: lock.Revision, SHA256: modelLockChecksum(lock)}
 	}
-	report := Report{SchemaVersion: ReportSchemaVersion, Benchmark: BenchmarkIdentity{Name: "mira-public", Version: "1.0.0"}, Run: RunIdentity{ID: now.Format("20060102T150405.000000000Z"), StartedAtUTC: now, Track: trackName}, Source: SourceIdentity{Commit: commit, Dirty: dirty}, Dataset: DatasetIdentity{Name: dataset.Name, Version: dataset.Version, SHA256: manifest.SHA256, Seed: manifest.Seed, MemoryCount: manifest.MemoryCount, QueryCount: manifest.QueryCount, JudgmentCount: manifest.JudgmentCount}, Environment: collectEnvironment(cfg.Backend), Model: model, Protocol: Protocol{Warmups: warmups, Repetitions: repetitions, Concurrency: 1, SetupExcluded: true}}
+	report := Report{SchemaVersion: ReportSchemaVersion, Benchmark: BenchmarkIdentity{Name: "mira-public", Version: "1.0.0"}, Run: RunIdentity{ID: now.Format("20060102T150405.000000000Z"), StartedAtUTC: now, Track: trackName}, Source: SourceIdentity{Commit: commit, Dirty: dirty}, Dataset: DatasetIdentity{Name: dataset.Name, Version: dataset.Version, SHA256: manifest.SHA256, Seed: manifest.Seed, MemoryCount: manifest.MemoryCount, QueryCount: manifest.QueryCount, JudgmentCount: manifest.JudgmentCount}, Environment: collectEnvironment(cfg.Backend, cfg.DatabaseURL), Model: model, Protocol: Protocol{Warmups: warmups, Repetitions: repetitions, Concurrency: 1, SetupExcluded: true}}
 	if report.Environment.StorageBackend == "" {
 		report.Environment.StorageBackend = "sqlite"
 	}
@@ -253,11 +259,22 @@ func buildLocalReport(ctx context.Context, trackName string, cfg RunnerConfig, l
 			if err := VerifyEmbeddingModel(cfg.ModelDir, lock); err != nil {
 				return Report{}, err
 			}
-			app, err := newBenchmarkApplication(workRoot, cfg.ModelDir, lock)
+			app, err := newBenchmarkApplication(workRoot, cfg.ModelDir, lock, cfg.Backend, cfg.DatabaseURL)
 			if err != nil {
 				return Report{}, err
 			}
+			if cfg.Backend == "postgres" {
+				if _, err := app.Clear(ctx, "", nil); err != nil {
+					_ = app.Close()
+					return Report{}, fmt.Errorf("clear disposable PostgreSQL benchmark database: %w", err)
+				}
+			}
 			quality, runErr := RunQualityTrackWithWarmups(ctx, app, dataset, warmups, repetitions)
+			if cfg.Backend == "postgres" {
+				if clearErr := clearBenchmarkApplication(ctx, app); runErr == nil && clearErr != nil {
+					runErr = clearErr
+				}
+			}
 			closeErr := app.Close()
 			if runErr != nil {
 				return Report{}, runErr
@@ -275,7 +292,7 @@ func buildLocalReport(ctx context.Context, trackName string, cfg RunnerConfig, l
 		if len(sizes) == 0 {
 			sizes = []int{100, 1000, 10000}
 		}
-		performance, err := RunPerformanceTrack(ctx, PerformanceConfig{StorageRoot: workRoot, CorpusSizes: sizes, Dimension: cfg.Dimension, Seed: cfg.Seed, Warmups: warmups, Repetitions: repetitions, Concurrency: 1, Backend: cfg.Backend, ModelDir: cfg.ModelDir, ModelLock: lock})
+		performance, err := RunPerformanceTrack(ctx, PerformanceConfig{StorageRoot: workRoot, CorpusSizes: sizes, Dimension: cfg.Dimension, Seed: cfg.Seed, Warmups: warmups, Repetitions: repetitions, Concurrency: 1, Backend: cfg.Backend, DatabaseURL: cfg.DatabaseURL, ModelDir: cfg.ModelDir, ModelLock: lock})
 		if err != nil {
 			return Report{}, err
 		}
@@ -290,11 +307,11 @@ func buildLocalReport(ctx context.Context, trackName string, cfg RunnerConfig, l
 	return report, nil
 }
 
-func newBenchmarkApplication(root, modelDir string, lock EmbeddingModelLock) (*mira.Application, error) {
+func newBenchmarkApplication(root, modelDir string, lock EmbeddingModelLock, backend, databaseURL string) (*mira.Application, error) {
 	if err := VerifyEmbeddingModel(modelDir, lock); err != nil {
 		return nil, err
 	}
-	storagePath := filepath.Join(root, "quality-storage")
+	storagePath := filepath.Join(root, backend+"-quality-storage")
 	modelPath := filepath.Join(storagePath, "models", lock.ModelID)
 	if err := os.MkdirAll(filepath.Dir(modelPath), 0o700); err != nil {
 		return nil, err
@@ -303,8 +320,11 @@ func newBenchmarkApplication(root, modelDir string, lock EmbeddingModelLock) (*m
 		return nil, fmt.Errorf("isolate model cache: %w", err)
 	}
 	cfg := mira.DefaultConfig()
-	cfg.Storage.Type = "sqlite"
+	cfg.Storage.Type = backend
 	cfg.Storage.Path = storagePath
+	if backend == "postgres" {
+		cfg.Storage.Postgres.URL = databaseURL
+	}
 	cfg.Embeddings.CurrentModel = lock.ModelID
 	cfg.Embeddings.Dimension = 384
 	cfg.Embeddings.UseSimpleEmbedder = false
@@ -313,6 +333,13 @@ func newBenchmarkApplication(root, modelDir string, lock EmbeddingModelLock) (*m
 	cfg.Webhooks.Enabled = false
 	cfg.API.Enabled = false
 	return mira.NewApplication(cfg)
+}
+
+func clearBenchmarkApplication(ctx context.Context, app *mira.Application) error {
+	if _, err := app.Clear(ctx, "", nil); err != nil {
+		return fmt.Errorf("clear benchmark application: %w", err)
+	}
+	return nil
 }
 
 func loadRunnerConfig(path string) (RunnerConfig, error) {
@@ -348,7 +375,7 @@ func modelLockChecksum(lock EmbeddingModelLock) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func collectEnvironment(backend string) RuntimeEnvironment {
+func collectEnvironment(backend, databaseURL string) RuntimeEnvironment {
 	host, _ := os.Hostname()
 	version := mira.DefaultConfig().System.Version
 	if version == "" {
@@ -358,16 +385,23 @@ func collectEnvironment(backend string) RuntimeEnvironment {
 		backend = "sqlite"
 	}
 	dbVersion := "not exposed"
-	root, err := os.MkdirTemp("", "mira-bench-env-")
-	if err == nil {
-		if repo, e := storage.NewSQLiteRepository(filepath.Join(root, "version.db"), storage.DefaultSQLiteOptions()); e == nil {
-			var v string
-			if e = repo.DB().QueryRow("SELECT sqlite_version()").Scan(&v); e == nil {
-				dbVersion = v
-			}
+	if backend == "postgres" && databaseURL != "" {
+		if repo, err := storage.NewPostgreSQLRepository(storage.PostgreSQLOptions{URL: databaseURL}); err == nil {
+			_ = repo.DB().QueryRow("SELECT version()").Scan(&dbVersion)
 			_ = repo.Close()
 		}
-		_ = os.RemoveAll(root)
+	} else {
+		root, err := os.MkdirTemp("", "mira-bench-env-")
+		if err == nil {
+			if repo, e := storage.NewSQLiteRepository(filepath.Join(root, "version.db"), storage.DefaultSQLiteOptions()); e == nil {
+				var v string
+				if e = repo.DB().QueryRow("SELECT sqlite_version()").Scan(&v); e == nil {
+					dbVersion = v
+				}
+				_ = repo.Close()
+			}
+			_ = os.RemoveAll(root)
+		}
 	}
 	buildTags := []string{}
 	if info, ok := debug.ReadBuildInfo(); ok {

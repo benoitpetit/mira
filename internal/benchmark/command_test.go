@@ -84,6 +84,19 @@ func TestBenchmarkCommandWritesExplicitUnavailableQualityTrack(t *testing.T) {
 	}
 }
 
+func TestBenchmarkCommandRequiresDisposablePostgresURL(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "benchmark.json")
+	if err := os.WriteFile(configPath, []byte(`{"backend":"postgres"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	err := RunBenchmarkCommand(context.Background(), []string{"run", "--track", "quality", "--config", configPath, "--output", filepath.Join(dir, "report.json")}, &out, &errOut)
+	if err == nil || !strings.Contains(err.Error(), "database-url is required") {
+		t.Fatalf("error = %v, want disposable PostgreSQL URL validation", err)
+	}
+}
+
 func TestValidateDisposableDatabase(t *testing.T) {
 	for _, raw := range []string{"postgres://user:pass@localhost:5432/mira_test", "postgresql://localhost/mira_test?sslmode=disable"} {
 		if err := ValidateDisposableDatabase(raw); err != nil {

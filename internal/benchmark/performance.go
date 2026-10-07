@@ -27,6 +27,7 @@ type PerformanceConfig struct {
 	Repetitions int
 	Concurrency int
 	Backend     string
+	DatabaseURL string
 	ModelDir    string
 	ModelLock   EmbeddingModelLock
 }
@@ -47,8 +48,14 @@ func RunPerformanceTrack(ctx context.Context, config PerformanceConfig) (Perform
 	if config.Backend == "" {
 		config.Backend = "sqlite"
 	}
-	if config.Backend != "sqlite" {
+	if config.Backend != "sqlite" && config.Backend != "postgres" {
 		return PerformanceTrack{}, fmt.Errorf("unsupported performance backend %q", config.Backend)
+	}
+	if config.Backend == "postgres" {
+		if err := ValidateDisposableDatabase(config.DatabaseURL); err != nil {
+			return PerformanceTrack{}, fmt.Errorf("validate PostgreSQL benchmark database URL: %w", err)
+		}
+		return runPostgresPerformanceTrack(ctx, config)
 	}
 	sizes := append([]int(nil), config.CorpusSizes...)
 	for _, n := range sizes {
@@ -77,7 +84,6 @@ func RunPerformanceTrack(ctx context.Context, config PerformanceConfig) (Perform
 		concurrency = 1
 	}
 	track := PerformanceTrack{Status: TrackAvailable, Backend: config.Backend, Concurrency: concurrency}
-	track.Cases = append(track.Cases, unavailableLatencyCase("postgresql_full_recall", "PostgreSQL and pgvector are not exercised by benchmark v1; this run uses SQLite only"))
 	var app *mira.Application
 	appStorage := filepath.Join(workDir, "mira-application")
 	if config.ModelDir != "" {
@@ -244,6 +250,101 @@ func RunPerformanceTrack(ctx context.Context, config PerformanceConfig) (Perform
 			track.Cases = append(track.Cases, makeLatencyCase(fmt.Sprintf("sqlite_full_recall_%d", size), recallSamples))
 		}
 		if err := repo.Close(); err != nil {
+			return PerformanceTrack{}, err
+		}
+	}
+	return track, nil
+}
+
+func runPostgresPerformanceTrack(ctx context.Context, config PerformanceConfig) (PerformanceTrack, error) {
+	track := PerformanceTrack{Status: TrackAvailable, Backend: "postgres", Concurrency: 1}
+	sizes := append([]int(nil), config.CorpusSizes...)
+	sort.Ints(sizes)
+	if config.ModelDir == "" {
+		for _, size := range sizes {
+			track.Cases = append(track.Cases, unavailableLatencyCase(fmt.Sprintf("postgres_full_recall_%d", size), "pinned local model directory was not supplied; full MIRA recall was not measured"))
+		}
+		return track, nil
+	}
+	if err := VerifyEmbeddingModel(config.ModelDir, config.ModelLock); err != nil {
+		return PerformanceTrack{}, fmt.Errorf("verify quality model before PostgreSQL full recall measurement: %w", err)
+	}
+
+	root := config.StorageRoot
+	if root == "" {
+		root = os.TempDir()
+	}
+	workDir, err := os.MkdirTemp(root, "mira-benchmark-postgres-")
+	if err != nil {
+		return PerformanceTrack{}, fmt.Errorf("create isolated PostgreSQL benchmark directory: %w", err)
+	}
+	defer os.RemoveAll(workDir)
+
+	for _, size := range sizes {
+		app, err := newBenchmarkApplication(filepath.Join(workDir, fmt.Sprintf("corpus-%d", size)), config.ModelDir, config.ModelLock, "postgres", config.DatabaseURL)
+		if err != nil {
+			return PerformanceTrack{}, fmt.Errorf("initialize PostgreSQL MIRA application: %w", err)
+		}
+		if err := clearBenchmarkApplication(ctx, app); err != nil {
+			_ = app.Close()
+			return PerformanceTrack{}, err
+		}
+
+		started := time.Now()
+		room := "benchmark"
+		for index := 0; index < size; index++ {
+			if _, err := app.Store(ctx, performanceMemory(index), "benchmark", &room, nil); err != nil {
+				_ = clearBenchmarkApplication(ctx, app)
+				_ = app.Close()
+				return PerformanceTrack{}, fmt.Errorf("ingest PostgreSQL performance fixture %d: %w", index, err)
+			}
+		}
+		track.Cases = append(track.Cases, makeLatencyCase(fmt.Sprintf("postgres_fixture_setup_%d", size), []float64{float64(time.Since(started).Nanoseconds()) / 1e6}))
+
+		rebuildSamples := make([]float64, 0, config.Repetitions)
+		for rep := 0; rep < config.Repetitions; rep++ {
+			started := time.Now()
+			if err := app.RebuildVectorIndex(ctx); err != nil {
+				_ = clearBenchmarkApplication(ctx, app)
+				_ = app.Close()
+				return PerformanceTrack{}, fmt.Errorf("rebuild PostgreSQL MIRA HNSW index for %d memories: %w", size, err)
+			}
+			rebuildSamples = append(rebuildSamples, float64(time.Since(started).Nanoseconds())/1e6)
+		}
+		track.Cases = append(track.Cases, makeLatencyCase(fmt.Sprintf("postgres_hnsw_rebuild_%d", size), rebuildSamples))
+
+		query := "Which deterministic benchmark fixture memory describes the test corpus?"
+		for warmup := 0; warmup < config.Warmups; warmup++ {
+			result, err := app.Recall(ctx, query, 2000, "benchmark", nil, nil, nil)
+			if err != nil || len(result.Memories) == 0 {
+				_ = clearBenchmarkApplication(ctx, app)
+				_ = app.Close()
+				if err != nil {
+					return PerformanceTrack{}, fmt.Errorf("PostgreSQL full recall warm-up: %w", err)
+				}
+				return PerformanceTrack{}, fmt.Errorf("PostgreSQL full recall warm-up returned no memories at size %d", size)
+			}
+		}
+		recallSamples := make([]float64, 0, config.Repetitions)
+		for rep := 0; rep < config.Repetitions; rep++ {
+			started := time.Now()
+			result, err := app.Recall(ctx, query, 2000, "benchmark", nil, nil, nil)
+			if err != nil || len(result.Memories) == 0 {
+				_ = clearBenchmarkApplication(ctx, app)
+				_ = app.Close()
+				if err != nil {
+					return PerformanceTrack{}, fmt.Errorf("PostgreSQL full recall: %w", err)
+				}
+				return PerformanceTrack{}, fmt.Errorf("PostgreSQL full recall returned no memories at size %d", size)
+			}
+			recallSamples = append(recallSamples, float64(time.Since(started).Nanoseconds())/1e6)
+		}
+		track.Cases = append(track.Cases, makeLatencyCase(fmt.Sprintf("postgres_full_recall_%d", size), recallSamples))
+		if err := clearBenchmarkApplication(ctx, app); err != nil {
+			_ = app.Close()
+			return PerformanceTrack{}, err
+		}
+		if err := app.Close(); err != nil {
 			return PerformanceTrack{}, err
 		}
 	}

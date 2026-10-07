@@ -213,6 +213,61 @@ func TestAgentInstallCursorIsIdempotentAndWritesManagedFiles(t *testing.T) {
 	}
 }
 
+func TestAgentInstallDoctorMatrixUsesProjectOwnedArtifacts(t *testing.T) {
+	binDir := t.TempDir()
+	for _, executable := range []string{"codex", "claude"} {
+		path := filepath.Join(binDir, executable)
+		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", binDir)
+	t.Setenv("HOME", t.TempDir())
+
+	for _, client := range []string{"codex", "claude-code", "windsurf", "cursor", "hermes", "opencode", "pi"} {
+		t.Run(client, func(t *testing.T) {
+			projectDir := t.TempDir()
+			initCmd := newInitCmd()
+			initCmd.SetArgs([]string{"--dir", projectDir})
+			if err := initCmd.Execute(); err != nil {
+				t.Fatalf("init failed: %v", err)
+			}
+			configPath := filepath.Join(projectDir, ".mira", "config.yaml")
+			manifestPath := filepath.Join(projectDir, ".mira", "agent.yaml")
+			clientConfig := filepath.Join(projectDir, ".agent-config", client+".json")
+			clientConfigArgs := []string{"--client-config", clientConfig}
+			if client == clientClaudeCode {
+				clientConfigArgs = nil
+			}
+			install := newAgentCmd()
+			install.SetArgs(append([]string{"install", "--client", client, "--mira-config", configPath, "--mira-binary", "/bin/sh"}, clientConfigArgs...))
+			if err := install.Execute(); err != nil {
+				t.Fatalf("install failed: %v", err)
+			}
+			reinstall := newAgentCmd()
+			reinstall.SetArgs(append([]string{"install", "--client", client, "--mira-config", configPath, "--mira-binary", "/bin/sh"}, clientConfigArgs...))
+			if err := reinstall.Execute(); err != nil {
+				t.Fatalf("reinstall failed: %v", err)
+			}
+			manifest, err := agentinstall.LoadManifest(manifestPath)
+			if err != nil {
+				t.Fatalf("load manifest: %v", err)
+			}
+			if client != clientClaudeCode && manifest.ClientConfigPath != clientConfig {
+				t.Fatalf("client config path = %q, want %q", manifest.ClientConfigPath, clientConfig)
+			}
+			if manifest.HookConfigPath != "" && !strings.HasPrefix(manifest.HookConfigPath, projectDir+string(filepath.Separator)) {
+				t.Fatalf("hook config escaped project scope: %q", manifest.HookConfigPath)
+			}
+			doctor := newAgentCmd()
+			doctor.SetArgs([]string{"doctor", "--manifest", manifestPath})
+			if err := doctor.Execute(); err != nil {
+				t.Fatalf("doctor failed: %v", err)
+			}
+		})
+	}
+}
+
 func TestAgentInstallDryRunDoesNotWrite(t *testing.T) {
 	projectDir := t.TempDir()
 	initCmd := newInitCmd()

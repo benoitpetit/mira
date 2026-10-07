@@ -50,6 +50,18 @@ Thumbs.db
 *.db-shm
 *.db-wal
 
+# Local MIRA agent integrations contain machine-specific executable paths and
+# are installed per developer workspace rather than distributed with the core.
+/.agents/
+/.claude/
+/.codex/
+/.hermes/
+/.opencode/
+/.pi/
+/AGENTS.md
+/CLAUDE.md
+/opencode.json
+
 # Temporary files
 /tmp/
 tmp/

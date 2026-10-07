@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/benoitpetit/mira/internal/adapters/storage"
@@ -67,6 +68,9 @@ func TestPerformanceConfigRejectsInvalidProfile(t *testing.T) {
 	}
 	if _, err := RunPerformanceTrack(context.Background(), PerformanceConfig{CorpusSizes: []int{10}, Repetitions: 1, Concurrency: 2}); err == nil {
 		t.Fatal("unsupported concurrency accepted")
+	}
+	if _, err := RunPerformanceTrack(context.Background(), PerformanceConfig{CorpusSizes: []int{10}, Repetitions: 1, Backend: "postgres"}); err == nil || !strings.Contains(err.Error(), "database URL") {
+		t.Fatalf("PostgreSQL without a disposable database URL = %v, want validation error", err)
 	}
 }
 

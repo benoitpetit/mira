@@ -2,7 +2,7 @@
 name: mira
 description: Persistent, local project memory through the MIRA MCP server.
 author: benoitpetit
-version: "0.8.5"
+version: "0.8.6"
 tags: [memory, mcp, mira]
 ---
 

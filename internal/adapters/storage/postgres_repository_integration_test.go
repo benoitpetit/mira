@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/benoitpetit/mira/internal/domain/entities"
+	"github.com/benoitpetit/mira/internal/domain/valueobjects"
+	"github.com/google/uuid"
 )
 
 func TestPostgreSQLIntegrationEmbeddingRoundTrip(t *testing.T) {
@@ -45,6 +47,10 @@ func TestPostgreSQLIntegrationEmbeddingRoundTrip(t *testing.T) {
 			t.Errorf("clean up integration verbatim: %v", err)
 		}
 	}()
+	fingerprint := entities.NewFingerprint(verbatim.ID, valueobjects.TypeFact, model.ModelHash)
+	if err := repo.StoreFingerprint(ctx, fingerprint); err != nil {
+		t.Fatalf("store fingerprint: %v", err)
+	}
 
 	want := entities.NewEmbedding(verbatim.ID, model.ModelHash, []float32{0.25, -0.5, 0.75})
 	want.Normalized = true
@@ -69,5 +75,24 @@ func TestPostgreSQLIntegrationEmbeddingRoundTrip(t *testing.T) {
 		if got.Vector[i] != want.Vector[i] {
 			t.Errorf("vector[%d] = %f, want %f", i, got.Vector[i], want.Vector[i])
 		}
+	}
+
+	all, err := repo.GetAllEmbeddings(ctx)
+	if err != nil {
+		t.Fatalf("list embeddings for HNSW rebuild: %v", err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("embeddings returned for HNSW rebuild = %d, want 1", len(all))
+	}
+	if len(all[0].Vector) != len(want.Vector) {
+		t.Fatalf("rebuild vector length = %d, want %d", len(all[0].Vector), len(want.Vector))
+	}
+
+	candidates, err := repo.GetCandidatesWithEmbeddings(ctx, []uuid.UUID{verbatim.ID}, nil, nil)
+	if err != nil {
+		t.Fatalf("hydrate PostgreSQL candidate for recall: %v", err)
+	}
+	if len(candidates) != 1 || len(candidates[0].Embedding) != len(want.Vector) {
+		t.Fatalf("hydrated candidates = %+v, want one 3-dimensional candidate", candidates)
 	}
 }

@@ -12,7 +12,7 @@
 
   [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.8.5-blue?style=flat-square)]()
+  [![Version](https://img.shields.io/badge/Version-0.8.6-blue?style=flat-square)]()
 
   [Documentation](docs/INDEX.md) • [Benchmarks](https://mira.devbyben.fr/benchmarks) • [API Reference](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [Français](README_FR.md)
 
@@ -309,7 +309,7 @@ Blend: `0.7 × semantic + 0.3 × rerank`
 
 ### 7. Fallback Vector Store
 
-If HNSW is not ready (e.g., rebuilding from scratch), a transparent fallback wrapper routes searches through the authoritative SQL repository. The same fallback works with SQLite and PostgreSQL, so recall remains available during index warm-up.
+If HNSW is not ready (e.g., rebuilding from scratch), a transparent fallback wrapper routes vector searches through an exhaustive scan of the configured SQL repository (SQLite or PostgreSQL). Windows uses this scan because HNSW is unavailable there. Recall remains available, with cost that grows with the number of memories.
 
 ### 8. Context Compression
 
@@ -1087,19 +1087,16 @@ See [docs/API_REFERENCES.md](docs/API_REFERENCES.md) for full request/response s
 
 ### Benchmarking
 
-No official performance result is published yet. The historical latency and
-throughput figures were removed because they were not backed by the current
-versioned protocol. `make bench-locomo` is a local CBA selector microbenchmark;
-despite its name, it does not run the LoCoMo dataset or measure full recall.
+The official v0.8.6 release reports are published on the [MIRA benchmarks page](https://mira.devbyben.fr/benchmarks). Recall quality is evaluated on a fixed synthetic dataset; latency cases separate setup, search, HNSW construction, and full recall. SQLite and PostgreSQL pgvector are reported separately, each with its own source, model, host, database version, and samples. These results describe one run on one machine and do not predict every workload. `make bench-locomo` remains a local CBA selector microbenchmark; despite its name, it does not run the LoCoMo dataset or measure full recall.
 
 The reproducible public protocol separates recall quality from component and
 application latency. It records raw samples and host, model, backend, dataset,
-and source provenance. Its synthetic fixture is for protocol and regression
-checks, not a general answer-quality claim. See
+and source provenance. Its synthetic fixture checks behavior and regressions;
+it does not measure general agent response quality. Single-observation setup
+timings are not percentile estimates. See
 [`benchmarks/README.md`](benchmarks/README.md) for setup, commands, validation,
-and publication requirements. The public protocol and result status are also
-available on the [MIRA benchmarks page](https://mira.devbyben.fr/benchmarks).
-PostgreSQL is not measured by protocol v1.
+and publication requirements. SQLite and PostgreSQL pgvector are measured in
+separate backend-specific reports.
 
 ### Optimizations in v0.3.3
 

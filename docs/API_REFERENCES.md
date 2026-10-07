@@ -217,7 +217,7 @@ archival through `mira_archive`; MIRA does not run a background archive job.
 
 **Internal Pipeline:**
 1. **Query Expansion** — generates semantic variants and averages their embeddings
-2. **Hybrid Search** — HNSW dense search + SQLite FTS5 lexical search
+2. **Hybrid Search** — HNSW dense search + backend-native lexical search (SQLite FTS5 or PostgreSQL full-text)
 3. **RRF Fusion** — merges both result sets with Reciprocal Rank Fusion (k=60)
 4. **Search-Time Clustering** — deduplicates near-duplicate candidates
 5. **Tag Boost** — boosts candidates with matching extracted tags
@@ -640,7 +640,7 @@ mira_recall(query="How should I handle payment retries?", wing="payment-service"
 ```
 MIRA System Status
 ═══════════════════════════════════════
-Version: 0.8.5
+Version: 0.8.6
 Uptime: 2h15m30s
 
 Storage:
@@ -1125,7 +1125,7 @@ Returns system statistics identical to the `mira_status` MCP tool.
 
 ```json
 {
-  "version": "0.8.5",
+  "version": "0.8.6",
   "uptime": "2h15m30s",
   "stats": {
     "verbatim_count": 1250,
@@ -1193,7 +1193,7 @@ curl http://localhost:9090/health
 {
   "status": "healthy",
   "timestamp": "2026-04-10T14:30:00Z",
-  "version": "0.8.5",
+  "version": "0.8.6",
   "checks": {
     "database": {"status": "pass", "message": "connected"},
     "vector_store": {"status": "pass", "message": "HNSW ready"},
@@ -1351,4 +1351,4 @@ recall:
 | `reranker.enabled` | `false` | Enable heuristic lexical reranking |
 
 *Last updated: 2026-04-30*
-*Version: 0.8.5*
+*Version: 0.8.6*

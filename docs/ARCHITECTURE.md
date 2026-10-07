@@ -299,7 +299,7 @@ The recall process in MIRA is a multi-stage retrieval pipeline:
 │   └─────────────┘                                                       │
 │       │                                                                 │
 │       ▼                                                                 │
-│   ┌─────────────┐    Recherche dense (HNSW) + recherche lexicale (FTS5)│
+│   ┌─────────────┐    Recherche dense (HNSW) + plein texte du backend   │
 │   │ Hybrid      │    ─────────────────────────────────────────────────  │
 │   │ Search      │                                                       │
 │   │ (RRF k=60)  │                                                       │

@@ -16,7 +16,10 @@ const (
 // Client describes the installation capabilities exposed by one supported
 // agent. Client-specific paths and serializers remain in the command adapter.
 type Client struct {
-	ID               string
+	ID string
+	// Executable is the command verified by doctor when the client requires a
+	// local CLI for its hook integration. Declarative MCP clients leave it empty.
+	Executable       string
 	RecallMode       IntegrationMode
 	CaptureMode      IntegrationMode
 	ProjectScope     bool
@@ -27,11 +30,11 @@ type Client struct {
 }
 
 var clients = map[string]Client{
-	"codex":          {ID: "codex", RecallMode: IntegrationHook, CaptureMode: IntegrationHook, ProjectScope: true, UserScope: true, NativeSkill: true, SessionStartHook: true, AssistantHook: true},
-	"claude-code":    {ID: "claude-code", RecallMode: IntegrationHook, CaptureMode: IntegrationHook, ProjectScope: true, UserScope: true, NativeSkill: true, SessionStartHook: true, AssistantHook: true},
+	"codex":          {ID: "codex", Executable: "codex", RecallMode: IntegrationHook, CaptureMode: IntegrationHook, ProjectScope: true, UserScope: true, NativeSkill: true, SessionStartHook: true, AssistantHook: true},
+	"claude-code":    {ID: "claude-code", Executable: "claude", RecallMode: IntegrationHook, CaptureMode: IntegrationHook, ProjectScope: true, UserScope: true, NativeSkill: true, SessionStartHook: true, AssistantHook: true},
 	"windsurf":       {ID: "windsurf", RecallMode: IntegrationSkillGuided, CaptureMode: IntegrationHook, ProjectScope: true, UserScope: true, NativeSkill: true, AssistantHook: true},
 	"cursor":         {ID: "cursor", RecallMode: IntegrationSkillGuided, CaptureMode: IntegrationNone, ProjectScope: true, UserScope: true, NativeSkill: true},
-	"claude-desktop": {ID: "claude-desktop", RecallMode: IntegrationSkillGuided, CaptureMode: IntegrationNone, ProjectScope: true, UserScope: true},
+	"claude-desktop": {ID: "claude-desktop", RecallMode: IntegrationSkillGuided, CaptureMode: IntegrationNone, UserScope: true},
 	"hermes":         {ID: "hermes", RecallMode: IntegrationSkillGuided, CaptureMode: IntegrationNone, ProjectScope: true, UserScope: true, NativeSkill: true},
 	"opencode":       {ID: "opencode", RecallMode: IntegrationSkillGuided, CaptureMode: IntegrationNone, ProjectScope: true, UserScope: true, NativeSkill: true},
 	"pi":             {ID: "pi", RecallMode: IntegrationSkillGuided, CaptureMode: IntegrationNone, ProjectScope: true, UserScope: true, NativeSkill: true},

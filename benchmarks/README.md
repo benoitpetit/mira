@@ -34,18 +34,21 @@ Reports follow [`schema/v1.schema.json`](schema/v1.schema.json). A local run may
 be dirty or have an unavailable track, but it must state those facts. An
 official website snapshot requires a clean source revision, the checked-in
 dataset hash, a pinned model identity, host/backend provenance, complete quality
-coverage, and at least five measured samples for every published latency case.
-Timing results describe the recorded host and protocol; they are not product
-SLOs. Synthetic quality results are not LoCoMo scores and do not establish
-general answer accuracy.
+coverage, and at least five measured samples for each repeated latency case.
+Fixture setup is reported as one standalone observation because setup is
+excluded from repeated latency measurements; it must not be interpreted as a
+p50/p95 estimate. Timing results describe the recorded host and protocol; they
+are not product SLOs. Synthetic quality results are not LoCoMo scores and do
+not establish general answer accuracy.
 
 ## Run locally
 
 Requirements: Go 1.25+, the checked-in fixture and model lock, and a local copy
-of the locked model for the quality and full-recall cases. MIRA never uses the
-user's normal database: each run creates temporary SQLite storage and removes
-it when the command exits. Model files remain in the supplied local model
-directory and are verified by SHA-256 before use.
+of the locked model for the quality and full-recall cases. SQLite runs create
+temporary storage and remove it when the command exits. PostgreSQL runs require
+an explicit disposable URL whose database name ends in `_test`; MIRA clears its
+benchmark records before and after the run. Model files remain in the supplied
+local model directory and are verified by SHA-256 before use.
 
 Set `MIRA_BENCH_MODEL_DIR` to the directory containing the locked model files,
 or set `model_dir` in a copy of
@@ -68,9 +71,22 @@ go run -tags fts5 ./cmd/mira-benchmark validate \
 The example profile uses 100 and 1,000 records so a local smoke run finishes
 quickly. A reference run should include 10,000 records and at least five
 measured repetitions. Local reports can be dirty and are never exportable as
-the public snapshot. The command preserves each track's unavailable reason;
-for example, PostgreSQL remains explicitly unavailable in v1 and does not
-reuse the SQLite timings.
+the public snapshot. SQLite and PostgreSQL use separate reports and never reuse
+one another's timings.
+
+For PostgreSQL with the local pgvector service:
+
+```bash
+docker compose up -d postgres
+MIRA_BENCH_MODEL_DIR=/path/to/all-MiniLM-L6-v2 \
+  go run -tags fts5 ./cmd/mira-benchmark run \
+  --track all \
+  --config benchmarks/config.postgres.json \
+  --database-url 'postgres://mira:mira@localhost:5433/mira_benchmark_test?sslmode=disable' \
+  --output benchmarks/results/local-postgres.json \
+  --warmups 2 \
+  --repetitions 5
+```
 
 Temporary databases and indexes are created under the core checkout and
 removed on exit. Set `MIRA_BENCH_TMP_DIR` to use another writable filesystem
@@ -90,8 +106,12 @@ snapshots, then tests and builds the site:
 
 ```bash
 MIRA_BENCH_MODEL_DIR=/path/to/all-MiniLM-L6-v2 \
-  make bench-release VERSION=0.8.4 MIRA_SITE_DIR=../mira-landing
+MIRA_BENCH_POSTGRES_URL='postgres://mira:mira@localhost:5433/mira_benchmark_test?sslmode=disable' \
+  make bench-release VERSION=0.8.6 MIRA_SITE_DIR=../mira-landing
 ```
+
+When `MIRA_BENCH_POSTGRES_URL` is set, the target validates and attaches a
+second, PostgreSQL-specific report and exports a versioned companion snapshot.
 
 The release workflow first builds binaries and tests the tagged core. The
 benchmark remains on the release host so future releases can be measured with
@@ -105,7 +125,8 @@ retroactive measurements.
 
 An official export requires a clean core commit, complete quality queries,
 matching dataset checksum, the pinned model files, host/backend provenance,
-and at least five samples per available timing case:
+and at least five samples per repeated timing case (fixture setup is a single
+observation):
 
 ```bash
 go run -tags fts5 ./cmd/mira-benchmark validate \

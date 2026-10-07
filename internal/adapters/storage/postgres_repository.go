@@ -475,17 +475,9 @@ func (r *PostgreSQLRepository) GetEmbeddingByID(ctx context.Context, id uuid.UUI
 		}
 		return nil, err
 	}
-	vectorText = strings.Trim(vectorText, "[]")
-	if vectorText != "" {
-		components := strings.Split(vectorText, ",")
-		emb.Vector = make([]float32, len(components))
-		for i, component := range components {
-			value, err := strconv.ParseFloat(strings.TrimSpace(component), 32)
-			if err != nil {
-				return nil, fmt.Errorf("decode embedding vector component %d: %w", i, err)
-			}
-			emb.Vector[i] = float32(value)
-		}
+	emb.Vector, err = decodePostgresVector(vectorText)
+	if err != nil {
+		return nil, err
 	}
 
 	emb.CreatedAt = time.Unix(int64(createdAt), 0)
@@ -1234,7 +1226,7 @@ func (r *PostgreSQLRepository) GetCandidatesWithEmbeddings(ctx context.Context, 
 		SELECT v.id, v.content, v.wing, v.room, v.token_count, v.created_at, v.valid_from, v.valid_until, v.kind, v.metadata,
 			   v.summary, v.summary_tokens,
 			   f.id, f.ftype, f.fact_count, f.token_estimate, f.model_hash, f.data,
-		   e.vector::float4[]
+		   e.vector::text
 		FROM verbatim v
 		JOIN fingerprints f ON v.id = f.verbatim_id
 		JOIN embeddings e ON v.id = e.id
@@ -1255,16 +1247,22 @@ func (r *PostgreSQLRepository) GetCandidatesWithEmbeddings(ctx context.Context, 
 			var vCreatedAt float64
 			var vValidFrom, vValidUntil sql.NullFloat64
 			var fData []byte
-			var vector []float32
+			var vectorText string
 
 			err := rows.Scan(
 				&vID, &vContent, &vWing, &vRoom, &vTokenCount, &vCreatedAt, &vValidFrom, &vValidUntil, &vKind, &vMetadata,
 				&vSummary, &vSummaryTokens,
 				&fID, &fType, &fFactCount, &fTokenEstimate, &fModelHash, &fData,
-				&vector,
+				&vectorText,
 			)
 			if err != nil {
-				continue
+				_ = rows.Close()
+				return nil, fmt.Errorf("scan PostgreSQL candidate embedding: %w", err)
+			}
+			vector, err := decodePostgresVector(vectorText)
+			if err != nil {
+				_ = rows.Close()
+				return nil, err
 			}
 
 			if wing != nil && vWing != *wing {
@@ -1326,7 +1324,7 @@ func (r *PostgreSQLRepository) GetCandidatesWithEmbeddings(ctx context.Context, 
 // GetAllEmbeddings implements EmbeddingSource
 func (r *PostgreSQLRepository) GetAllEmbeddings(ctx context.Context) ([]*entities.Embedding, error) {
 	rows, err := r.db.QueryContext(ctx, `
-			SELECT v.id, e.model_hash, e.vector::float4[], e.dim
+			SELECT v.id, e.model_hash, e.vector::text, e.dim
 		FROM verbatim v
 		JOIN embeddings e ON v.id = e.id
 		WHERE COALESCE(v.lifecycle_state, 'active') = 'active'
@@ -1340,18 +1338,43 @@ func (r *PostgreSQLRepository) GetAllEmbeddings(ctx context.Context) ([]*entitie
 	for rows.Next() {
 		var id uuid.UUID
 		var modelHash string
-		var vector []float32
+		var vectorText string
 		var dim int
-		if err := rows.Scan(&id, &modelHash, &vector, &dim); err == nil {
-			embeddings = append(embeddings, &entities.Embedding{
-				ID:        id,
-				ModelHash: modelHash,
-				Vector:    vector,
-				Dim:       dim,
-			})
+		if err := rows.Scan(&id, &modelHash, &vectorText, &dim); err != nil {
+			return nil, fmt.Errorf("scan PostgreSQL embedding: %w", err)
 		}
+		vector, err := decodePostgresVector(vectorText)
+		if err != nil {
+			return nil, err
+		}
+		embeddings = append(embeddings, &entities.Embedding{
+			ID:        id,
+			ModelHash: modelHash,
+			Vector:    vector,
+			Dim:       dim,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate PostgreSQL embeddings: %w", err)
 	}
 	return embeddings, nil
+}
+
+func decodePostgresVector(vectorText string) ([]float32, error) {
+	vectorText = strings.Trim(vectorText, "[]")
+	if vectorText == "" {
+		return nil, nil
+	}
+	components := strings.Split(vectorText, ",")
+	vector := make([]float32, len(components))
+	for i, component := range components {
+		value, err := strconv.ParseFloat(strings.TrimSpace(component), 32)
+		if err != nil {
+			return nil, fmt.Errorf("decode PostgreSQL embedding vector component %d: %w", i, err)
+		}
+		vector[i] = float32(value)
+	}
+	return vector, nil
 }
 
 // SearchLexical implements EmbeddingSource

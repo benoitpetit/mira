@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.6] - 2026-10-07
+
+### Added
+- **Published agent installation matrix**: `mira agent install` and its
+  diagnostic lifecycle cover Codex, Claude Code, Windsurf, Cursor, Claude
+  Desktop, Hermes, OpenCode, and Pi Agent with their actual recall and capture
+  modes.
+- **PostgreSQL benchmark path**: a disposable pgvector Compose service and a
+  backend-specific full-recall benchmark report complement the SQLite report.
+
+### Fixed
+- **Agent diagnostics**: Claude Code resolves the installed `claude` command,
+  and project-scoped Windsurf integrations keep MCP and hook files in the
+  project.
+- **PostgreSQL recall**: pgvector rows are decoded consistently for HNSW
+  rebuild and candidate hydration, so persisted vectors can be recalled.
+
 ## [0.8.5] - 2026-10-05
 
 ### Added

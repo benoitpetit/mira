@@ -7,15 +7,16 @@ func TestLookupClientDeclaresEverySupportedAgent(t *testing.T) {
 		id      string
 		recall  IntegrationMode
 		capture IntegrationMode
+		project bool
 	}{
-		{"codex", IntegrationHook, IntegrationHook},
-		{"claude-code", IntegrationHook, IntegrationHook},
-		{"windsurf", IntegrationSkillGuided, IntegrationHook},
-		{"cursor", IntegrationSkillGuided, IntegrationNone},
-		{"claude-desktop", IntegrationSkillGuided, IntegrationNone},
-		{"hermes", IntegrationSkillGuided, IntegrationNone},
-		{"opencode", IntegrationSkillGuided, IntegrationNone},
-		{"pi", IntegrationSkillGuided, IntegrationNone},
+		{"codex", IntegrationHook, IntegrationHook, true},
+		{"claude-code", IntegrationHook, IntegrationHook, true},
+		{"windsurf", IntegrationSkillGuided, IntegrationHook, true},
+		{"cursor", IntegrationSkillGuided, IntegrationNone, true},
+		{"claude-desktop", IntegrationSkillGuided, IntegrationNone, false},
+		{"hermes", IntegrationSkillGuided, IntegrationNone, true},
+		{"opencode", IntegrationSkillGuided, IntegrationNone, true},
+		{"pi", IntegrationSkillGuided, IntegrationNone, true},
 	}
 
 	for _, tt := range tests {
@@ -27,8 +28,8 @@ func TestLookupClientDeclaresEverySupportedAgent(t *testing.T) {
 			if client.RecallMode != tt.recall || client.CaptureMode != tt.capture {
 				t.Fatalf("modes = recall:%s capture:%s, want recall:%s capture:%s", client.RecallMode, client.CaptureMode, tt.recall, tt.capture)
 			}
-			if !client.SupportsScope(ScopeProject) || !client.SupportsScope(ScopeUser) {
-				t.Fatalf("client %q must support project and user scopes", tt.id)
+			if client.SupportsScope(ScopeProject) != tt.project || !client.SupportsScope(ScopeUser) {
+				t.Fatalf("client %q scope declaration is incorrect", tt.id)
 			}
 		})
 	}
@@ -47,5 +48,31 @@ func TestClientModesReflectPolicy(t *testing.T) {
 	standardRecall, standardCapture := client.Modes(PolicyStandard)
 	if standardRecall != IntegrationHook || standardCapture != IntegrationHook {
 		t.Fatalf("standard modes = %s/%s, want hook/hook", standardRecall, standardCapture)
+	}
+}
+
+func TestClientExecutableContract(t *testing.T) {
+	tests := []struct {
+		client string
+		want   string
+	}{
+		{client: "codex", want: "codex"},
+		{client: "claude-code", want: "claude"},
+		{client: "cursor", want: ""},
+		{client: "claude-desktop", want: ""},
+		{client: "hermes", want: ""},
+		{client: "opencode", want: ""},
+		{client: "pi", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.client, func(t *testing.T) {
+			client, ok := LookupClient(tt.client)
+			if !ok {
+				t.Fatalf("client %q is not registered", tt.client)
+			}
+			if client.Executable != tt.want {
+				t.Errorf("Executable = %q, want %q", client.Executable, tt.want)
+			}
+		})
 	}
 }

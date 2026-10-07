@@ -12,7 +12,7 @@
 
   [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
   [![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/Version-0.8.5-blue?style=flat-square)]()
+  [![Version](https://img.shields.io/badge/Version-0.8.6-blue?style=flat-square)]()
 
   [Documentation](docs/INDEX.md) • [Benchmarks](https://mira.devbyben.fr/benchmarks) • [Référence API](docs/API_REFERENCES.md) • [Changelog](CHANGELOG.md) • [Skill](SKILL.md) • [English](README.md)
 
@@ -132,7 +132,7 @@ Les deux sont dérivés atomiquement et stockés aux côtés du verbatim origina
 ### Recall
 
 ```
-Requête  →  Embed  →  HNSW top-100 (+ FTS5)  →  Fusion RRF  →  Scoring CBA  →  Sélection gloutonne
+Requête  →  Embed  →  HNSW top-100 + plein texte du backend  →  Fusion RRF  →  Scoring CBA  →  Sélection gloutonne
 ```
 
 L'algorithme CBA sélectionne les mémoires de façon gloutonne selon un budget d'unités séparées par des espaces dans les corps de mémoire rendus. C'est une approximation déterministe, pas le comptage d'un tokenizer de modèle. Le niveau de rendu (Verbatim / Fingerprint / Header) dépend du budget restant.
@@ -272,7 +272,7 @@ un optimum global.
 ## Pipeline de recall amélioré
 
 ```
-Requête → Expansion → Dense (HNSW) + Lexical (FTS5) → Fusion RRF → Clustering → Boost Tags → Seuil Adaptatif → Sélection Gloutonne CBA
+Requête → Expansion → Dense (HNSW) + Lexical (plein texte du backend) → Fusion RRF → Clustering → Boost Tags → Seuil Adaptatif → Sélection Gloutonne CBA
 ```
 
 ### 1. Expansion de requête
@@ -282,7 +282,7 @@ MIRA génère des variantes de requête (texte nettoyé, texte sans mots vides e
 ### 2. Recherche hybride (Dense + Lexicale)
 
 - **Dense :** recherche approximative des plus proches voisins avec HNSW
-- **Lexicale :** recherche full-text SQLite FTS5 (auto-activée si disponible)
+- **Lexicale :** recherche plein texte native du backend — SQLite FTS5 ou PostgreSQL full-text
 - **Fusion :** Reciprocal Rank Fusion (`k=60`) fusionne les deux classements
 
 ### 3. Clustering à la recherche
@@ -317,7 +317,7 @@ Mélange : `0.7 × sémantique + 0.3 × rerank`
 
 ### 7. Vector Store de fallback
 
-Si HNSW n'est pas encore prêt (ex. reconstruction depuis zéro), un wrapper transparent redirige automatiquement vers le vector store SQLite. Le recall ne tombe jamais en panne.
+Si HNSW n'est pas encore prêt (ex. reconstruction depuis zéro), un wrapper transparent redirige la recherche vectorielle vers un parcours exhaustif du dépôt SQL configuré (SQLite ou PostgreSQL). Sous Windows, ce parcours exhaustif est utilisé car HNSW n'y est pas disponible. Il préserve le rappel, avec un coût qui augmente avec le nombre de souvenirs.
 
 ### 8. Compression contextuelle
 
@@ -1101,31 +1101,35 @@ Voir [docs/API_REFERENCES.md](docs/API_REFERENCES.md) pour la référence compl�
 
 ### Benchmarks
 
-Aucun résultat de performance officiel n'est publié pour le moment. Les
-anciennes latences et mesures de débit ont été retirées : elles n'étaient pas
-étayées par le protocole versionné actuel. `make bench-locomo` est un
-microbenchmark local du sélecteur CBA ; malgré son nom, il ne lance pas le jeu
-LoCoMo et ne mesure pas le rappel complet.
+Les rapports officiels de la release v0.8.6 sont publiés sur la
+[page benchmarks de MIRA](https://mira.devbyben.fr/benchmarks). La qualité du
+rappel est évaluée sur un jeu synthétique fixe ; les latences distinguent les
+préparations, les recherches, la construction HNSW et le rappel complet. Les
+rapports SQLite et PostgreSQL pgvector sont distincts et identifient chacun la
+source, le modèle, l'hôte, la version de base et les échantillons. Ces mesures
+décrivent un run sur une machine donnée et ne prédisent pas toutes les charges.
+`make bench-locomo` reste un microbenchmark local du sélecteur CBA ; malgré son
+nom, il ne lance pas le jeu LoCoMo et ne mesure pas le rappel complet.
 
 Le protocole reproductible sépare la qualité du rappel des latences de
 composants et de l'application. Il conserve les échantillons bruts et la
 provenance de l'hôte, du modèle, du backend, du jeu et de la source. Le jeu
-synthétique sert à vérifier le protocole et les régressions, pas à généraliser
-la qualité des réponses. Voir [`benchmarks/README.md`](benchmarks/README.md)
-pour les prérequis, commandes et critères de publication. Le protocole et son
-état sont aussi présentés sur la [page benchmarks de MIRA](https://mira.devbyben.fr/benchmarks).
-PostgreSQL n'est pas mesuré dans la version 1 du protocole.
+synthétique sert à vérifier le comportement et les régressions ; il ne mesure
+pas la qualité générale des réponses d'un agent. Les observations uniques de
+préparation ne sont pas des estimations de percentiles. Voir
+[`benchmarks/README.md`](benchmarks/README.md) pour les prérequis, commandes et
+critères de publication.
 
 ### Optimisations en v0.3.3
 
 - **Expansion de requête** — moyenne les embeddings de variantes nettoyées et centrées sur les mots-clés ; les résultats entre langues dépendent du modèle configuré
 - **Recherche lexicale FTS5** — recherche full-text SQLite avec triggers auto et backfill
-- **Fusion hybride RRF** — Reciprocal Rank Fusion (`k=60`) combinant HNSW et FTS5
+- **Fusion hybride RRF** — Reciprocal Rank Fusion (`k=60`) combinant HNSW et la recherche plein texte du backend
 - **Clustering à la recherche** — déduplication en temps réel à cosine similarity ≥ 0.88
 - **Récupération par tags** — table `memory_tags` avec boost automatique dans le scoring CBA
 - **Reranker heuristique** — reranker lexical léger optionnel
 - **Méthodes de seuil adaptatif** — élagage dynamique avec `iqr`, `elbow`, `mean_stddev`
-- **Vector Store de fallback** — fallback transparent HNSW → SQLite quand l'index n'est pas prêt
+- **Vector Store de fallback** — fallback transparent HNSW → parcours SQL exhaustif (SQLite ou PostgreSQL) quand l'index n'est pas prêt ; parcours utilisé par défaut sous Windows
 - **Outil Clear Memory** — `mira_clear_memory` pour suppression globale ou par room
 - **Résolution T0 chaîne causale** — `mira_causal_chain` résout les références `T0:` en IDs fingerprint
 - **Visibilité des IDs** — `mira_recall` et `mira_timeline` incluent les IDs mémoire pour chaîner les outils

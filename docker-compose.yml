@@ -1,4 +1,20 @@
 services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: mira_benchmark_test
+      POSTGRES_USER: mira
+      POSTGRES_PASSWORD: mira
+    ports:
+      - "5433:5432"
+    volumes:
+      - mira-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mira -d mira_benchmark_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
   mira:
     build:
       context: .
@@ -17,3 +33,4 @@ services:
 
 volumes:
   mira-data:
+  mira-postgres-data:

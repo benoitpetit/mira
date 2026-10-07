@@ -38,7 +38,7 @@ that hook policy.
 | Claude Code | `.claude/skills/mira/SKILL.md` | hook / hook | hook trust follows Claude Code |
 | Windsurf | `.windsurf/skills/mira/SKILL.md` | skill-guided / hook | Cascade does not expose a compatible recall-injection result |
 | Cursor | `.cursor/skills/mira/SKILL.md` | skill-guided / none | `.cursor/mcp.json` plus a valid MDC rule |
-| Claude Desktop | generated local guide | skill-guided / none | platform MCP JSON |
+| Claude Desktop | generated local guide | skill-guided / none | user scope; platform MCP JSON |
 | Hermes | `.hermes/skills/mira/SKILL.md` | skill-guided / none | managed YAML MCP configuration |
 | OpenCode | `.opencode/skills/mira/SKILL.md` | skill-guided / none | project `opencode.json` MCP entry |
 | Pi Agent | `.pi/skills/mira/SKILL.md` | skill-guided / none | project `.pi/mcp.json` and `APPEND_SYSTEM.md` |

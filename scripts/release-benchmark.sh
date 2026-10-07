@@ -14,6 +14,7 @@ TAG="v${VERSION}"
 EXPECTED_VERSION="$(sed -n 's/.*CurrentVersion = "\([0-9.]*\)".*/\1/p' internal/config/config.go | head -1)"
 HEAD_TAG="$(git describe --tags --exact-match HEAD 2>/dev/null || true)"
 REPORT="benchmarks/results/mira-benchmark-${TAG}.json"
+POSTGRES_REPORT="benchmarks/results/mira-benchmark-${TAG}-postgres.json"
 SITE_ROOT="$(cd "$ROOT" && realpath -m "$SITE_DIR")"
 
 if [[ "$EXPECTED_VERSION" != "$VERSION" ]]; then
@@ -58,8 +59,20 @@ mkdir -p "$SITE_ROOT/public/data/benchmarks"
   --report "$REPORT" --out "$SITE_ROOT/public/data/benchmarks/${TAG}.json" \
   --source-url "$SNAPSHOT_URL"
 
+if [[ -n "${MIRA_BENCH_POSTGRES_URL:-}" ]]; then
+  "${GO:-go}" run -tags fts5 ./cmd/mira-benchmark run \
+    --track all --config benchmarks/config.postgres.json --database-url "$MIRA_BENCH_POSTGRES_URL" --output "$POSTGRES_REPORT" \
+    --warmups "${BENCH_WARMUPS:-2}" --repetitions "${BENCH_REPETITIONS:-5}"
+  "${GO:-go}" run -tags fts5 ./cmd/mira-benchmark validate --report "$POSTGRES_REPORT" --official
+  gh release upload "$TAG" "$POSTGRES_REPORT" --clobber
+  POSTGRES_SNAPSHOT_URL="https://github.com/benoitpetit/mira/releases/download/${TAG}/mira-benchmark-${TAG}-postgres.json"
+  "${GO:-go}" run -tags fts5 ./cmd/mira-benchmark export-site \
+    --report "$POSTGRES_REPORT" --out "$SITE_ROOT/public/data/benchmarks/${TAG}-postgres.json" \
+    --source-url "$POSTGRES_SNAPSHOT_URL"
+fi
+
 npm --prefix "$SITE_ROOT" test
 npm --prefix "$SITE_ROOT" run lint
 npm --prefix "$SITE_ROOT" run build
 
-echo "Benchmark $TAG attached to the GitHub release. Site snapshots are ready in $SITE_ROOT/public/data/benchmarks."
+echo "Benchmark reports for $TAG are attached to the GitHub release. Site snapshots are ready in $SITE_ROOT/public/data/benchmarks."

@@ -132,9 +132,9 @@ func newAgentDoctorCmd() *cobra.Command {
 					issues = append(issues, "managed MIRA skill is missing")
 				}
 			}
-			if manifest.Client == clientCodex || manifest.Client == clientClaudeCode {
-				if _, err := exec.LookPath(manifest.Client); err != nil {
-					issues = append(issues, manifest.Client+" CLI is unavailable")
+			if client, ok := agentinstall.LookupClient(manifest.Client); ok && client.Executable != "" {
+				if _, err := exec.LookPath(client.Executable); err != nil {
+					issues = append(issues, client.Executable+" CLI is unavailable")
 				}
 			}
 			if manifest.RecallMode == agentinstall.IntegrationSkillGuided || manifest.CaptureMode == agentinstall.IntegrationSkillGuided {
@@ -761,6 +761,9 @@ func resolvedAgentMCPPath(client, projectRoot, home string, options agentInstall
 	case agentClientCursor:
 		return cursorMCPConfigPath(options.MiraConfig)
 	case clientWindsurf:
+		if options.Scope == agentinstall.ScopeProject {
+			return filepath.Join(projectRoot, ".windsurf", "mcp_config.json")
+		}
 		return windsurfMCPConfigPath(home)
 	case agentClientClaudeDesktop:
 		if path, err := claudeDesktopMCPConfigPath(runtime.GOOS, home, os.Getenv("APPDATA")); err == nil {
@@ -801,6 +804,9 @@ func resolvedAgentHookPath(client string, options agentInstallOptions, home stri
 		}
 		return claudeCodeHooksConfigPath(options.MiraConfig, scope, home)
 	case clientWindsurf:
+		if options.Scope == agentinstall.ScopeProject {
+			return filepath.Join(projectRootFromMiraConfig(options.MiraConfig), ".windsurf", "hooks.json")
+		}
 		return windsurfHooksConfigPath(home)
 	default:
 		return ""
@@ -823,6 +829,9 @@ func installAgentMCP(cmd *cobra.Command, client, projectRoot, home string, optio
 	if client == clientCodex || client == clientClaudeCode {
 		var args []string
 		program := client
+		if specification, ok := agentinstall.LookupClient(client); ok && specification.Executable != "" {
+			program = specification.Executable
+		}
 		if client == clientCodex {
 			args = codexSetupArgs(options.BinaryPath, options.MiraConfig)
 		} else {
@@ -979,7 +988,7 @@ func installAgentHooks(cmd *cobra.Command, client, projectRoot, home string, opt
 		}
 		data, err = configureMemoryHooks(path, "Claude Code", specs...)
 	case clientWindsurf:
-		path = windsurfHooksConfigPath(home)
+		path = resolvedAgentHookPath(client, options, home)
 		data, err = configureWindsurfAgentHooks(path, commandFor(agentbridge.EventPromptSubmit), includeAssistant, commandFor(agentbridge.EventResponseComplete))
 	}
 	if err != nil {
